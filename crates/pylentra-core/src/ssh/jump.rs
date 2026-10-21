@@ -13,6 +13,7 @@ use tokio::time::Instant;
 
 use super::auth::{AuthCtx, authenticate};
 use super::events::{SessionEvent, Stage};
+use super::forward::RemoteRoutes;
 use super::handler::ClientHandler;
 use super::{PromptBroker, SessionId, SessionOptions, SessionSink};
 use crate::error::CoreError;
@@ -27,11 +28,12 @@ pub(crate) struct ChainCtx<'a> {
     pub broker: &'a Arc<PromptBroker>,
     pub sink: &'a Arc<dyn SessionSink>,
     pub opts: &'a SessionOptions,
+    pub routes: &'a RemoteRoutes,
 }
 
 /// The authenticated target plus the bastions its transport runs through.
 pub(crate) struct Chain {
-    pub target: Handle<ClientHandler>,
+    pub target: Arc<Handle<ClientHandler>>,
     /// Dropping a bastion's handle would tear down the connection tunnelled through it.
     _bastions: Vec<Handle<ClientHandler>>,
 }
@@ -60,7 +62,7 @@ pub(crate) async fn connect_chain(
     }
     let target = open_hop(ctx, target, bastions.last(), config).await?;
     Ok(Chain {
-        target,
+        target: Arc::new(target),
         _bastions: bastions,
     })
 }
@@ -108,6 +110,7 @@ async fn connect_hop(
         broker: ctx.broker.clone(),
         sink: ctx.sink.clone(),
         prompting,
+        routes: ctx.routes.clone(),
     };
     let attempt = async {
         match via {

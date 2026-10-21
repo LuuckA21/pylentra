@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use russh::client;
+use russh::Channel;
+use russh::client::{self, ChannelOpenHandle, Msg};
 use russh::keys::PublicKeyOrCertificate;
 use tokio::sync::watch;
 
 use super::events::{PromptAnswer, SessionEvent};
+use super::forward::{RemoteRoutes, accept_remote};
 use super::{PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
 use crate::known_hosts::{HostKeyStatus, KnownHosts, fingerprint};
@@ -20,6 +22,7 @@ pub(crate) struct ClientHandler {
     pub sink: Arc<dyn SessionSink>,
     /// True while the user is answering the host-key prompt (the connect timeout pauses).
     pub prompting: watch::Sender<bool>,
+    pub routes: RemoteRoutes,
 }
 
 impl client::Handler for ClientHandler {
@@ -66,5 +69,24 @@ impl client::Handler for ClientHandler {
                 }
             }
         }
+    }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        _connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), CoreError> {
+        tokio::spawn(accept_remote(
+            self.routes.clone(),
+            connected_port,
+            channel,
+            reply,
+        ));
+        Ok(())
     }
 }

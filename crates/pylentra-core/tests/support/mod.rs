@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -131,6 +131,7 @@ impl Server for Acceptor {
             ptys: self.ptys.clone(),
             accepted_auth: self.accepted_auth.clone(),
             tasks: Vec::new(),
+            listeners: HashMap::new(),
             relayed: HashSet::new(),
         }
     }
@@ -145,13 +146,15 @@ struct ConnHandler {
     accepted_auth: Arc<Mutex<Vec<String>>>,
     /// Forward listeners and pipes; aborted when the client connection ends.
     tasks: Vec<JoinHandle<()>>,
+    /// Accept loops of tcpip-forward listeners by bound port, for cancel-tcpip-forward.
+    listeners: HashMap<u16, JoinHandle<()>>,
     /// direct-tcpip channels: their bytes belong to the pipe, not to the echo shell.
     relayed: HashSet<ChannelId>,
 }
 
 impl Drop for ConnHandler {
     fn drop(&mut self) {
-        for t in &self.tasks {
+        for t in self.tasks.iter().chain(self.listeners.values()) {
             t.abort();
         }
     }
@@ -343,7 +346,7 @@ impl Handler for ConnHandler {
         let handle = session.handle();
         let address = address.to_string();
         let connected_port = *port;
-        self.tasks.push(tokio::spawn(async move {
+        let accept_loop = tokio::spawn(async move {
             while let Ok((mut tcp, peer)) = listener.accept().await {
                 let opened = handle
                     .channel_open_forwarded_tcpip(
@@ -353,13 +356,31 @@ impl Handler for ConnHandler {
                         u32::from(peer.port()),
                     )
                     .await;
-                let Ok(channel) = opened else { break };
+                // One refused open (e.g. the client has no route) must not end the listener.
+                let Ok(channel) = opened else { continue };
                 tokio::spawn(async move {
                     let mut ch = channel.into_stream();
                     let _ = tokio::io::copy_bidirectional(&mut ch, &mut tcp).await;
                 });
             }
-        }));
+        });
+        self.listeners.insert(bound.port(), accept_loop);
+        Ok(true)
+    }
+
+    async fn cancel_tcpip_forward(
+        &mut self,
+        _address: &str,
+        port: u32,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        let task = u16::try_from(port)
+            .ok()
+            .and_then(|p| self.listeners.remove(&p));
+        let Some(task) = task else { return Ok(false) };
+        task.abort();
+        // Awaited, so the port is closed by the time the client sees the reply.
+        let _ = task.await;
         Ok(true)
     }
 }
