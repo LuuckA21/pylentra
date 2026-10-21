@@ -755,6 +755,7 @@ dependencies = [
  "pylentra-core",
  "secrecy",
  "serde",
+ "tempfile",
  "thiserror",
  "toml",
  "ts-rs",
