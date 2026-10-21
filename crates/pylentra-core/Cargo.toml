@@ -12,3 +12,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"
 ts-rs = { version = "12", features = ["uuid-impl"] }
 log = "0.4"
+secrecy = "0.10"
+keyring = { version = "4.2", features = ["v1"] }
+
+[features]
+test-util = []
+
+[dev-dependencies]
+pylentra-core = { path = ".", features = ["test-util"] }
