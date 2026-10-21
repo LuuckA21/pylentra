@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import Banner from "./components/Banner.svelte";
   import ConnectionForm from "./components/ConnectionForm.svelte";
+  import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import TerminalTab from "./components/TerminalTab.svelte";
   import Toasts from "./components/Toasts.svelte";
@@ -21,6 +22,7 @@
   );
   // `connection` undefined means a new connection.
   let editing = $state<{ connection?: Connection } | null>(null);
+  let settingsOpen = $state(false);
 
   const nameOf = (id: string) =>
     library.connections.find((c) => c.id === id)?.name ?? id;
@@ -42,6 +44,7 @@
       {openConnectionIds}
       onopen={openTab}
       onedit={(connection) => (editing = { connection })}
+      onsettings={() => (settingsOpen = true)}
     />
     <main>
       {#if sessions.tabs.length}
@@ -89,6 +92,9 @@
     onsaved={() => (editing = null)}
     oncancel={() => (editing = null)}
   />
+{/if}
+{#if settingsOpen}
+  <Settings onclose={() => (settingsOpen = false)} />
 {/if}
 <Toasts />
 

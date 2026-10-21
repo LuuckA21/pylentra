@@ -39,6 +39,7 @@ function setup() {
     openConnectionIds: new Set<string>(),
     onopen: vi.fn(),
     onedit: vi.fn(),
+    onsettings: vi.fn(),
   };
   render(Sidebar, props);
   return props;

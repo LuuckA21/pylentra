@@ -17,6 +17,7 @@
   } from "../lib/stores/sessions.svelte";
   import { settings } from "../lib/stores/settings.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
+  import ForwardPanel from "./ForwardPanel.svelte";
   import ErrorOverlay from "./ErrorOverlay.svelte";
   import HostKeyDialog from "./HostKeyDialog.svelte";
   import SecretPrompt from "./SecretPrompt.svelte";
@@ -33,6 +34,7 @@
 
   let el: HTMLDivElement;
   let term: Terminal | undefined;
+  let fit: FitAddon | undefined;
 
   // Colors come from the app's CSS tokens, so the terminal follows data-theme.
   function theme(): ITheme {
@@ -69,11 +71,12 @@
       fontSize: settings.font_size,
       theme: theme(),
     });
-    const fit = new FitAddon();
-    tm.loadAddon(fit);
+    const fa = new FitAddon();
+    tm.loadAddon(fa);
     tm.open(el);
-    fit.fit();
+    fa.fit();
     term = tm;
+    fit = fa;
 
     // Our shortcuts never reach the shell; the window handler below runs them.
     tm.attachCustomKeyEventHandler((e) => !shortcutFor(e));
@@ -94,7 +97,7 @@
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
       clearTimeout(timer);
-      timer = setTimeout(() => fit.fit(), 50);
+      timer = setTimeout(() => fa.fit(), 50);
     });
     ro.observe(el);
 
@@ -111,8 +114,18 @@
       mo.disconnect();
       dark.removeEventListener("change", retheme);
       term = undefined;
+      fit = undefined;
       tm.dispose();
     };
+  });
+
+  // Open terminals follow font changes from the settings dialog.
+  $effect(() => {
+    const { font_family, font_size } = settings;
+    if (!term) return;
+    term.options.fontFamily = font_family;
+    term.options.fontSize = font_size;
+    fit?.fit();
   });
 
   // Focus the terminal when the tab is shown, unless an overlay holds the focus.
@@ -152,6 +165,7 @@
 
 <div class="tab" class:active>
   <div class="terminal" bind:this={el}></div>
+  {#if tab.phase === "ready"}<ForwardPanel {tab} />{/if}
 
   {#if tab.phase === "connecting" || tab.phase === "authenticating"}
     <p class="status" role="status">

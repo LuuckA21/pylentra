@@ -19,11 +19,13 @@
     openConnectionIds,
     onopen,
     onedit,
+    onsettings,
   }: {
     openConnectionIds: Set<string>;
     onopen: (connectionId: string) => void;
     /** Called with the connection to edit, or undefined for a new one. */
     onedit: (connection?: Connection) => void;
+    onsettings: () => void;
   } = $props();
 
   type Menu = {
@@ -341,6 +343,10 @@
       <p class="empty">{t("sidebar.noMatches")}</p>
     {/if}
   </div>
+
+  <div class="foot">
+    <button type="button" onclick={onsettings}>{t("settings.open")}</button>
+  </div>
 </nav>
 
 {#if menu}
@@ -536,6 +542,10 @@
     margin: 0;
     color: var(--danger);
     font-size: 12px;
+  }
+  .foot {
+    padding: 8px;
+    border-top: 1px solid var(--border);
   }
   .list {
     flex: 1;
