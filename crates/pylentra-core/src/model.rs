@@ -128,6 +128,35 @@ fn require_nonzero(port: u16, field: String) -> Result<(), CoreError> {
     Ok(())
 }
 
+impl ForwardRule {
+    /// Reports fields as `<prefix>.<field>`, e.g. `forwards[0].bind_port`.
+    pub fn validate(&self, prefix: &str) -> Result<(), CoreError> {
+        let (bind_port, dest_port) = match self {
+            Self::Local {
+                bind_host,
+                bind_port,
+                dest_port,
+                ..
+            } => {
+                if bind_host.parse::<IpAddr>().is_err() {
+                    return Err(invalid(
+                        format!("{prefix}.bind_host"),
+                        "must be an IP address",
+                    ));
+                }
+                (bind_port, dest_port)
+            }
+            Self::Remote {
+                bind_port,
+                dest_port,
+                ..
+            } => (bind_port, dest_port),
+        };
+        require_nonzero(*bind_port, format!("{prefix}.bind_port"))?;
+        require_nonzero(*dest_port, format!("{prefix}.dest_port"))
+    }
+}
+
 impl Connection {
     /// Checks the fields this connection owns. Jump references and chain depth
     /// need the whole store, so they are checked there.
@@ -144,31 +173,7 @@ impl Connection {
         require_nonzero(self.port, "port".into())?;
 
         for (i, rule) in self.forwards.iter().enumerate() {
-            match rule {
-                ForwardRule::Local {
-                    bind_host,
-                    bind_port,
-                    dest_port,
-                    ..
-                } => {
-                    if bind_host.parse::<IpAddr>().is_err() {
-                        return Err(invalid(
-                            format!("forwards[{i}].bind_host"),
-                            "must be an IP address",
-                        ));
-                    }
-                    require_nonzero(*bind_port, format!("forwards[{i}].bind_port"))?;
-                    require_nonzero(*dest_port, format!("forwards[{i}].dest_port"))?;
-                }
-                ForwardRule::Remote {
-                    bind_port,
-                    dest_port,
-                    ..
-                } => {
-                    require_nonzero(*bind_port, format!("forwards[{i}].bind_port"))?;
-                    require_nonzero(*dest_port, format!("forwards[{i}].dest_port"))?;
-                }
-            }
+            rule.validate(&format!("forwards[{i}]"))?;
         }
 
         let mut warnings = Vec::new();

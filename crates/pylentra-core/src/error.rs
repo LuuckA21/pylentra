@@ -142,6 +142,12 @@ impl CoreError {
     }
 }
 
+impl From<CoreError> for ApiError {
+    fn from(e: CoreError) -> Self {
+        e.to_api()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

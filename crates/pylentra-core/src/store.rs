@@ -166,7 +166,19 @@ impl ConnectionStore {
         Ok(())
     }
 
+    /// Every check `upsert_connection` makes, without writing anything.
+    pub fn check_connection(&self, c: &Connection) -> Result<Vec<Warning>, CoreError> {
+        self.candidate_with(c.clone()).map(|(_, warnings)| warnings)
+    }
+
     pub fn upsert_connection(&mut self, c: Connection) -> Result<Vec<Warning>, CoreError> {
+        let (candidate, warnings) = self.candidate_with(c)?;
+        self.commit(candidate)?;
+        Ok(warnings)
+    }
+
+    /// The library with `c` inserted or replaced, once it passes every check.
+    fn candidate_with(&self, c: Connection) -> Result<(Library, Vec<Warning>), CoreError> {
         self.writable()?;
         let warnings = c.validate()?;
         let mut candidate = self.library.clone();
@@ -202,8 +214,7 @@ impl ConnectionStore {
         for a in affected {
             chain_in(&candidate.connections, a)?;
         }
-        self.commit(candidate)?;
-        Ok(warnings)
+        Ok((candidate, warnings))
     }
 
     pub fn dependents(&self, id: Uuid) -> Vec<Uuid> {
