@@ -1,22 +1,18 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::io;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use russh::client::{self, Handle, Msg};
+use russh::client::{Handle, Msg};
 use russh::{Channel, ChannelMsg, ChannelReadHalf, ChannelWriteHalf, Disconnect};
-use tokio::net::TcpStream;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use super::auth::{AuthCtx, authenticate};
 use super::events::{CloseReason, PromptAnswer, SessionEvent, Stage};
 use super::handler::ClientHandler;
+use super::jump::{Chain, ChainCtx, connect_chain};
 use super::{PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
 use crate::known_hosts::KnownHosts;
@@ -232,19 +228,13 @@ async fn drive(
     rows: u16,
     rx: &mut mpsc::Receiver<Command>,
 ) -> CloseReason {
-    let Some(target) = chain.last() else {
-        return error_reason(CoreError::InvalidInput {
-            field: "chain".into(),
-            reason: "empty".into(),
-        });
-    };
     ctx.sink.event(SessionEvent::Status {
         stage: Stage::Connecting,
     });
-    let setup = open_shell(ctx, target, cols, rows);
+    let setup = open_shell(ctx, chain, cols, rows);
     tokio::pin!(setup);
     let mut new_size = None;
-    let (handle, channel) = loop {
+    let (chain, channel) = loop {
         tokio::select! {
             r = &mut setup => match r {
                 Ok(v) => break v,
@@ -262,28 +252,25 @@ async fn drive(
     if let Some((c, r)) = new_size {
         let _ = channel.window_change(c.into(), r.into(), 0, 0).await;
     }
-    io_loop(handle, channel, &*ctx.sink, rx).await
+    io_loop(chain, channel, &*ctx.sink, rx).await
 }
 
 async fn open_shell(
     ctx: &Ctx,
-    target: &Connection,
+    chain: &[Connection],
     cols: u16,
     rows: u16,
-) -> Result<(Handle<ClientHandler>, Channel<Msg>), CoreError> {
-    let mut handle = connect(ctx, target).await?;
-    ctx.sink.event(SessionEvent::Status {
-        stage: Stage::Authenticating,
-    });
-    let auth = AuthCtx {
+) -> Result<(Chain, Channel<Msg>), CoreError> {
+    let chain_ctx = ChainCtx {
+        id: ctx.id,
         secrets: &*ctx.secrets,
-        prompts: &ctx.broker,
-        session: ctx.id,
-        sink: &*ctx.sink,
+        known_hosts: &ctx.known_hosts,
+        broker: &ctx.broker,
+        sink: &ctx.sink,
         opts: &ctx.opts,
     };
-    authenticate(&mut handle, target, &auth).await?;
-    let channel = handle.channel_open_session().await?;
+    let chain = connect_chain(chain, &chain_ctx).await?;
+    let channel = chain.target.channel_open_session().await?;
     channel
         .request_pty(false, TERM, cols.into(), rows.into(), 0, 0, &[])
         .await?;
@@ -291,90 +278,11 @@ async fn open_shell(
     ctx.sink.event(SessionEvent::Status {
         stage: Stage::Ready,
     });
-    Ok((handle, channel))
-}
-
-/// TCP plus SSH handshake (host key included), bounded by `connect_timeout`.
-async fn connect(ctx: &Ctx, target: &Connection) -> Result<Handle<ClientHandler>, CoreError> {
-    let host = target.host.to_lowercase();
-    let port = target.port;
-    let (prompting, paused) = watch::channel(false);
-    let handler = ClientHandler {
-        id: ctx.id,
-        host: host.clone(),
-        port,
-        known_hosts: ctx.known_hosts.clone(),
-        broker: ctx.broker.clone(),
-        sink: ctx.sink.clone(),
-        prompting,
-    };
-    let config = Arc::new(client::Config {
-        keepalive_interval: Some(ctx.opts.keepalive_interval),
-        keepalive_max: ctx.opts.keepalive_max,
-        ..Default::default()
-    });
-    let attempt = async {
-        let tcp = tcp_connect(&host, port).await?;
-        client::connect_stream(config, tcp, handler).await
-    };
-    match timeout_unless_paused(ctx.opts.connect_timeout, paused, attempt).await {
-        Some(r) => r,
-        None => Err(CoreError::Timeout { host, port }),
-    }
-}
-
-async fn tcp_connect(host: &str, port: u16) -> Result<TcpStream, CoreError> {
-    let dns = || CoreError::Dns { host: host.into() };
-    let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| dns())?
-        .collect();
-    if addrs.is_empty() {
-        return Err(dns());
-    }
-    let tcp = TcpStream::connect(&addrs[..])
-        .await
-        .map_err(|e| match e.kind() {
-            io::ErrorKind::ConnectionRefused => CoreError::Refused {
-                host: host.into(),
-                port,
-            },
-            _ => CoreError::Unreachable {
-                host: host.into(),
-                port,
-                reason: e.to_string(),
-            },
-        })?;
-    // Keystrokes should not wait for Nagle.
-    let _ = tcp.set_nodelay(true);
-    Ok(tcp)
-}
-
-/// `tokio::time::timeout`, except that the clock stops while `paused` is true
-/// (the user is reading a prompt) and restarts in full afterwards.
-async fn timeout_unless_paused<F: Future>(
-    limit: Duration,
-    mut paused: watch::Receiver<bool>,
-    fut: F,
-) -> Option<F::Output> {
-    tokio::pin!(fut);
-    let sleep = tokio::time::sleep(limit);
-    tokio::pin!(sleep);
-    loop {
-        tokio::select! {
-            out = &mut fut => return Some(out),
-            () = &mut sleep, if !*paused.borrow() => return None,
-            Ok(()) = paused.changed() => {
-                if !*paused.borrow() {
-                    sleep.as_mut().reset(Instant::now() + limit);
-                }
-            }
-        }
-    }
+    Ok((chain, channel))
 }
 
 async fn io_loop(
-    handle: Handle<ClientHandler>,
+    chain: Chain,
     channel: Channel<Msg>,
     sink: &dyn SessionSink,
     rx: &mut mpsc::Receiver<Command>,
@@ -383,7 +291,7 @@ async fn io_loop(
     // Polled together: a write waiting for window space never stops output from draining.
     tokio::select! {
         r = read_loop(&mut reader, sink) => r,
-        r = write_loop(&handle, &writer, rx) => r,
+        r = write_loop(&chain.target, &writer, rx) => r,
     }
 }
 

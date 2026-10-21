@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -130,6 +131,7 @@ impl Server for Acceptor {
             ptys: self.ptys.clone(),
             accepted_auth: self.accepted_auth.clone(),
             tasks: Vec::new(),
+            relayed: HashSet::new(),
         }
     }
 }
@@ -143,6 +145,8 @@ struct ConnHandler {
     accepted_auth: Arc<Mutex<Vec<String>>>,
     /// Forward listeners and pipes; aborted when the client connection ends.
     tasks: Vec<JoinHandle<()>>,
+    /// direct-tcpip channels: their bytes belong to the pipe, not to the echo shell.
+    relayed: HashSet<ChannelId>,
 }
 
 impl Drop for ConnHandler {
@@ -280,7 +284,9 @@ impl Handler for ConnHandler {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if data == b"__exit 7\n" {
+        if self.relayed.contains(&channel) {
+            Ok(())
+        } else if data == b"__exit 7\n" {
             session.exit_status_request(channel, 7)?;
             session.close(channel)
         } else {
@@ -305,6 +311,7 @@ impl Handler for ConnHandler {
         };
         match stream {
             Some(mut tcp) => {
+                self.relayed.insert(channel.id());
                 reply.accept().await;
                 self.tasks.push(tokio::spawn(async move {
                     let mut ch = channel.into_stream();

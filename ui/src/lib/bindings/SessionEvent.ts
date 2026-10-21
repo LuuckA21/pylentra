@@ -6,4 +6,4 @@ import type { KeySource } from "./KeySource";
 import type { PromptKind } from "./PromptKind";
 import type { Stage } from "./Stage";
 
-export type SessionEvent = { "type": "Status", stage: Stage, } | { "type": "HostKeyPrompt", host: string, port: number, algo: string, fingerprint: string, } | { "type": "HostKeyMismatch", host: string, port: number, expected: string, got: string, source: KeySource, } | { "type": "SecretPrompt", kind: PromptKind, } | { "type": "Forward", forward_id: number, rule: ForwardRule, state: ForwardState, } | { "type": "Closed", reason: CloseReason, };
+export type SessionEvent = { "type": "Status", stage: Stage, } | { "type": "HostKeyPrompt", host: string, port: number, algo: string, fingerprint: string, } | { "type": "HostKeyMismatch", host: string, port: number, expected: string, got: string, source: KeySource, } | { "type": "SecretPrompt", host: string, port: number, kind: PromptKind, } | { "type": "Forward", forward_id: number, rule: ForwardRule, state: ForwardState, } | { "type": "Closed", reason: CloseReason, };

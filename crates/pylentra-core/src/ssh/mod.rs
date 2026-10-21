@@ -1,6 +1,7 @@
 mod auth;
 pub mod events;
 mod handler;
+mod jump;
 mod session;
 
 use std::collections::HashMap;

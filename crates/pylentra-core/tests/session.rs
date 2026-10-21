@@ -307,9 +307,8 @@ async fn missing_password_prompts() {
 
     sink.wait_event(
         |e| {
-            *e == SessionEvent::SecretPrompt {
-                kind: PromptKind::Password,
-            }
+            matches!(e, SessionEvent::SecretPrompt { host, port, kind: PromptKind::Password }
+                if host == "127.0.0.1" && *port == server.addr.port())
         },
         T,
     )

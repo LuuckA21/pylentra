@@ -170,7 +170,7 @@ fn prompts(sink: &CollectSink) -> Vec<PromptKind> {
         .unwrap()
         .iter()
         .filter_map(|e| match e {
-            SessionEvent::SecretPrompt { kind } => Some(kind.clone()),
+            SessionEvent::SecretPrompt { kind, .. } => Some(kind.clone()),
             _ => None,
         })
         .collect()

@@ -76,6 +76,8 @@ pub enum SessionEvent {
         source: KeySource,
     },
     SecretPrompt {
+        host: String,
+        port: u16,
         kind: PromptKind,
     },
     Forward {

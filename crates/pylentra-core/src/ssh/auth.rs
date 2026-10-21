@@ -25,6 +25,9 @@ pub(crate) struct AuthCtx<'a> {
     pub session: SessionId,
     pub sink: &'a dyn SessionSink,
     pub opts: &'a SessionOptions,
+    /// The hop being authenticated, lowercased; named in every prompt.
+    pub host: &'a str,
+    pub port: u16,
 }
 
 impl AuthCtx<'_> {
@@ -44,7 +47,11 @@ impl AuthCtx<'_> {
     }
 
     async fn ask(&self, kind: PromptKind) -> PromptAnswer {
-        let prompt = SessionEvent::SecretPrompt { kind };
+        let prompt = SessionEvent::SecretPrompt {
+            host: self.host.into(),
+            port: self.port,
+            kind,
+        };
         self.prompts.ask(self.session, self.sink, prompt).await
     }
 
