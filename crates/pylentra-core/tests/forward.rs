@@ -273,6 +273,8 @@ async fn remote_forward_rejected_by_server() {
         T,
     )
     .await;
+    // The rejection leaves the first forward's route intact.
+    ping(taken).await;
     env.mgr.write(id, b"ok".to_vec()).await.unwrap();
     sink.wait_data_len(2, T).await;
     env.mgr.close(id).await.unwrap();

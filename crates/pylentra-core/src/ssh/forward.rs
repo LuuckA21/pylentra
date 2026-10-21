@@ -1,6 +1,7 @@
 //! Port forwarding of one session: local listeners, remote (`tcpip-forward`) routes, state events.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -220,32 +221,34 @@ async fn start_remote(
     dest_port: u16,
 ) -> Result<(Active, u16), CoreError> {
     let route = (dest_host.to_string(), dest_port);
-    let set = |port: u16| {
-        routes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(port, route.clone());
-    };
+    let lock = || routes.lock().unwrap_or_else(|e| e.into_inner());
     // A requested port is known up front, so the first connection cannot beat the route.
+    // One already routed belongs to an active forward, which the server would refuse to
+    // bind twice: leave its route alone.
     if bind_port != 0 {
-        set(bind_port);
+        match lock().entry(bind_port) {
+            Entry::Occupied(_) => return Err(CoreError::ForwardRejected),
+            Entry::Vacant(v) => v.insert(route.clone()),
+        };
     }
     let bound_port = match target.tcpip_forward(REMOTE_BIND, bind_port.into()).await {
         // A server answers 0 when it bound the requested port.
         Ok(0) => bind_port,
         Ok(p) => u16::try_from(p).unwrap_or(bind_port),
         Err(e) => {
-            routes
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&bind_port);
+            lock().remove(&bind_port);
             return Err(match e {
                 russh::Error::RequestDenied => CoreError::ForwardRejected,
                 e => e.into(),
             });
         }
     };
-    set(bound_port);
+    let mut routes = lock();
+    if bound_port != bind_port {
+        routes.remove(&bind_port);
+    }
+    routes.insert(bound_port, route);
+    drop(routes);
     Ok((Active::Remote { bound_port }, bound_port))
 }
 
