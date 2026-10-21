@@ -26,3 +26,4 @@ test-util = []
 tempfile = "3"
 pylentra-core = { path = ".", features = ["test-util"] }
 rand = "0.10"
+tokio = { version = "1", features = ["full"] }
