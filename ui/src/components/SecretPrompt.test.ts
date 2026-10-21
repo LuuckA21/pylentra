@@ -1,0 +1,88 @@
+import { expect, test, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/svelte";
+import type { Connection } from "../lib/bindings/Connection";
+import { library } from "../lib/stores/library.svelte";
+import SecretPrompt from "./SecretPrompt.svelte";
+
+const conn = (o: Partial<Connection>): Connection => ({
+  id: "c1",
+  name: "web",
+  group_id: null,
+  host: "web",
+  port: 22,
+  username: "luca",
+  auth: { type: "Password", save: true },
+  jump_via: null,
+  forwards: [],
+  ...o,
+});
+
+test("password prompt names the hop and defaults save to its preference", async () => {
+  library.connections = [
+    conn({ jump_via: "c2" }),
+    conn({
+      id: "c2",
+      host: "bastion",
+      port: 2222,
+      username: "jump",
+      auth: { type: "Key", path: "k", save_passphrase: false },
+    }),
+  ];
+  const onanswer = vi.fn();
+  render(SecretPrompt, {
+    prompt: {
+      type: "SecretPrompt",
+      host: "bastion",
+      port: 2222,
+      kind: { type: "Passphrase", attempt: 2 },
+    },
+    connectionId: "c1",
+    onanswer,
+  });
+  expect(screen.getByRole("heading").textContent).toContain(
+    "jump@bastion:2222",
+  );
+  expect(screen.getByText("Attempt 2 of 3")).toBeTruthy();
+  const save = screen.getByLabelText("Save to keychain") as HTMLInputElement;
+  expect(save.checked).toBe(false);
+  await fireEvent.input(screen.getByLabelText("Passphrase"), {
+    target: { value: "pp" },
+  });
+  await fireEvent.click(screen.getByText("Connect"));
+  expect(onanswer).toHaveBeenCalledWith({
+    type: "Secret",
+    value: "pp",
+    save: false,
+  });
+});
+
+test("keyboard-interactive shows one field per prompt and Esc cancels", async () => {
+  library.connections = [conn({})];
+  const onanswer = vi.fn();
+  render(SecretPrompt, {
+    prompt: {
+      type: "SecretPrompt",
+      host: "web",
+      port: 22,
+      kind: {
+        type: "KeyboardInteractive",
+        name: "",
+        instructions: "",
+        prompts: [
+          { text: "Code:", echo: true },
+          { text: "PIN:", echo: false },
+        ],
+      },
+    },
+    connectionId: "c1",
+    onanswer,
+  });
+  expect((screen.getByLabelText("Code:") as HTMLInputElement).type).toBe(
+    "text",
+  );
+  expect((screen.getByLabelText("PIN:") as HTMLInputElement).type).toBe(
+    "password",
+  );
+  await fireEvent.keyDown(screen.getByLabelText("PIN:"), { key: "Escape" });
+  expect(onanswer).toHaveBeenCalledWith({ type: "Cancel" });
+});

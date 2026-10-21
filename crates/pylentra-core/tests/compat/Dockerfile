@@ -1,5 +1,6 @@
 FROM alpine:3.20
-RUN apk add --no-cache openssh openssh-server-pam
+# htop and vim are for the manual terminal smoke test (docs/release-checklist.md).
+RUN apk add --no-cache openssh openssh-server-pam htop vim
 RUN adduser -D -s /bin/sh tester \
     && echo 'tester:tester' | chpasswd \
     && mkdir -p /home/tester/.ssh \
