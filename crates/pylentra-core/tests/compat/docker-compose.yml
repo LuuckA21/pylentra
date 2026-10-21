@@ -1,0 +1,12 @@
+services:
+  bastion:
+    build: .
+    ports:
+      - "127.0.0.1:2201:22"
+  # Not published: reachable only from the compose network, as target:22.
+  target:
+    build: .
+    command:
+      - sh
+      - -c
+      - ssh-keygen -A; busybox nc -lk -p 9000 -e cat & exec /usr/sbin/sshd.pam -D -e
