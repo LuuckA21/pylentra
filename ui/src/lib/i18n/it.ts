@@ -100,8 +100,6 @@ export const it: Record<MessageKey, string> = {
   "secret.kbd": "Autenticazione per {target}",
   "secret.save": "Salva nel portachiavi",
   "secret.submit": "Connetti",
-  "search.label": "Cerca nel terminale",
-  "search.hint": "Invio trova la corrispondenza precedente, Esc chiude.",
 
   "error.auth.agent_unavailable": "Agente SSH non disponibile: {reason}",
   "error.auth.all_failed": "Autenticazione fallita (provati: {tried}).",

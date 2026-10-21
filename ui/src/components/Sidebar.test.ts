@@ -78,6 +78,26 @@ test("search filters list", async () => {
   expect(rows[0].textContent).toContain("bastion");
 });
 
+test("Ctrl+Shift+F focuses and selects the search box", async () => {
+  setup();
+  const box = screen.getByRole("searchbox") as HTMLInputElement;
+  await fireEvent.input(box, { target: { value: "web" } });
+  const row = screen.getByRole("option", { name: /web/ });
+  row.focus();
+  // Keys bubble from wherever focus is (the terminal included) to the window.
+  const e = new KeyboardEvent("keydown", {
+    key: "F",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  row.dispatchEvent(e);
+  expect(document.activeElement).toBe(box);
+  expect([box.selectionStart, box.selectionEnd]).toEqual([0, 3]);
+  expect(e.defaultPrevented).toBe(true);
+});
+
 test("Enter on focused row emits open", async () => {
   const { onopen } = setup();
   const row = screen.getByRole("option", { name: /db/ });

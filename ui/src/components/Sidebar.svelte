@@ -5,6 +5,7 @@
   import { t } from "../lib/i18n";
   import { modal } from "../lib/modal";
   import { matches } from "../lib/search";
+  import { shortcutFor } from "../lib/shortcuts";
   import {
     deleteConnection,
     deleteGroup,
@@ -45,6 +46,7 @@
   );
   let listEl: HTMLElement | undefined = $state();
   let menuEl: HTMLElement | undefined = $state();
+  let searchEl: HTMLInputElement | undefined = $state();
   let lastRow: HTMLElement | null = null;
 
   const byName = (a: { name: string }, b: { name: string }) =>
@@ -237,6 +239,14 @@
 </script>
 
 <svelte:window
+  onkeydown={(e) => {
+    // Ctrl+Shift+F, also from the terminal (its key handler lets it bubble here).
+    if (shortcutFor(e) === "search") {
+      e.preventDefault();
+      searchEl?.focus();
+      searchEl?.select();
+    }
+  }}
   onpointerdown={(e) => {
     if (menu && !menuEl?.contains(e.target as Node)) closeMenu(false);
   }}
@@ -246,6 +256,7 @@
   <div class="toolbar">
     <input
       type="search"
+      bind:this={searchEl}
       aria-label={t("sidebar.search")}
       placeholder={t("sidebar.search")}
       bind:value={query}

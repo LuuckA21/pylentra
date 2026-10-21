@@ -6,7 +6,7 @@
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import { t } from "../lib/i18n";
   import type { TabState } from "../lib/sessionReducer";
-  import { findUp, shortcutFor, type Action } from "../lib/shortcuts";
+  import { shortcutFor, type Action } from "../lib/shortcuts";
   import {
     answer,
     closeTab,
@@ -33,10 +33,6 @@
 
   let el: HTMLDivElement;
   let term: Terminal | undefined;
-  let searching = $state(false);
-  let query = $state("");
-  let notFound = $state(false);
-  let searchFrom = 0;
 
   // Colors come from the app's CSS tokens, so the terminal follows data-theme.
   function theme(): ITheme {
@@ -128,8 +124,10 @@
   function run(a: Action, e: KeyboardEvent) {
     // Copy and paste act on the terminal only when it has focus; elsewhere the
     // native behavior stays.
+    // Search focuses the sidebar's search box, which handles it.
     const inTerminal = el.contains(e.target as Node);
-    if ((a === "copy" || a === "paste") && !inTerminal) return;
+    if (a === "search" || ((a === "copy" || a === "paste") && !inTerminal))
+      return;
     e.preventDefault();
     if (a === "copy") {
       const text = term?.getSelection();
@@ -142,65 +140,17 @@
     } else if (a === "closeTab") closeTab(tab.tabId);
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
-    else {
-      searching = true;
-      searchFrom = term?.buffer.active.length ?? 0;
-    }
   }
 
   function onwindowkey(e: KeyboardEvent) {
     const a = active ? shortcutFor(e) : null;
     if (a) run(a, e);
   }
-
-  function findPrevious() {
-    if (!term) return;
-    const buf = term.buffer.active;
-    const hit = findUp(
-      (row) => buf.getLine(row)?.translateToString(true),
-      buf.length,
-      searchFrom,
-      query,
-    );
-    notFound = !hit;
-    if (!hit) return;
-    searchFrom = hit.row;
-    term.select(hit.col, hit.row, query.length);
-    term.scrollToLine(hit.row);
-  }
-
-  function onsearchkey(e: KeyboardEvent) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      findPrevious();
-    } else if (e.key === "Escape") {
-      searching = false;
-      term?.clearSelection();
-      term?.focus();
-    }
-  }
 </script>
 
 <svelte:window onkeydown={onwindowkey} />
 
 <div class="tab" class:active>
-  {#if searching}
-    <div class="search">
-      <input
-        type="search"
-        aria-label={t("search.label")}
-        title={t("search.hint")}
-        aria-invalid={notFound ? "true" : undefined}
-        bind:value={query}
-        oninput={() => {
-          notFound = false;
-          searchFrom = term?.buffer.active.length ?? 0;
-        }}
-        onkeydown={onsearchkey}
-        {@attach (node) => node.focus()}
-      />
-    </div>
-  {/if}
   <div class="terminal" bind:this={el}></div>
 
   {#if tab.phase === "connecting" || tab.phase === "authenticating"}
@@ -249,13 +199,6 @@
     flex: 1;
     min-height: 0;
     background: var(--bg);
-  }
-  .search {
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
-  }
-  .search input {
-    width: min(320px, 100%);
   }
   .status {
     position: absolute;

@@ -97,8 +97,6 @@ export const en = {
   "secret.kbd": "Authentication for {target}",
   "secret.save": "Save to keychain",
   "secret.submit": "Connect",
-  "search.label": "Search the terminal",
-  "search.hint": "Enter finds the previous match, Esc closes.",
 
   "error.auth.agent_unavailable": "SSH agent unavailable: {reason}",
   "error.auth.all_failed": "Authentication failed (tried: {tried}).",

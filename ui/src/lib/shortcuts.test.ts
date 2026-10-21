@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { findUp, shortcutFor } from "./shortcuts";
+import { shortcutFor } from "./shortcuts";
 
 const key = (
   k: string,
@@ -29,17 +29,4 @@ test("other combos reach the shell", () => {
   expect(
     shortcutFor(key("C", { ctrl: true, shift: true, alt: true })),
   ).toBeNull();
-});
-
-test("findUp searches upward from a row and wraps around", () => {
-  const lines = ["foo bar", "nothing", "a Bar here", "end"];
-  const get = (row: number) => lines[row];
-  expect(findUp(get, lines.length, lines.length, "bar")).toEqual({
-    row: 2,
-    col: 2,
-  });
-  expect(findUp(get, lines.length, 2, "bar")).toEqual({ row: 0, col: 4 });
-  expect(findUp(get, lines.length, 0, "bar")).toEqual({ row: 2, col: 2 });
-  expect(findUp(get, lines.length, 4, "zzz")).toBeNull();
-  expect(findUp(get, lines.length, 4, "")).toBeNull();
 });
