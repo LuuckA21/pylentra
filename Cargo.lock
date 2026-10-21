@@ -1589,6 +1589,8 @@ dependencies = [
 name = "pylentra-core"
 version = "0.1.0"
 dependencies = [
+ "data-encoding",
+ "hmac",
  "keyring",
  "log",
  "pylentra-core",
@@ -1596,6 +1598,7 @@ dependencies = [
  "russh",
  "secrecy",
  "serde",
+ "sha1",
  "tempfile",
  "thiserror",
  "toml",

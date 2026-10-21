@@ -1,11 +1,15 @@
 use crate::error::CoreError;
 use crate::store::atomic_write;
+use data_encoding::BASE64_MIME;
+use hmac::{Hmac, KeyInit, Mac};
 use russh::keys::known_hosts::{
     check_known_hosts_path, known_host_keys_path, learn_known_hosts_path,
 };
+use russh::keys::parse_public_key_base64;
 use russh::keys::ssh_key::{HashAlg, PublicKey};
 use serde::Serialize;
-use std::path::PathBuf;
+use sha1::Sha1;
+use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -48,35 +52,32 @@ impl KnownHosts {
         port: u16,
         key: &PublicKey,
     ) -> Result<HostKeyStatus, CoreError> {
-        let files = [
-            (KeySource::Pylentra, Some(&self.pylentra)),
-            (KeySource::OpenSsh, self.openssh.as_ref()),
-        ];
-        let mut known = false;
-        for (source, path) in files {
-            let Some(path) = path else { continue };
-            match check_known_hosts_path(host, port, key, path) {
-                Ok(found) => known |= found,
-                Err(russh::keys::Error::KeyChanged { line }) => {
-                    let recorded = known_host_keys_path(host, port, path).map_err(ssh_err)?;
-                    let expected_fp = recorded
-                        .iter()
-                        .find(|(l, _)| *l == line)
-                        .map(|(_, k)| fingerprint(k))
-                        .unwrap_or_default();
+        let mut known = match check_known_hosts_path(host, port, key, &self.pylentra) {
+            Ok(found) => found,
+            Err(russh::keys::Error::KeyChanged { line }) => {
+                let expected_fp = known_host_keys_path(host, port, &self.pylentra)
+                    .map_err(ssh_err)?
+                    .iter()
+                    .find(|(l, _)| *l == line)
+                    .map(|(_, k)| fingerprint(k))
+                    .unwrap_or_default();
+                return Ok(HostKeyStatus::Mismatch {
+                    source: KeySource::Pylentra,
+                    expected_fp,
+                });
+            }
+            Err(e) => return Err(ssh_err(e)),
+        };
+        if let Some(path) = &self.openssh {
+            match scan_openssh(path, host, port, key)? {
+                Scan::Changed(expected_fp) => {
                     return Ok(HostKeyStatus::Mismatch {
-                        source,
+                        source: KeySource::OpenSsh,
                         expected_fp,
                     });
                 }
-                // The user's own file may hold entries russh cannot parse (ssh-dss,
-                // unsupported types): skip it instead of blocking every connection.
-                Err(e)
-                    if source == KeySource::OpenSsh && !matches!(e, russh::keys::Error::IO(_)) =>
-                {
-                    log::warn!("ignoring unusable entry in OpenSSH known_hosts: {e}");
-                }
-                Err(e) => return Err(ssh_err(e)),
+                Scan::Found => known = true,
+                Scan::Absent => {}
             }
         }
         Ok(if known {
@@ -117,6 +118,77 @@ impl KnownHosts {
         atomic_write(&self.pylentra, &kept)?;
         Ok(hits.len())
     }
+}
+
+enum Scan {
+    Absent,
+    Found,
+    /// Fingerprint of the recorded key that differs from the presented one.
+    Changed(String),
+}
+
+/// Scans the user's own known_hosts line by line instead of using russh's
+/// helper, which fails on the first unparseable matching line (ssh-dss,
+/// unsupported types) and would hide the valid entries around it.
+/// Same semantics as russh otherwise: a differing key of the same algorithm
+/// wins over a match. A missing file means no entries.
+fn scan_openssh(path: &Path, host: &str, port: u16, key: &PublicKey) -> Result<Scan, CoreError> {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Scan::Absent),
+        Err(e) => return Err(e.into()),
+    };
+    let host_port = if port == 22 {
+        host.to_owned()
+    } else {
+        format!("[{host}]:{port}")
+    };
+    let mut found = false;
+    for line in String::from_utf8_lossy(&bytes).lines() {
+        // '@cert-authority' / '@revoked' markers are not plain host keys.
+        if line.starts_with(['#', '@']) {
+            continue;
+        }
+        let mut fields = line.split_ascii_whitespace();
+        let (Some(hosts), Some(_), Some(b64)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if !hosts.split(',').any(|p| host_matches(&host_port, p)) {
+            continue;
+        }
+        let recorded = match parse_public_key_base64(b64) {
+            Ok(k) => k,
+            Err(e) => {
+                log::warn!("ignoring unusable entry in OpenSSH known_hosts: {e}");
+                continue;
+            }
+        };
+        if recorded.algorithm() == key.algorithm() {
+            if recorded == *key {
+                found = true;
+            } else {
+                return Ok(Scan::Changed(fingerprint(&recorded)));
+            }
+        }
+    }
+    Ok(if found { Scan::Found } else { Scan::Absent })
+}
+
+/// Plain pattern or hashed `|1|salt|hash` (HMAC-SHA1 of the host string).
+fn host_matches(host_port: &str, pattern: &str) -> bool {
+    let Some(hashed) = pattern.strip_prefix("|1|") else {
+        return pattern == host_port;
+    };
+    let mut parts = hashed.split('|');
+    let (Some(Ok(salt)), Some(Ok(hash))) = (
+        parts.next().map(|p| BASE64_MIME.decode(p.as_bytes())),
+        parts.next().map(|p| BASE64_MIME.decode(p.as_bytes())),
+    ) else {
+        return false;
+    };
+    Hmac::<Sha1>::new_from_slice(&salt)
+        .is_ok_and(|mac| mac.chain_update(host_port).verify_slice(&hash).is_ok())
 }
 
 fn ssh_err(e: russh::keys::Error) -> CoreError {
@@ -309,5 +381,57 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn unparseable_openssh_line_does_not_hide_valid_entries() {
+        let (d, kh) = setup();
+        let (k1, k2) = (key(), key());
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "h ssh-dss AAAAB3NzaC1kc3MAAAA=\nh {}\n",
+                k1.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k1).unwrap(), HostKeyStatus::Known);
+        assert_eq!(
+            kh.check("h", 22, &k2).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                expected_fp: fingerprint(&k1)
+            }
+        );
+    }
+
+    #[test]
+    fn hashed_openssh_entry_known_and_mismatch() {
+        let (d, kh) = setup();
+        let (k1, k2) = (key(), key());
+        // hashed "example.com" (salt/hash from russh's own tests)
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "|1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak= {}\n",
+                k1.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            kh.check("example.com", 22, &k1).unwrap(),
+            HostKeyStatus::Known
+        );
+        assert_eq!(
+            kh.check("other.com", 22, &k1).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        assert_eq!(
+            kh.check("example.com", 22, &k2).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                expected_fp: fingerprint(&k1)
+            }
+        );
     }
 }
