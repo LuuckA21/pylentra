@@ -69,6 +69,13 @@ impl KnownHosts {
                         expected_fp,
                     });
                 }
+                // The user's own file may hold entries russh cannot parse (ssh-dss,
+                // unsupported types): skip it instead of blocking every connection.
+                Err(e)
+                    if source == KeySource::OpenSsh && !matches!(e, russh::keys::Error::IO(_)) =>
+                {
+                    log::warn!("ignoring unusable entry in OpenSSH known_hosts: {e}");
+                }
                 Err(e) => return Err(ssh_err(e)),
             }
         }
@@ -257,5 +264,50 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             format!("# note\n\nkeep1 {pk}\n# another\nkeep2 {pk}\n")
         );
+    }
+
+    #[test]
+    fn unparseable_openssh_entry_is_ignored() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            "h ssh-dss AAAAB3NzaC1kc3MAAAA=\n",
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Unknown);
+        kh.learn("h", 22, &k).unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Known);
+    }
+
+    #[test]
+    fn openssh_file_noise_does_not_error() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        let pk = other.to_openssh().unwrap();
+        let ssh = d.path().join("ssh_known_hosts");
+        fs::write(
+            &ssh,
+            format!(
+                "# comment\n\n@cert-authority *.x ssh-rsa AAAAB3NzaC1yc2E=\n@revoked h {pk}\n*.example.com {pk}\nwild.example.com {pk}\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Unknown);
+        assert_eq!(
+            kh.check("a.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        assert_eq!(
+            kh.check("wild.example.com", 22, &other).unwrap(),
+            HostKeyStatus::Known
+        );
+        assert!(matches!(
+            kh.check("wild.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                ..
+            }
+        ));
     }
 }
