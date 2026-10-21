@@ -106,3 +106,55 @@ test("local forward needs an IP bind address", async () => {
   ).toBe("true");
   expect(api.connectionSave).not.toHaveBeenCalled();
 });
+
+const secrets = () => {
+  const [, password, passphrase] = vi.mocked(api.connectionSave).mock.calls[0];
+  return { password, passphrase };
+};
+
+async function fillBasics() {
+  await type("Name", "web");
+  await type("Host", "example.com");
+  await type("Username", "luca");
+}
+
+test("password saved but left empty is sent as null", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.click(screen.getByLabelText("Save password in the keychain"));
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  expect(secrets()).toEqual({ password: null, passphrase: null });
+});
+
+test("a typed password is passed through", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.click(screen.getByLabelText("Save password in the keychain"));
+  await type("Password", "s3cret");
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  expect(secrets()).toEqual({ password: "s3cret", passphrase: null });
+});
+
+test("key passphrase: empty is null, typed is passed through", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.change(screen.getByLabelText("Method"), {
+    target: { value: "Key" },
+  });
+  await fireEvent.click(
+    screen.getByLabelText("Save passphrase in the keychain"),
+  );
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalledTimes(1));
+  expect(secrets()).toEqual({ password: null, passphrase: null });
+
+  await type("Passphrase", "hunter2");
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.connectionSave).mock.calls[1].slice(1)).toEqual([
+    null,
+    "hunter2",
+  ]);
+});

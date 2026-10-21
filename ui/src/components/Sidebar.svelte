@@ -1,13 +1,16 @@
 <script lang="ts">
   import { api } from "../lib/api";
   import type { Connection } from "../lib/bindings/Connection";
+  import type { Group } from "../lib/bindings/Group";
   import { t } from "../lib/i18n";
   import { modal } from "../lib/modal";
   import { matches } from "../lib/search";
   import {
     deleteConnection,
+    deleteGroup,
     library,
     saveConnection,
+    saveGroup,
   } from "../lib/stores/library.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
 
@@ -22,13 +25,24 @@
     onedit: (connection?: Connection) => void;
   } = $props();
 
-  type Menu = { conn: Connection; x: number; y: number; mode: "main" | "move" };
+  type Menu = {
+    conn?: Connection;
+    group?: Group;
+    x: number;
+    y: number;
+    mode: "main" | "move";
+  };
 
   let query = $state("");
   let collapsed = $state<Record<string, boolean>>({});
   let current = $state<string | null>(null);
   let menu = $state<Menu | null>(null);
   let confirm = $state<{ conn: Connection; names: string[] } | null>(null);
+  let confirmGroup = $state<Group | null>(null);
+  // `id` is set when renaming; a new group gets its id on save.
+  let groupDialog = $state<{ id?: string; name: string; error: string } | null>(
+    null,
+  );
   let listEl: HTMLElement | undefined = $state();
   let menuEl: HTMLElement | undefined = $state();
   let lastRow: HTMLElement | null = null;
@@ -78,13 +92,18 @@
     } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
       e.preventDefault();
       const r = row.getBoundingClientRect();
-      openMenu(conn, row, r.left + 24, r.bottom);
+      openMenu({ conn }, row, r.left + 24, r.bottom);
     }
   }
 
-  function openMenu(conn: Connection, row: HTMLElement, x: number, y: number) {
+  function openMenu(
+    target: Pick<Menu, "conn" | "group">,
+    row: HTMLElement,
+    x: number,
+    y: number,
+  ) {
     lastRow = row;
-    menu = { conn, x, y, mode: "main" };
+    menu = { ...target, x, y, mode: "main" };
   }
 
   function closeMenu(refocus = true) {
@@ -92,9 +111,11 @@
     if (refocus && lastRow?.isConnected) lastRow.focus();
   }
 
-  // Focus the first item whenever the menu opens or switches to the group list.
+  // Focus the first item whenever the menu opens or switches to the group list;
+  // the mode switch replaces the focused button, so `mode` must be read here.
   $effect(() => {
-    if (menu) menuEl?.querySelector<HTMLElement>("button")?.focus();
+    if (menu && menu.mode)
+      menuEl?.querySelector<HTMLElement>("button")?.focus();
   });
 
   function onmenukeydown(e: KeyboardEvent) {
@@ -160,6 +181,59 @@
     confirm = null;
     await run(deleteConnection(id));
   }
+
+  function onheaderkeydown(e: KeyboardEvent, group: Group) {
+    if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      e.preventDefault();
+      const el = e.currentTarget as HTMLElement;
+      const r = el.getBoundingClientRect();
+      openMenu({ group }, el, r.left + 24, r.bottom);
+    }
+  }
+
+  function startGroupDialog(group?: Group) {
+    closeMenu(false);
+    if (!group) lastRow = null; // closing returns focus to the New group button
+    groupDialog = { id: group?.id, name: group?.name ?? "", error: "" };
+  }
+
+  function closeGroupDialog() {
+    groupDialog = null;
+    if (lastRow?.isConnected) lastRow.focus();
+  }
+
+  async function submitGroup(e: SubmitEvent) {
+    e.preventDefault();
+    if (!groupDialog) return;
+    const name = groupDialog.name.trim();
+    if (!name) {
+      groupDialog.error = t("form.error.required");
+      return;
+    }
+    try {
+      await saveGroup({ id: groupDialog.id ?? crypto.randomUUID(), name });
+      closeGroupDialog();
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
+  function askDeleteGroup(group: Group) {
+    closeMenu(false);
+    confirmGroup = group;
+  }
+
+  function cancelDeleteGroup() {
+    confirmGroup = null;
+    if (lastRow?.isConnected) lastRow.focus();
+  }
+
+  async function doDeleteGroup() {
+    if (!confirmGroup) return;
+    const { id } = confirmGroup;
+    confirmGroup = null;
+    await run(deleteGroup(id));
+  }
 </script>
 
 <svelte:window
@@ -182,9 +256,14 @@
         }
       }}
     />
-    <button type="button" class="primary" onclick={() => onedit()}>
-      {t("sidebar.new")}
-    </button>
+    <div class="buttons">
+      <button type="button" class="primary" onclick={() => onedit()}>
+        {t("sidebar.new")}
+      </button>
+      <button type="button" onclick={() => startGroupDialog()}>
+        {t("sidebar.newGroup")}
+      </button>
+    </div>
   </div>
 
   <div class="list" bind:this={listEl}>
@@ -197,6 +276,19 @@
           id="grp-{section.id || 'none'}"
           aria-expanded={!shut}
           onclick={() => (collapsed[section.id] = !collapsed[section.id])}
+          oncontextmenu={(e) => {
+            if (!section.id) return;
+            e.preventDefault();
+            openMenu(
+              { group: { id: section.id, name: section.title } },
+              e.currentTarget,
+              e.clientX,
+              e.clientY,
+            );
+          }}
+          onkeydown={(e) =>
+            section.id &&
+            onheaderkeydown(e, { id: section.id, name: section.title })}
         >
           <span aria-hidden="true">{shut ? "▸" : "▾"}</span>
           {section.title}
@@ -216,7 +308,7 @@
                 onkeydown={(e) => onrowkeydown(e, conn)}
                 oncontextmenu={(e) => {
                   e.preventDefault();
-                  openMenu(conn, e.currentTarget, e.clientX, e.clientY);
+                  openMenu({ conn }, e.currentTarget, e.clientX, e.clientY);
                 }}
               >
                 <span class="name">{conn.name}</span>
@@ -253,48 +345,56 @@
     )}px"
     onkeydown={onmenukeydown}
   >
-    {#if m.mode === "main"}
-      <button
-        type="button"
-        role="menuitem"
-        onclick={() => {
-          closeMenu(false);
-          onedit(m.conn);
-        }}
-      >
-        {t("menu.edit")}
-      </button>
-      <button type="button" role="menuitem" onclick={() => duplicate(m.conn)}>
-        {t("menu.duplicate")}
-      </button>
-      <button type="button" role="menuitem" onclick={() => (m.mode = "move")}>
-        {t("menu.move")}
+    {#if m.group}
+      {@const g = m.group}
+      <button type="button" role="menuitem" onclick={() => startGroupDialog(g)}>
+        {t("menu.rename")}
       </button>
       <button
         type="button"
         role="menuitem"
         class="danger"
-        onclick={() => askDelete(m.conn)}
+        onclick={() => askDeleteGroup(g)}
       >
         {t("menu.delete")}
       </button>
-    {:else}
-      {#each [...library.groups].sort(byName) as g (g.id)}
+    {:else if m.conn}
+      {@const c = m.conn}
+      {#if m.mode === "main"}
         <button
           type="button"
           role="menuitem"
-          onclick={() => moveTo(m.conn, g.id)}
+          onclick={() => {
+            closeMenu(false);
+            onedit(c);
+          }}
         >
-          {g.name}
+          {t("menu.edit")}
         </button>
-      {/each}
-      <button
-        type="button"
-        role="menuitem"
-        onclick={() => moveTo(m.conn, null)}
-      >
-        {t("sidebar.noGroup")}
-      </button>
+        <button type="button" role="menuitem" onclick={() => duplicate(c)}>
+          {t("menu.duplicate")}
+        </button>
+        <button type="button" role="menuitem" onclick={() => (m.mode = "move")}>
+          {t("menu.move")}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          class="danger"
+          onclick={() => askDelete(c)}
+        >
+          {t("menu.delete")}
+        </button>
+      {:else}
+        {#each [...library.groups].sort(byName) as g (g.id)}
+          <button type="button" role="menuitem" onclick={() => moveTo(c, g.id)}>
+            {g.name}
+          </button>
+        {/each}
+        <button type="button" role="menuitem" onclick={() => moveTo(c, null)}>
+          {t("sidebar.noGroup")}
+        </button>
+      {/if}
     {/if}
   </div>
 {/if}
@@ -328,6 +428,72 @@
   </div>
 {/if}
 
+{#if groupDialog}
+  <div class="backdrop">
+    <div
+      class="dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="grp-title"
+      use:modal={closeGroupDialog}
+    >
+      <h2 id="grp-title">
+        {groupDialog.id ? t("group.titleRename") : t("group.titleNew")}
+      </h2>
+      <form onsubmit={submitGroup} novalidate>
+        <div class="field">
+          <label for="grp-name">{t("group.name")}</label>
+          <input
+            id="grp-name"
+            data-autofocus
+            bind:value={groupDialog.name}
+            aria-invalid={groupDialog.error ? "true" : undefined}
+            aria-describedby={groupDialog.error ? "grp-name-err" : undefined}
+          />
+          {#if groupDialog.error}
+            <p class="error" id="grp-name-err">{groupDialog.error}</p>
+          {/if}
+        </div>
+        <div class="actions">
+          <button type="button" onclick={closeGroupDialog}
+            >{t("common.cancel")}</button
+          >
+          <button type="submit" class="primary">{t("common.save")}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
+{#if confirmGroup}
+  <div class="backdrop">
+    <div
+      class="dialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="delgrp-title"
+      aria-describedby="delgrp-body"
+      use:modal={cancelDeleteGroup}
+    >
+      <h2 id="delgrp-title">{t("group.deleteTitle")}</h2>
+      <p id="delgrp-body">
+        {t("group.deleteConfirm", {
+          name: confirmGroup.name,
+          noGroup: t("sidebar.noGroup"),
+        })}
+      </p>
+      <div class="actions">
+        <button type="button" data-autofocus onclick={cancelDeleteGroup}
+          >{t("common.cancel")}</button
+        >
+        <button type="button" class="danger" onclick={doDeleteGroup}
+          >{t("common.delete")}</button
+        >
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .sidebar {
     display: flex;
@@ -341,6 +507,24 @@
     flex-direction: column;
     gap: 6px;
     padding: 8px;
+  }
+  .buttons {
+    display: flex;
+    gap: 6px;
+  }
+  .buttons button {
+    flex: 1;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 12px;
+  }
+  .error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 12px;
   }
   .list {
     flex: 1;
