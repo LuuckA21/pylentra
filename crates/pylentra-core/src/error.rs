@@ -46,6 +46,9 @@ pub enum CoreError {
     ReadOnly,
     #[error("{what} not found")]
     NotFound { what: String },
+    /// The user cancelled a prompt; the session closes as `UserClosed`, never shown as an error.
+    #[error("cancelled by the user")]
+    Cancelled,
     #[error("SSH error: {0}")]
     Ssh(String),
     #[error("I/O error: {0}")]
@@ -89,6 +92,7 @@ impl CoreError {
             Self::UnsupportedVersion { .. } => "config.unsupported_version",
             Self::ReadOnly => "config.read_only",
             Self::NotFound { .. } => "not_found",
+            Self::Cancelled => "cancelled",
             Self::Ssh(_) => "ssh.protocol",
             Self::Io(_) => "io",
         }
@@ -128,7 +132,8 @@ impl CoreError {
             | Self::ForwardRejected
             | Self::JumpCycle
             | Self::JumpTooDeep
-            | Self::ReadOnly => vec![],
+            | Self::ReadOnly
+            | Self::Cancelled => vec![],
         };
         ApiError {
             code: self.code().into(),

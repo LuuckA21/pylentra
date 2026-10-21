@@ -1622,6 +1622,7 @@ name = "pylentra-core"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
+ "futures",
  "hmac",
  "keyring",
  "log",

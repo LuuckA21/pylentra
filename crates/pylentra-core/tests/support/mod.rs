@@ -20,9 +20,14 @@ pub struct TestServerConfig {
     pub password: Option<String>,
     /// (prompt, expected answer)
     pub kbd_interactive: Option<(String, String)>,
+    /// Whether the keyboard-interactive prompt echoes the answer.
+    pub kbd_echo: bool,
     pub authorized_key: Option<PublicKey>,
     /// false: password is not advertised, only the other configured methods.
     pub allow_password_method: bool,
+    /// true: a wrong password withdraws the method (russh's default); false: retries are
+    /// allowed, like OpenSSH.
+    pub single_password_try: bool,
 }
 
 impl Default for TestServerConfig {
@@ -30,8 +35,10 @@ impl Default for TestServerConfig {
         Self {
             password: None,
             kbd_interactive: None,
+            kbd_echo: false,
             authorized_key: None,
             allow_password_method: true,
+            single_password_try: false,
         }
     }
 }
@@ -71,7 +78,7 @@ impl TestServer {
         }
         let config = Arc::new(Config {
             keys: vec![key],
-            methods,
+            methods: methods.clone(),
             // Rejections are instant so failing-auth tests stay fast.
             auth_rejection_time: Duration::ZERO,
             auth_rejection_time_initial: Some(Duration::ZERO),
@@ -85,6 +92,7 @@ impl TestServer {
         let accepted_auth = Arc::new(Mutex::new(Vec::new()));
         let mut server = Acceptor {
             cfg: Arc::new(cfg),
+            methods,
             resizes: resizes.clone(),
             ptys: ptys.clone(),
             accepted_auth: accepted_auth.clone(),
@@ -106,6 +114,7 @@ impl TestServer {
 #[derive(Clone)]
 struct Acceptor {
     cfg: Arc<TestServerConfig>,
+    methods: MethodSet,
     resizes: Arc<Mutex<Vec<(u32, u32)>>>,
     ptys: Arc<Mutex<Vec<(String, u32, u32)>>>,
     accepted_auth: Arc<Mutex<Vec<String>>>,
@@ -116,6 +125,7 @@ impl Server for Acceptor {
     fn new_client(&mut self, _: Option<SocketAddr>) -> ConnHandler {
         ConnHandler {
             cfg: self.cfg.clone(),
+            methods: self.methods.clone(),
             resizes: self.resizes.clone(),
             ptys: self.ptys.clone(),
             accepted_auth: self.accepted_auth.clone(),
@@ -126,6 +136,8 @@ impl Server for Acceptor {
 
 struct ConnHandler {
     cfg: Arc<TestServerConfig>,
+    /// Advertised methods, re-offered after a wrong password or answer.
+    methods: MethodSet,
     resizes: Arc<Mutex<Vec<(u32, u32)>>>,
     ptys: Arc<Mutex<Vec<(String, u32, u32)>>>,
     accepted_auth: Arc<Mutex<Vec<String>>>,
@@ -149,6 +161,14 @@ impl ConnHandler {
             .push(method.to_string());
         Auth::Accept
     }
+
+    /// Rejects but lets the client try again, like OpenSSH (russh would drop the method).
+    fn retry(&self) -> Auth {
+        Auth::Reject {
+            proceed_with_methods: Some(self.methods.clone()),
+            partial_success: false,
+        }
+    }
 }
 
 impl Handler for ConnHandler {
@@ -157,8 +177,10 @@ impl Handler for ConnHandler {
     async fn auth_password(&mut self, _user: &str, password: &str) -> Result<Auth, Self::Error> {
         if self.cfg.allow_password_method && self.cfg.password.as_deref() == Some(password) {
             Ok(self.accept("password"))
-        } else {
+        } else if self.cfg.single_password_try {
             Ok(Auth::reject())
+        } else {
+            Ok(self.retry())
         }
     }
 
@@ -175,13 +197,13 @@ impl Handler for ConnHandler {
             return Ok(Auth::Partial {
                 name: Cow::Borrowed("test"),
                 instructions: Cow::Borrowed(""),
-                prompts: Cow::Owned(vec![(Cow::Owned(prompt), false)]),
+                prompts: Cow::Owned(vec![(Cow::Owned(prompt), self.cfg.kbd_echo)]),
             });
         };
         if r.next().as_deref() == Some(answer.as_bytes()) {
             Ok(self.accept("keyboard-interactive"))
         } else {
-            Ok(Auth::reject())
+            Ok(self.retry())
         }
     }
 

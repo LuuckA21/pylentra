@@ -337,19 +337,6 @@ async fn missing_password_prompts() {
 }
 
 #[tokio::test]
-async fn wrong_password_fails_auth() {
-    let server = pw_server().await;
-    let env = env();
-    let c = trusted_conn(&env, &server);
-    env.secrets
-        .set(c.id, SecretKind::Password, &"nope".to_string().into())
-        .unwrap();
-    let sink = Arc::new(CollectSink::default());
-    env.mgr.open(vec![c], 80, 24, sink.clone());
-    assert_eq!(closed_code(&sink).await, "auth.all_failed");
-}
-
-#[tokio::test]
 async fn resize_reaches_server() {
     let server = pw_server().await;
     let env = env();

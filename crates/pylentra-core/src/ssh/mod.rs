@@ -1,3 +1,4 @@
+mod auth;
 pub mod events;
 mod handler;
 mod session;

@@ -8,20 +8,20 @@ use std::time::Duration;
 
 use russh::client::{self, Handle, Msg};
 use russh::{Channel, ChannelMsg, ChannelReadHalf, ChannelWriteHalf, Disconnect};
-use secrecy::{ExposeSecret, SecretString};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use super::events::{CloseReason, PromptAnswer, PromptKind, SessionEvent, Stage};
+use super::auth::{AuthCtx, authenticate};
+use super::events::{CloseReason, PromptAnswer, SessionEvent, Stage};
 use super::handler::ClientHandler;
 use super::{PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
 use crate::known_hosts::KnownHosts;
 use crate::model::Connection;
-use crate::secrets::{SecretKind, SecretStore};
+use crate::secrets::SecretStore;
 
 const TERM: &str = "xterm-256color";
 /// How long `close` waits for one session to wind down before aborting it.
@@ -248,6 +248,7 @@ async fn drive(
         tokio::select! {
             r = &mut setup => match r {
                 Ok(v) => break v,
+                Err(CoreError::Cancelled) => return CloseReason::UserClosed,
                 Err(e) => return error_reason(e),
             },
             cmd = rx.recv() => match cmd {
@@ -274,7 +275,14 @@ async fn open_shell(
     ctx.sink.event(SessionEvent::Status {
         stage: Stage::Authenticating,
     });
-    authenticate(ctx, &mut handle, target).await?;
+    let auth = AuthCtx {
+        secrets: &*ctx.secrets,
+        prompts: &ctx.broker,
+        session: ctx.id,
+        sink: &*ctx.sink,
+        opts: &ctx.opts,
+    };
+    authenticate(&mut handle, target, &auth).await?;
     let channel = handle.channel_open_session().await?;
     channel
         .request_pty(false, TERM, cols.into(), rows.into(), 0, 0, &[])
@@ -363,46 +371,6 @@ async fn timeout_unless_paused<F: Future>(
             }
         }
     }
-}
-
-/// Password only: the saved one, else a `SecretPrompt`.
-// Task 7 replaces this with the full method chain (key, agent, keyboard-interactive).
-async fn authenticate(
-    ctx: &Ctx,
-    handle: &mut Handle<ClientHandler>,
-    target: &Connection,
-) -> Result<(), CoreError> {
-    let saved = ctx
-        .secrets
-        .get(target.id, SecretKind::Password)
-        .unwrap_or_else(|e| {
-            log::warn!("cannot read the saved password: {e}");
-            None
-        });
-    let (password, save) = match saved {
-        Some(p) => (p, false),
-        None => {
-            let prompt = SessionEvent::SecretPrompt {
-                kind: PromptKind::Password,
-            };
-            match ctx.broker.ask(ctx.id, &*ctx.sink, prompt).await {
-                PromptAnswer::Secret { value, save } => (SecretString::from(value), save),
-                _ => return Err(CoreError::AuthFailed { tried: vec![] }),
-            }
-        }
-    };
-    let result = handle
-        .authenticate_password(target.username.clone(), password.expose_secret())
-        .await?;
-    if !result.success() {
-        return Err(CoreError::AuthFailed {
-            tried: vec!["password".into()],
-        });
-    }
-    if save && let Err(e) = ctx.secrets.set(target.id, SecretKind::Password, &password) {
-        log::warn!("cannot save the password: {e}");
-    }
-    Ok(())
 }
 
 async fn io_loop(

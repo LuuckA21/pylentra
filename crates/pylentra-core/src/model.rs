@@ -1,7 +1,7 @@
 use crate::error::CoreError;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -105,6 +105,15 @@ pub enum Warning {
     KeyFileMissing { path: PathBuf },
 }
 
+/// Resolves a leading `~` (as in `~/.ssh/id_ed25519`) to the home directory.
+/// Other paths, `~user/...` included, come back unchanged.
+pub fn expand_home(path: &Path) -> PathBuf {
+    match (path.strip_prefix("~"), std::env::home_dir()) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 fn invalid(field: impl Into<String>, reason: &str) -> CoreError {
     CoreError::InvalidInput {
         field: field.into(),
@@ -165,7 +174,7 @@ impl Connection {
         let mut warnings = Vec::new();
         if let AuthMethod::Key { path, .. } = &self.auth {
             // The key may live on a removable disk, so a missing file only warns.
-            if !path.exists() {
+            if !expand_home(path).exists() {
                 warnings.push(Warning::KeyFileMissing { path: path.clone() });
             }
         }
@@ -254,6 +263,29 @@ mod tests {
             c.validate().unwrap(),
             vec![Warning::KeyFileMissing { path }]
         );
+    }
+
+    #[test]
+    fn expand_home_resolves_leading_tilde_only() {
+        let home = std::env::home_dir().unwrap();
+        assert_eq!(
+            expand_home(Path::new("~/.ssh/id_ed25519")),
+            home.join(".ssh/id_ed25519")
+        );
+        for unchanged in ["/etc/key", "relative/key", "~other/key", "a/~/key"] {
+            assert_eq!(expand_home(Path::new(unchanged)), PathBuf::from(unchanged));
+        }
+    }
+
+    #[test]
+    fn key_path_with_tilde_is_expanded_before_the_missing_check() {
+        let mut c = conn();
+        // `~` alone is the home directory, which exists.
+        c.auth = AuthMethod::Key {
+            path: PathBuf::from("~"),
+            save_passphrase: false,
+        };
+        assert_eq!(c.validate().unwrap(), vec![]);
     }
 
     #[test]
