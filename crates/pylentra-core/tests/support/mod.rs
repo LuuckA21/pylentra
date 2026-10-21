@@ -41,6 +41,8 @@ pub struct TestServer {
     pub host_key: PublicKey,
     /// (cols, rows) of every window-change request received.
     pub resizes: Arc<Mutex<Vec<(u32, u32)>>>,
+    /// (term, cols, rows) of every pty-req received.
+    pub ptys: Arc<Mutex<Vec<(String, u32, u32)>>>,
     /// SSH method names ("password", "keyboard-interactive", "publickey") that succeeded.
     pub accepted_auth: Arc<Mutex<Vec<String>>>,
     task: JoinHandle<()>,
@@ -79,10 +81,12 @@ impl TestServer {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
         let addr = listener.local_addr().expect("local addr");
         let resizes = Arc::new(Mutex::new(Vec::new()));
+        let ptys = Arc::new(Mutex::new(Vec::new()));
         let accepted_auth = Arc::new(Mutex::new(Vec::new()));
         let mut server = Acceptor {
             cfg: Arc::new(cfg),
             resizes: resizes.clone(),
+            ptys: ptys.clone(),
             accepted_auth: accepted_auth.clone(),
         };
         let task = tokio::spawn(async move {
@@ -92,6 +96,7 @@ impl TestServer {
             addr,
             host_key,
             resizes,
+            ptys,
             accepted_auth,
             task,
         }
@@ -102,6 +107,7 @@ impl TestServer {
 struct Acceptor {
     cfg: Arc<TestServerConfig>,
     resizes: Arc<Mutex<Vec<(u32, u32)>>>,
+    ptys: Arc<Mutex<Vec<(String, u32, u32)>>>,
     accepted_auth: Arc<Mutex<Vec<String>>>,
 }
 
@@ -111,6 +117,7 @@ impl Server for Acceptor {
         ConnHandler {
             cfg: self.cfg.clone(),
             resizes: self.resizes.clone(),
+            ptys: self.ptys.clone(),
             accepted_auth: self.accepted_auth.clone(),
             tasks: Vec::new(),
         }
@@ -120,6 +127,7 @@ impl Server for Acceptor {
 struct ConnHandler {
     cfg: Arc<TestServerConfig>,
     resizes: Arc<Mutex<Vec<(u32, u32)>>>,
+    ptys: Arc<Mutex<Vec<(String, u32, u32)>>>,
     accepted_auth: Arc<Mutex<Vec<String>>>,
     /// Forward listeners and pipes; aborted when the client connection ends.
     tasks: Vec<JoinHandle<()>>,
@@ -208,14 +216,18 @@ impl Handler for ConnHandler {
     async fn pty_request(
         &mut self,
         channel: ChannelId,
-        _term: &str,
-        _cols: u32,
-        _rows: u32,
+        term: &str,
+        cols: u32,
+        rows: u32,
         _pix_w: u32,
         _pix_h: u32,
         _modes: &[(russh::Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        self.ptys
+            .lock()
+            .expect("ptys")
+            .push((term.to_string(), cols, rows));
         session.channel_success(channel)
     }
 

@@ -52,6 +52,13 @@ pub enum CoreError {
     Io(#[from] std::io::Error),
 }
 
+// Lets `CoreError` be the russh handler error, so host-key decisions surface unchanged.
+impl From<russh::Error> for CoreError {
+    fn from(e: russh::Error) -> Self {
+        Self::Ssh(e.to_string())
+    }
+}
+
 /// Error as seen by the UI: a stable code plus params, translated on the UI side.
 #[derive(Serialize, Clone, Debug, PartialEq, TS)]
 #[ts(export)]
