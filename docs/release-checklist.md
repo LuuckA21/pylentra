@@ -4,6 +4,12 @@ Repeat every section below on **Linux** and on **Windows** before publishing
 the draft release. They need a display and real installers, so CI does not
 cover them.
 
+No build tools needed: every PR's **Preview build** workflow uploads debug
+bundles with devtools (`pylentra-preview-Linux`: AppImage and `.deb`;
+`pylentra-preview-Windows`: NSIS installer) as run artifacts. They are the
+`pnpm tauri build --debug` builds step 5 asks for. Windows shows a SmartScreen
+warning (unsigned): "More info → Run anyway".
+
 ## Terminal smoke test
 
 Run on each platform before a release; it needs a display, so CI does not

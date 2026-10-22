@@ -1,0 +1,53 @@
+name: Preview build
+
+# Unsigned debug bundles (devtools enabled) for manual smoke testing; see docs/release-checklist.md.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    name: bundle (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    env:
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # No signing key on PRs, so updater artifacts are off.
+      - run: pnpm tauri build --debug --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pylentra-preview-${{ runner.os }}
+          path: |
+            target/debug/bundle/appimage/*.AppImage
+            target/debug/bundle/deb/*.deb
+            target/debug/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
