@@ -1,0 +1,47 @@
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+# Each ignore is a transitive dependency we cannot fix from here; revisit when
+# the upstream crates (russh, keyring, tauri) bump them.
+ignore = [
+    # rsa (Marvin timing side channel) comes in through russh; no patched
+    # release exists upstream. Pylentra is an SSH client that signs with the
+    # user's own local key, and RSA is only one of several supported key types.
+    "RUSTSEC-2023-0071",
+    # Unmaintained, not vulnerable: zbus was merged from three crates into one
+    # in 6.0; keyring 4.2 (Secret Service on Linux) and tauri still use zbus 5.
+    "RUSTSEC-2026-0370", # zvariant
+    "RUSTSEC-2026-0371", # zbus_names
+    "RUSTSEC-2026-0372", # zvariant_derive
+    # Unmaintained proc macro, pulled by gtk-rs 0.18 (tauri/muda on Linux);
+    # build-time only.
+    "RUSTSEC-2024-0370",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+exceptions = [
+    # Build-time only (system-deps -> cfg-expr, via tauri's Linux GTK
+    # bindings); the LLVM exception only loosens the Apache-2.0 terms.
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "target-lexicon" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

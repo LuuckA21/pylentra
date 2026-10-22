@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    env:
+      # aws-lc-sys (via russh) needs NASM on Windows x86-64; the crate ships
+      # prebuilt NASM objects, so use them instead of installing NASM.
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      # src-tauri's generate_context! needs the frontend dist directory to exist.
+      - name: Create placeholder ui/dist
+        shell: bash
+        run: mkdir -p ui/dist
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  bindings:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p pylentra-core
+      - name: Check ts-rs bindings are up to date
+        run: git diff --exit-code ui/src/lib/bindings
+
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  ui:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir ui lint
+      - run: pnpm --dir ui check
+      - run: pnpm --dir ui test
+
+  openssh-compat:
+    runs-on: ubuntu-22.04
+    env:
+      COMPOSE_FILE: crates/pylentra-core/tests/compat/docker-compose.yml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: docker compose up -d --build --wait
+      - run: PYLENTRA_COMPAT=1 cargo test -p pylentra-core --test openssh_compat -- --ignored
+      - name: Container logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop containers
+        if: always()
+        run: docker compose down
