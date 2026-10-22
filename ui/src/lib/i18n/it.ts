@@ -74,6 +74,9 @@ export const it: Record<MessageKey, string> = {
   "form.error.ip": "Inserisci un indirizzo IP (IPv4 o IPv6).",
   "warning.keyFileMissing": "File chiave non trovato: {path}",
 
+  "update.available": "Versione {version} disponibile",
+  "update.install": "Installa e riavvia",
+  "update.installing": "Installazione\u2026",
   "banner.title": "Avvisi all'avvio",
   "main.placeholder": "Apri una connessione dall'elenco.",
   "tabs.label": "Sessioni",

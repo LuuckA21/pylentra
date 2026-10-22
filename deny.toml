@@ -22,6 +22,14 @@ ignore = [
     # Unmaintained proc macro, pulled by gtk-rs 0.18 (tauri/muda on Linux);
     # build-time only.
     "RUSTSEC-2024-0370",
+    # zip 4.x (via tauri-plugin-updater 2.14, which pins it) mishandles
+    # symlinks and SUID bits in ZipArchive::extract. Not reachable in practice:
+    # the archive is the update bundle, extracted only after its minisign
+    # signature verified against our pubkey, by a non-privileged user process.
+    # Fix is zip >= 9; revisit when the updater plugin bumps it.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
 ]
 
 [licenses]

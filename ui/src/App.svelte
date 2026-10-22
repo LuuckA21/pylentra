@@ -6,6 +6,7 @@
   import Sidebar from "./components/Sidebar.svelte";
   import TerminalTab from "./components/TerminalTab.svelte";
   import Toasts from "./components/Toasts.svelte";
+  import UpdateBanner from "./components/UpdateBanner.svelte";
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
   import { library, refresh } from "./lib/stores/library.svelte";
@@ -39,6 +40,7 @@
 
 <div class="app">
   <Banner />
+  <UpdateBanner />
   <div class="body">
     <Sidebar
       {openConnectionIds}

@@ -35,6 +35,8 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let openssh = dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"));

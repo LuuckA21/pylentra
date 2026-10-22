@@ -1,5 +1,9 @@
 # Release checklist
 
+Repeat every section below on **Linux** and on **Windows** before publishing
+the draft release. They need a display and real installers, so CI does not
+cover them.
+
 ## Terminal smoke test
 
 Run on each platform before a release; it needs a display, so CI does not
@@ -35,3 +39,50 @@ cover it.
    ```sh
    docker compose -f crates/pylentra-core/tests/compat/docker-compose.yml down
    ```
+
+## Jump host
+
+1. Create a connection `bastion` to `127.0.0.1:2201` (user `tester`) and a
+   connection `target` to the host behind it, with `bastion` as jump host.
+2. Open `target`: one host key prompt per hop, then a shell on the target.
+3. Delete `bastion`: the confirmation lists `target` as a dependent that
+   will lose its jump host.
+
+## Port forwards
+
+1. Local forward: on a connection add a local forward from
+   `127.0.0.1:8080` to a service reachable from the server, start it from the
+   port forwarding panel, and check `curl http://127.0.0.1:8080` reaches it.
+2. Remote forward: add one that listens on the server and points to a local
+   service, start it, and check the server can reach the local service.
+3. Stop each forward: the port is released immediately.
+4. Bind a local forward to a port already in use: the panel shows an error and
+   the session stays open.
+
+## Keychain
+
+1. Save a connection with a password and tick "Save password in the keychain": reconnect, no
+   prompt.
+2. Linux with a Secret Service (GNOME Keyring / KWallet): the entry
+   `me.luucka.pylentra` appears in the keychain. Windows: it appears in
+   Credential Manager.
+3. Linux without a Secret Service: the password is asked at every connection
+   and the app does not crash.
+4. Delete the connection: the keychain entry is removed.
+
+## Language
+
+1. Fresh profile with the system language set to Italian: the UI starts in
+   Italian. With any other language: English.
+2. Settings: set Language to English / Italiano, every visible string changes without a restart.
+
+## Update from the previous version
+
+1. Install the previous release (AppImage / `.deb` on Linux, installer on
+   Windows) and keep some connections saved.
+2. Publish the new release (un-draft it) and start the old version: the
+   "Version X available" banner appears.
+3. Click "Install and restart": the app restarts on the new version
+   (Windows installs in passive mode) and the connections are still there.
+4. Offline start: no banner and no error shown.
+5. Download the assets and verify them with `sha256sum -c SHA256SUMS.txt`.

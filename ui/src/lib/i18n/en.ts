@@ -71,6 +71,9 @@ export const en = {
   "form.error.ip": "Enter an IP address (IPv4 or IPv6).",
   "warning.keyFileMissing": "Key file not found: {path}",
 
+  "update.available": "Version {version} available",
+  "update.install": "Install and restart",
+  "update.installing": "Installing\u2026",
   "banner.title": "Startup warnings",
   "main.placeholder": "Open a connection from the list.",
   "tabs.label": "Sessions",
