@@ -2,8 +2,10 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
+vi.mock("@tauri-apps/plugin-log", () => ({ warn: vi.fn() }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 
+import { warn } from "@tauri-apps/plugin-log";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { setLang } from "../lib/i18n";
@@ -31,11 +33,12 @@ test("shows banner when update available", async () => {
 });
 
 test("no banner and no throw when check rejects", async () => {
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.mocked(check).mockRejectedValue(new Error("offline"));
   const { container } = render(UpdateBanner);
 
-  await waitFor(() => expect(warn).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("offline")),
+  );
   expect(container.querySelector(".update")).toBeNull();
   expect(screen.queryByRole("button")).toBeNull();
 });

@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "log:allow-log",
     "updater:default",
     "process:allow-restart",
     {

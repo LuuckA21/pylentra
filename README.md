@@ -19,8 +19,9 @@ check it against `SHA256SUMS.txt` (`sha256sum -c SHA256SUMS.txt`).
 - **Windows:** run the `Pylentra_*-setup.exe` installer (per-user, no admin
   rights needed).
 
-Once installed, Pylentra checks for updates at startup and offers to install
-and restart from a banner.
+Once installed, Pylentra checks for updates at startup. AppImage and Windows
+installs get a banner offering to install and restart. **`.deb` installs do
+not auto-update**: install the new `.deb` over the old one.
 
 ## Known limitations
 
@@ -36,6 +37,9 @@ and restart from a banner.
 - **`known_hosts`:** `@revoked` and `@cert-authority` markers and wildcard host
   patterns in `~/.ssh/known_hosts` are not honoured. Pylentra only reads that
   file and never writes to `~/.ssh`.
+- **Auto-update covers the AppImage and the Windows installer only.** `.deb`
+  users update manually by installing the new package (`sudo apt install
+./Pylentra_*_amd64.deb`); a banner shown there cannot install the update.
 - **macOS is not supported** in v1.
 
 ## Build from source

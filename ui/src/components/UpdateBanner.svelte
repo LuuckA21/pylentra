@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { warn } from "@tauri-apps/plugin-log";
   import { relaunch } from "@tauri-apps/plugin-process";
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import { t } from "../lib/i18n";
@@ -11,7 +12,7 @@
   onMount(() => {
     check()
       .then((u) => (update = u))
-      .catch((e) => console.warn("update check failed", e));
+      .catch((e) => warn(`update check failed: ${e}`));
   });
 
   async function install() {
@@ -21,7 +22,7 @@
       await update.downloadAndInstall();
       await relaunch();
     } catch (e) {
-      console.warn("update install failed", e);
+      warn(`update install failed: ${e}`);
       installing = false;
     }
   }
