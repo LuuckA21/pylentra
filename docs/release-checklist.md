@@ -30,8 +30,12 @@ cover it.
    - run `exit`: the tab shows "Session ended. Press Enter to reconnect.";
      press Enter and the session reconnects in the same tab (no host key
      prompt this time).
-5. In the devtools console, confirm the `data` channel delivers an
-   `ArrayBuffer` (spec §13.3). If it delivers an array of numbers instead,
+5. On a release build, not `tauri dev` (which serves the page from the Vite
+   dev server instead of the bundled assets): build with
+   `pnpm tauri build --debug`, which embeds `ui/dist` behind the production CSP
+   like `pnpm tauri build` but keeps devtools. Open a session, print more than 1 KB
+   (`seq 1 1000`) and confirm in the devtools console that the `data` channel
+   delivers an `ArrayBuffer` (spec §13.3). If it delivers an array of numbers instead,
    apply the spec's fallback (base64 on the event channel) and record it in the
    CHANGELOG.
 6. Stop the servers:

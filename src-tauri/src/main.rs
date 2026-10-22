@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pylentra_core::secrets::KeyringStore;
+use tauri::webview::PageLoadEvent;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
@@ -46,6 +47,19 @@ fn main() {
                 Arc::new(KeyringStore),
             )?);
             Ok(())
+        })
+        // A reload (F5, context menu) drops the page that owned the sessions;
+        // close them so ports and channels are not left running unseen. The
+        // first load finds no sessions. Spawned: this runs on the main thread.
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                let app = webview.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        state.sessions.close_all(EXIT_CLOSE_TIMEOUT).await;
+                    }
+                });
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::library_get,

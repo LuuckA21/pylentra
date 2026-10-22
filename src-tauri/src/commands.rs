@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use pylentra_core::error::{ApiError, CoreError};
-use pylentra_core::model::{Connection, ForwardRule, Group, Settings, Warning};
+use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
 use pylentra_core::secrets::SecretKind;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
 use pylentra_core::ssh::{SessionId, SessionSink};
@@ -56,11 +56,28 @@ pub fn do_connection_save(
     // Held throughout, so the checked library is the one we write to.
     let mut store = state.store();
     store.check_connection(&connection)?;
-    for (kind, value) in [
-        (SecretKind::Password, password),
-        (SecretKind::Passphrase, passphrase),
+    // Sessions read the keychain regardless of the flag, so an unticked
+    // "save" must forget the secret. Forgetting is best effort, like
+    // delete_connection: a missing keychain must not block the save.
+    let (keep_password, keep_passphrase) = match connection.auth {
+        AuthMethod::Password { save } => (save, false),
+        AuthMethod::Key {
+            save_passphrase, ..
+        } => (false, save_passphrase),
+        AuthMethod::Agent => (false, false),
+    };
+    for (kind, keep, value) in [
+        (SecretKind::Password, keep_password, password),
+        (SecretKind::Passphrase, keep_passphrase, passphrase),
     ] {
-        if let Some(value) = value {
+        if !keep {
+            if let Err(e) = state.secrets.delete(connection.id, kind) {
+                log::warn!(
+                    "could not delete {kind:?} of connection {}: {e}",
+                    connection.id
+                );
+            }
+        } else if let Some(value) = value {
             state.secrets.set(connection.id, kind, &value.into())?;
         }
     }
@@ -279,7 +296,6 @@ pub fn log_dir(app: AppHandle) -> Result<String, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pylentra_core::model::AuthMethod;
     use pylentra_core::secrets::{FailingSecretStore, MemorySecretStore, SecretStore};
     use secrecy::ExposeSecret;
     use tempfile::TempDir;
@@ -316,16 +332,11 @@ mod tests {
     fn connection_save_stores_secrets_before_upsert() {
         let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
         let c = conn("a");
-        let warnings =
-            do_connection_save(&state, c.clone(), Some("pw".into()), Some("pp".into())).unwrap();
+        let warnings = do_connection_save(&state, c.clone(), Some("pw".into()), None).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(
             secret(&state, c.id, SecretKind::Password).as_deref(),
             Some("pw")
-        );
-        assert_eq!(
-            secret(&state, c.id, SecretKind::Passphrase).as_deref(),
-            Some("pp")
         );
         assert_eq!(do_library_get(&state).connections, vec![c]);
     }
@@ -344,6 +355,54 @@ mod tests {
             assert_eq!(secret(&state, c.id, SecretKind::Password), None);
         }
         assert!(do_library_get(&state).connections.is_empty());
+    }
+
+    #[test]
+    fn connection_save_forgets_secrets_whose_save_is_unticked() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let c = conn("a");
+        do_connection_save(&state, c.clone(), Some("pw".into()), Some("pp".into())).unwrap();
+        // Password kept while ticked; the passphrase has no use under Password auth.
+        assert_eq!(
+            secret(&state, c.id, SecretKind::Password).as_deref(),
+            Some("pw")
+        );
+        assert_eq!(secret(&state, c.id, SecretKind::Passphrase), None);
+
+        let key = Connection {
+            auth: AuthMethod::Key {
+                path: "/k".into(),
+                save_passphrase: true,
+            },
+            ..c.clone()
+        };
+        do_connection_save(&state, key.clone(), None, Some("pp".into())).unwrap();
+        assert_eq!(secret(&state, c.id, SecretKind::Password), None);
+        assert_eq!(
+            secret(&state, c.id, SecretKind::Passphrase).as_deref(),
+            Some("pp")
+        );
+
+        let unticked = Connection {
+            auth: AuthMethod::Key {
+                path: "/k".into(),
+                save_passphrase: false,
+            },
+            ..c.clone()
+        };
+        do_connection_save(&state, unticked, None, None).unwrap();
+        assert_eq!(secret(&state, c.id, SecretKind::Passphrase), None);
+    }
+
+    #[test]
+    fn connection_save_survives_failing_secret_delete() {
+        let (_d, state) = state_with(Arc::new(FailingSecretStore));
+        let c = Connection {
+            auth: AuthMethod::Agent,
+            ..conn("a")
+        };
+        do_connection_save(&state, c.clone(), None, None).unwrap();
+        assert_eq!(do_library_get(&state).connections, vec![c]);
     }
 
     #[test]
