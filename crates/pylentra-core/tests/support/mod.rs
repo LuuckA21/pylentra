@@ -86,6 +86,11 @@ impl TestServer {
             // Rejections are instant so failing-auth tests stay fast.
             auth_rejection_time: Duration::ZERO,
             auth_rejection_time_initial: Some(Duration::ZERO),
+            // russh stops reading while it flushes, so a russh client and a russh
+            // server can both block writing a full window into small socket
+            // buffers (Windows loopback). OpenSSH keeps reading; a small window
+            // here keeps the client's in-flight data below any socket buffer.
+            window_size: 16 * 1024,
             ..Default::default()
         });
 
