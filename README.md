@@ -92,9 +92,11 @@ The current public key is minisign key ID `590862C6663206ED`.
 
 Per release: bump `version` in the root `Cargo.toml`, update `CHANGELOG.md`,
 walk through [`docs/release-checklist.md`](docs/release-checklist.md), then
-push a `vX.Y.Z` tag. The `Release` workflow builds Linux and Windows, creates
-a **draft** GitHub release with `latest.json` and `SHA256SUMS.txt`; publish
-the draft once the checklist passes.
+start the `Release` workflow on `main` (Actions → Release → Run workflow), or
+push a `vX.Y.Z` tag. It builds Linux and Windows and creates a **draft**
+GitHub release `vX.Y.Z` (from the workspace version) with `latest.json` and
+`SHA256SUMS.txt`; publishing the draft creates the tag. A manual run stops if
+that tag already exists.
 
 ## License
 
