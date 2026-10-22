@@ -138,7 +138,8 @@ struct Secrets<'c, 'a> {
     saved: Option<SecretString>,
     prompts: u8,
     method: &'static str,
-    /// Typed at the latest prompt with `save` ticked: written to the keychain on success.
+    /// Typed at the latest password prompt with `save` ticked, reset by every new attempt:
+    /// written to the keychain on success.
     typed: Option<SecretString>,
 }
 
@@ -154,7 +155,6 @@ impl Secrets<'_, '_> {
             return Err(self.failed());
         }
         self.prompts += 1;
-        self.typed = None;
         Ok(())
     }
 
@@ -202,6 +202,8 @@ async fn keyboard_interactive<H: Handler>(
     user: &str,
     src: &mut Secrets<'_, '_>,
 ) -> Result<bool, CoreError> {
+    // A password typed in an earlier, failed exchange is never saved.
+    src.typed = None;
     let mut reply = handle
         .authenticate_keyboard_interactive_start(user, None)
         .await?;

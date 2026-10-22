@@ -57,10 +57,11 @@ pub(crate) async fn connect_chain(
     });
     let mut bastions: Vec<Handle<ClientHandler>> = Vec::with_capacity(via.len());
     for conn in via {
-        let handle = open_hop(ctx, conn, bastions.last(), config.clone()).await?;
+        // A bastion never forwards to the target's routes.
+        let handle = open_hop(ctx, conn, bastions.last(), config.clone(), Arc::default()).await?;
         bastions.push(handle);
     }
-    let target = open_hop(ctx, target, bastions.last(), config).await?;
+    let target = open_hop(ctx, target, bastions.last(), config, ctx.routes.clone()).await?;
     Ok(Chain {
         target: Arc::new(target),
         _bastions: bastions,
@@ -68,13 +69,15 @@ pub(crate) async fn connect_chain(
 }
 
 /// Connects one hop (through `via` unless it is the first) and authenticates it.
+/// `routes` serves the hop's `forwarded-tcpip` channels.
 async fn open_hop(
     ctx: &ChainCtx<'_>,
     conn: &Connection,
     via: Option<&Handle<ClientHandler>>,
     config: Arc<client::Config>,
+    routes: RemoteRoutes,
 ) -> Result<Handle<ClientHandler>, CoreError> {
-    let mut handle = connect_hop(ctx, conn, via, config).await?;
+    let mut handle = connect_hop(ctx, conn, via, config, routes).await?;
     ctx.sink.event(SessionEvent::Status {
         stage: Stage::Authenticating,
     });
@@ -98,6 +101,7 @@ async fn connect_hop(
     conn: &Connection,
     via: Option<&Handle<ClientHandler>>,
     config: Arc<client::Config>,
+    routes: RemoteRoutes,
 ) -> Result<Handle<ClientHandler>, CoreError> {
     let host = conn.host.to_lowercase();
     let port = conn.port;
@@ -110,7 +114,7 @@ async fn connect_hop(
         broker: ctx.broker.clone(),
         sink: ctx.sink.clone(),
         prompting,
-        routes: ctx.routes.clone(),
+        routes,
     };
     let attempt = async {
         match via {

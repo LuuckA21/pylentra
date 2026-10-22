@@ -346,6 +346,38 @@ async fn keyboard_interactive_custom_prompt_asks_user() {
 }
 
 #[tokio::test]
+async fn keyboard_interactive_password_then_otp_saves_password() {
+    let server = TestServer::start(TestServerConfig {
+        allow_password_method: false,
+        kbd_interactive: Some(("Password: ".into(), PW.into())),
+        kbd_otp: Some("123456".into()),
+        ..Default::default()
+    })
+    .await;
+    let env = env();
+    let c = conn(&server, password_auth());
+    let (id, sink) = env.open(&server, c.clone());
+    assert_eq!(nth_prompt(&sink, 1).await, PromptKind::Password);
+    env.mgr.answer(id, secret(PW, true)).unwrap();
+    assert!(matches!(
+        nth_prompt(&sink, 2).await,
+        PromptKind::KeyboardInteractive { .. }
+    ));
+    env.mgr
+        .answer(
+            id,
+            PromptAnswer::KeyboardInteractive {
+                responses: vec!["123456".into()],
+                save: false,
+            },
+        )
+        .unwrap();
+    ready(&sink).await;
+    // The ticked save of the password round survives the OTP round.
+    assert_eq!(env.stored(&c, SecretKind::Password).as_deref(), Some(PW));
+}
+
+#[tokio::test]
 async fn unencrypted_key_auth() {
     let key = ed25519();
     let server = key_server(&key).await;

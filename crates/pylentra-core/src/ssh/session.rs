@@ -240,6 +240,12 @@ async fn run(
     ctx.broker.cancel(ctx.id);
     // Deregistered first, so commands sent after `Closed` get `NotFound`.
     lock(&ctx.sessions).remove(&ctx.id);
+    // The code alone: error params may name hosts and paths, never needed here.
+    match &reason {
+        CloseReason::Exited { code } => log::info!("session {} closed: exited {code}", ctx.id),
+        CloseReason::Error { error } => log::info!("session {} closed: {}", ctx.id, error.code),
+        CloseReason::UserClosed => log::info!("session {} closed: user", ctx.id),
+    }
     ctx.sink.event(SessionEvent::Closed { reason });
 }
 

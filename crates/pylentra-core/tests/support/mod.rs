@@ -23,6 +23,8 @@ pub struct TestServerConfig {
     pub kbd_interactive: Option<(String, String)>,
     /// Whether the keyboard-interactive prompt echoes the answer.
     pub kbd_echo: bool,
+    /// A second keyboard-interactive round (echoed "OTP: " prompt) and its expected answer.
+    pub kbd_otp: Option<String>,
     pub authorized_key: Option<PublicKey>,
     /// false: password is not advertised, only the other configured methods.
     pub allow_password_method: bool,
@@ -37,6 +39,7 @@ impl Default for TestServerConfig {
             password: None,
             kbd_interactive: None,
             kbd_echo: false,
+            kbd_otp: None,
             authorized_key: None,
             allow_password_method: true,
             single_password_try: false,
@@ -133,6 +136,7 @@ impl Server for Acceptor {
             tasks: Vec::new(),
             listeners: HashMap::new(),
             relayed: HashSet::new(),
+            otp_pending: false,
         }
     }
 }
@@ -150,6 +154,8 @@ struct ConnHandler {
     listeners: HashMap<u16, JoinHandle<()>>,
     /// direct-tcpip channels: their bytes belong to the pipe, not to the echo shell.
     relayed: HashSet<ChannelId>,
+    /// The first keyboard-interactive round passed; the OTP round is next.
+    otp_pending: bool,
 }
 
 impl Drop for ConnHandler {
@@ -201,13 +207,31 @@ impl Handler for ConnHandler {
             return Ok(Auth::reject());
         };
         let Some(mut r) = response else {
+            self.otp_pending = false;
             return Ok(Auth::Partial {
                 name: Cow::Borrowed("test"),
                 instructions: Cow::Borrowed(""),
                 prompts: Cow::Owned(vec![(Cow::Owned(prompt), self.cfg.kbd_echo)]),
             });
         };
-        if r.next().as_deref() == Some(answer.as_bytes()) {
+        let got = r.next();
+        if std::mem::take(&mut self.otp_pending) {
+            return Ok(match &self.cfg.kbd_otp {
+                Some(otp) if got.as_deref() == Some(otp.as_bytes()) => {
+                    self.accept("keyboard-interactive")
+                }
+                _ => self.retry(),
+            });
+        }
+        if got.as_deref() == Some(answer.as_bytes()) {
+            if self.cfg.kbd_otp.is_some() {
+                self.otp_pending = true;
+                return Ok(Auth::Partial {
+                    name: Cow::Borrowed("test"),
+                    instructions: Cow::Borrowed(""),
+                    prompts: Cow::Owned(vec![(Cow::Borrowed("OTP: "), true)]),
+                });
+            }
             Ok(self.accept("keyboard-interactive"))
         } else {
             Ok(self.retry())
