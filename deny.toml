@@ -6,9 +6,13 @@ yanked = "deny"
 # Each ignore is a transitive dependency we cannot fix from here; revisit when
 # the upstream crates (russh, keyring, tauri) bump them.
 ignore = [
-    # rsa (Marvin timing side channel) comes in through russh; no patched
-    # release exists upstream. Pylentra is an SSH client that signs with the
-    # user's own local key, and RSA is only one of several supported key types.
+    # rsa (Marvin timing side channel) comes in through russh. Real but narrow
+    # exposure: RSA private-key signing during publickey auth to a server that
+    # may be hostile or compromised, which can time our responses and so
+    # attack the user's RSA key. ed25519 and ECDSA keys are unaffected. No
+    # fix exists upstream (rsa 0.9 and 0.10-rc are both affected). Advisory:
+    # https://rustsec.org/advisories/RUSTSEC-2023-0071
+    # Tracker: https://github.com/RustCrypto/RSA/issues/626
     "RUSTSEC-2023-0071",
     # Unmaintained, not vulnerable: zbus was merged from three crates into one
     # in 6.0; keyring 4.2 (Secret Service on Linux) and tauri still use zbus 5.
