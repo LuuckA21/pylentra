@@ -19,9 +19,10 @@ check it against `SHA256SUMS.txt` (`sha256sum -c SHA256SUMS.txt`).
 - **Windows:** run the `Pylentra_*-setup.exe` installer (per-user, no admin
   rights needed).
 
-Once installed, Pylentra checks for updates at startup. AppImage and Windows
-installs get a banner offering to install and restart. **`.deb` installs do
-not auto-update**: install the new `.deb` over the old one.
+Once installed, Pylentra checks for updates at startup and shows a banner
+offering to install and restart. On `.deb` installs, installing the update
+asks for your administrator password (it runs `dpkg -i` through `pkexec`,
+`zenity` or `kdialog`); you can also install the new `.deb` by hand.
 
 ## Known limitations
 
@@ -37,9 +38,6 @@ not auto-update**: install the new `.deb` over the old one.
 - **`known_hosts`:** `@revoked` and `@cert-authority` markers and wildcard host
   patterns in `~/.ssh/known_hosts` are not honoured. Pylentra only reads that
   file and never writes to `~/.ssh`.
-- **Auto-update covers the AppImage and the Windows installer only.** `.deb`
-  users update manually by installing the new package (`sudo apt install
-./Pylentra_*_amd64.deb`); a banner shown there cannot install the update.
 - **macOS is not supported** in v1.
 
 ## Build from source
@@ -76,10 +74,13 @@ One-time setup of the updater signing key:
    and its password safe; never commit them. Losing the key means installed
    copies can no longer auto-update.
 2. Paste the printed public key into `plugins.updater.pubkey` in
-   `src-tauri/tauri.conf.json` (it ships as a placeholder, and the release
-   workflow fails until it is replaced).
-3. Add the repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the key file
-   content) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+   `src-tauri/tauri.conf.json`.
+3. Store the key file content as `TAURI_SIGNING_PRIVATE_KEY` and its password
+   as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Best as secrets of an environment
+   named `release` (Settings → Environments → New environment `release` →
+   Deployment branches: *Selected branches*, add `main` → add the two
+   secrets), so workflows on other branches cannot read them; then delete
+   any repository-level copies. Plain repository secrets also work.
 
 Without Node: the key is a plain [minisign](https://github.com/jedisct1/minisign)
 key pair, base64-encoded. Run `minisign -G -p pylentra.pub -s pylentra.key`,
@@ -90,13 +91,27 @@ Linux: `base64 -w0 pylentra.key`).
 
 The current public key is minisign key ID `590862C6663206ED`.
 
-Per release: bump `version` in the root `Cargo.toml`, update `CHANGELOG.md`,
-walk through [`docs/release-checklist.md`](docs/release-checklist.md), then
-start the `Release` workflow on `main` (Actions → Release → Run workflow), or
-push a `vX.Y.Z` tag. It builds Linux and Windows and creates a **draft**
-GitHub release `vX.Y.Z` (from the workspace version) with `latest.json` and
-`SHA256SUMS.txt`; publishing the draft creates the tag. A manual run stops if
-that tag already exists.
+Per release, open a PR that:
+
+1. bumps `version` in `[workspace.package]` of the root `Cargo.toml` and runs
+   `cargo update -w` so `Cargo.lock` follows;
+2. adds the `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md`: it becomes
+   the release notes, and the release stops if it is missing.
+
+Walk through [`docs/release-checklist.md`](docs/release-checklist.md) on that
+PR's Preview build bundles. When the PR lands on `main`, the `Release` workflow
+sees a version without a tag and:
+
+- checks that the signing key works and matches the public key in the app;
+- creates the `vX.Y.Z` tag on that commit and a **draft** release with the
+  notes;
+- builds and signs Linux (AppImage, `.deb`) and Windows (NSIS) packages;
+- verifies every signature, then attaches `latest.json` and `SHA256SUMS.txt`.
+
+Check the draft and publish it. Installed apps only see published releases.
+The workflow can also be run by hand on `main` (Actions → Release → Run
+workflow) for a version without a tag. If a run fails, use **Re-run failed
+jobs**: a fresh run sees the tag the first one created and stops.
 
 ## License
 
