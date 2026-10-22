@@ -19,12 +19,11 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       name: ${{ steps.tag.outputs.name }}
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
       - uses: actions/checkout@v4
       - id: tag
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             echo "name=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
@@ -41,6 +40,28 @@ jobs:
             exit 1
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
+      # The release notes are the CHANGELOG.md section of this version.
+      - id: notes
+        shell: bash
+        env:
+          VERSION_TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          version=${VERSION_TAG#v}
+          section=$(awk -v head="## [$version]" '
+            /^## \[/ { if (found) exit; found = index($0, head) == 1; next }
+            found' CHANGELOG.md)
+          if [ -z "${section//[[:space:]]/}" ]; then
+            echo "::error file=CHANGELOG.md::No '## [$version]' section with release notes."
+            exit 1
+          fi
+          {
+            echo 'notes<<PYLENTRA_NOTES_EOF'
+            echo "$section"
+            echo
+            echo '---'
+            echo 'Checksums: `SHA256SUMS.txt`. Windows builds are unsigned: on the SmartScreen prompt choose "More info" → "Run anyway".'
+            echo 'PYLENTRA_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
 
   build:
     name: build (${{ matrix.os }})
@@ -85,6 +106,7 @@ jobs:
         with:
           tagName: ${{ needs.tag.outputs.name }}
           releaseName: Pylentra ${{ needs.tag.outputs.name }}
+          releaseBody: ${{ needs.tag.outputs.notes }}
           releaseDraft: true
           includeUpdaterJson: true
 

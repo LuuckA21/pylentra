@@ -96,7 +96,8 @@ start the `Release` workflow on `main` (Actions → Release → Run workflow), o
 push a `vX.Y.Z` tag. It builds Linux and Windows and creates a **draft**
 GitHub release `vX.Y.Z` (from the workspace version) with `latest.json` and
 `SHA256SUMS.txt`; publishing the draft creates the tag. A manual run stops if
-that tag already exists.
+that tag already exists. The release notes are the version's
+`## [X.Y.Z]` section of `CHANGELOG.md`; the workflow stops if it is missing.
 
 ## License
 
