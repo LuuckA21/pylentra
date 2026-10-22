@@ -56,21 +56,44 @@ pub fn do_connection_save(
     // Held throughout, so the checked library is the one we write to.
     let mut store = state.store();
     store.check_connection(&connection)?;
-    // Sessions read the keychain regardless of the flag, so an unticked
-    // "save" must forget the secret. Forgetting is best effort, like
+    // Sessions read the keychain regardless of the flag, so unticking "save"
+    // or switching auth type must forget the secret. Only on that change:
+    // a prompt's "save" writes the keychain without setting the flag, and a
+    // later rename must not lose it. Forgetting is best effort, like
     // delete_connection: a missing keychain must not block the save.
-    let (keep_password, keep_passphrase) = match connection.auth {
-        AuthMethod::Password { save } => (save, false),
+    let keeps = |auth: &AuthMethod| match auth {
+        AuthMethod::Password { save } => (*save, false),
         AuthMethod::Key {
             save_passphrase, ..
-        } => (false, save_passphrase),
+        } => (false, *save_passphrase),
         AuthMethod::Agent => (false, false),
     };
+    let (keep_password, keep_passphrase) = keeps(&connection.auth);
+    let old = store.get(connection.id).ok().map(|c| {
+        (
+            keeps(&c.auth),
+            std::mem::discriminant(&c.auth) != std::mem::discriminant(&connection.auth),
+        )
+    });
     for (kind, keep, value) in [
         (SecretKind::Password, keep_password, password),
         (SecretKind::Passphrase, keep_passphrase, passphrase),
     ] {
+        let forget = match old {
+            Some(((old_pw, old_pp), auth_changed)) => {
+                let was_kept = if kind == SecretKind::Password {
+                    old_pw
+                } else {
+                    old_pp
+                };
+                was_kept || auth_changed
+            }
+            None => false,
+        };
         if !keep {
+            if !forget {
+                continue;
+            }
             if let Err(e) = state.secrets.delete(connection.id, kind) {
                 log::warn!(
                     "could not delete {kind:?} of connection {}: {e}",
@@ -395,14 +418,41 @@ mod tests {
     }
 
     #[test]
-    fn connection_save_survives_failing_secret_delete() {
-        let (_d, state) = state_with(Arc::new(FailingSecretStore));
+    fn connection_save_keeps_secret_saved_from_a_prompt() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
         let c = Connection {
-            auth: AuthMethod::Agent,
+            auth: AuthMethod::Password { save: false },
             ..conn("a")
         };
         do_connection_save(&state, c.clone(), None, None).unwrap();
-        assert_eq!(do_library_get(&state).connections, vec![c]);
+        // A ticked "save" in the connect prompt writes the keychain, not the flag.
+        state
+            .secrets
+            .set(c.id, SecretKind::Password, &"pw".to_string().into())
+            .unwrap();
+        let renamed = Connection {
+            name: "b".into(),
+            ..c.clone()
+        };
+        do_connection_save(&state, renamed, None, None).unwrap();
+        assert_eq!(
+            secret(&state, c.id, SecretKind::Password).as_deref(),
+            Some("pw")
+        );
+    }
+
+    #[test]
+    fn connection_save_survives_failing_secret_delete() {
+        let (_d, state) = state_with(Arc::new(FailingSecretStore));
+        let c = conn("a");
+        do_connection_save(&state, c.clone(), None, None).unwrap();
+        // Switching auth type forgets the old secret; the failing delete must not block.
+        let agent = Connection {
+            auth: AuthMethod::Agent,
+            ..c
+        };
+        do_connection_save(&state, agent.clone(), None, None).unwrap();
+        assert_eq!(do_library_get(&state).connections, vec![agent]);
     }
 
     #[test]
