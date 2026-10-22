@@ -81,6 +81,15 @@ One-time setup of the updater signing key:
 3. Add the repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the key file
    content) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
+Without Node: the key is a plain [minisign](https://github.com/jedisct1/minisign)
+key pair, base64-encoded. Run `minisign -G -p pylentra.pub -s pylentra.key`,
+then use the base64 of `pylentra.pub` as `pubkey` and the base64 of
+`pylentra.key` as `TAURI_SIGNING_PRIVATE_KEY` (PowerShell:
+`[Convert]::ToBase64String([IO.File]::ReadAllBytes("pylentra.key"))`;
+Linux: `base64 -w0 pylentra.key`).
+
+The current public key is minisign key ID `590862C6663206ED`.
+
 Per release: bump `version` in the root `Cargo.toml`, update `CHANGELOG.md`,
 walk through [`docs/release-checklist.md`](docs/release-checklist.md), then
 push a `vX.Y.Z` tag. The `Release` workflow builds Linux and Windows, creates
