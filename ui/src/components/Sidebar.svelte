@@ -5,7 +5,7 @@
   import { t } from "../lib/i18n";
   import { modal } from "../lib/modal";
   import { matches } from "../lib/search";
-  import { shortcutFor } from "../lib/shortcuts";
+  import { fromOtherModal, shortcutFor } from "../lib/shortcuts";
   import {
     deleteConnection,
     deleteGroup,
@@ -242,8 +242,9 @@
 
 <svelte:window
   onkeydown={(e) => {
-    // Ctrl+Shift+F, also from the terminal (its key handler lets it bubble here).
-    if (shortcutFor(e) === "search") {
+    // Ctrl+Shift+F, also from the terminal (its key handler lets it bubble here),
+    // but never from inside a dialog.
+    if (shortcutFor(e) === "search" && !fromOtherModal(e)) {
       e.preventDefault();
       searchEl?.focus();
       searchEl?.select();

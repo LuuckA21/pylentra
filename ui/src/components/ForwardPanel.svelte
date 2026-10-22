@@ -47,6 +47,12 @@
 
   const usable = $derived(!!tab.sessionId && tab.phase === "ready");
 
+  // A failed (auto-)start must not hide in a collapsed panel.
+  let open = $state(false);
+  $effect(() => {
+    if (rows.some((r) => r.state.type === "Failed")) open = true;
+  });
+
   // A failed start is already shown on its row (the core sends a Forward event).
   const failed = (e: unknown) =>
     !(isApiError(e) && e.code.startsWith("forward.")) && toastError(e);
@@ -143,7 +149,7 @@
   </div>
 {/snippet}
 
-<details class="panel">
+<details class="panel" bind:open>
   <summary>{t("fwd.title")} ({rows.length})</summary>
   {#if !rows.length}<p class="muted">{t("fwd.empty")}</p>{/if}
   <ul>

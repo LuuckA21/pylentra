@@ -99,6 +99,27 @@ test("Ctrl+Shift+F focuses and selects the search box", async () => {
   expect(e.defaultPrevented).toBe(true);
 });
 
+test("Ctrl+Shift+F does nothing from inside a dialog", () => {
+  setup();
+  const dialog = document.createElement("div");
+  dialog.setAttribute("aria-modal", "true");
+  const input = document.createElement("input");
+  dialog.append(input);
+  document.body.append(dialog);
+  input.focus();
+  const e = new KeyboardEvent("keydown", {
+    key: "F",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(e);
+  expect(document.activeElement).toBe(input);
+  expect(e.defaultPrevented).toBe(false);
+  dialog.remove();
+});
+
 test("Enter on focused row emits open", async () => {
   const { onopen } = setup();
   const row = screen.getByRole("option", { name: /db/ });

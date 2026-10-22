@@ -79,6 +79,24 @@ test("failed forward shows localized error and Start button", () => {
   expect(screen.getByRole("button", { name: "Start" })).toBeTruthy();
 });
 
+test("panel opens when a forward fails", async () => {
+  const { container, rerender } = render(ForwardPanel, { tab: tab({}) });
+  const details = container.querySelector("details")!;
+  expect(details.open).toBe(false);
+  await rerender({
+    tab: tab({
+      2: {
+        rule: local,
+        state: {
+          type: "Failed",
+          error: { code: "forward.port_in_use", params: { port: "5432" } },
+        },
+      },
+    }),
+  });
+  expect(details.open).toBe(true);
+});
+
 test("stop calls forwardStop with id", async () => {
   render(ForwardPanel, {
     tab: tab({

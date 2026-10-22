@@ -22,7 +22,8 @@ test("password prompt names the hop and defaults save to its preference", async 
     conn({ jump_via: "c2" }),
     conn({
       id: "c2",
-      host: "bastion",
+      // Saved with capitals; the core lowercases the prompt's host.
+      host: "Bastion",
       port: 2222,
       username: "jump",
       auth: { type: "Key", path: "k", save_passphrase: false },
@@ -83,6 +84,8 @@ test("keyboard-interactive shows one field per prompt and Esc cancels", async ()
   expect((screen.getByLabelText("PIN:") as HTMLInputElement).type).toBe(
     "password",
   );
+  // The core never saves keyboard-interactive answers.
+  expect(screen.queryByLabelText("Save to keychain")).toBeNull();
   await fireEvent.keyDown(screen.getByLabelText("PIN:"), { key: "Escape" });
   expect(onanswer).toHaveBeenCalledWith({ type: "Cancel" });
 });

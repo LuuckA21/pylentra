@@ -23,11 +23,12 @@
   // svelte-ignore state_referenced_locally
   const { host, port, kind } = prompt;
 
-  // The prompt belongs to one hop of the jump chain: find its connection by host and port.
+  // The prompt belongs to one hop of the jump chain: find its connection by host
+  // and port. The core lowercases the prompt's host.
   function hop(): Connection | undefined {
     let c = library.connections.find((x) => x.id === connectionId);
     for (let depth = 0; c && depth <= 5; depth++) {
-      if (c.host === host && c.port === port) return c;
+      if (c.host.toLowerCase() === host && c.port === port) return c;
       const via = c.jump_via;
       c = library.connections.find((x) => x.id === via);
     }
@@ -97,10 +98,13 @@
           <input type="password" autocomplete="off" bind:value={values[0]} />
         </label>
       {/if}
-      <label class="check">
-        <input type="checkbox" bind:checked={save} />
-        {t("secret.save")}
-      </label>
+      <!-- The core never saves keyboard-interactive answers. -->
+      {#if kind.type !== "KeyboardInteractive"}
+        <label class="check">
+          <input type="checkbox" bind:checked={save} />
+          {t("secret.save")}
+        </label>
+      {/if}
       <div class="actions">
         <button type="button" onclick={cancel}>{t("common.cancel")}</button>
         <button type="submit" class="primary">{t("secret.submit")}</button>

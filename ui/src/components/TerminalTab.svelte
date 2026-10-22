@@ -6,7 +6,7 @@
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import { t } from "../lib/i18n";
   import type { TabState } from "../lib/sessionReducer";
-  import { shortcutFor, type Action } from "../lib/shortcuts";
+  import { fromOtherModal, shortcutFor, type Action } from "../lib/shortcuts";
   import {
     answer,
     closeTab,
@@ -33,6 +33,7 @@
   } = $props();
 
   let el: HTMLDivElement;
+  let root: HTMLDivElement;
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
 
@@ -156,6 +157,7 @@
   }
 
   function onwindowkey(e: KeyboardEvent) {
+    if (fromOtherModal(e, root)) return;
     const a = active ? shortcutFor(e) : null;
     if (a) run(a, e);
   }
@@ -163,7 +165,7 @@
 
 <svelte:window onkeydown={onwindowkey} />
 
-<div class="tab" class:active>
+<div class="tab" class:active bind:this={root}>
   <div class="terminal" bind:this={el}></div>
   {#if tab.phase === "ready"}<ForwardPanel {tab} />{/if}
 
