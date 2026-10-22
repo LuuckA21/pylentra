@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "log:allow-log",
+    "updater:default",
+    "process:allow-restart",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$APPLOG" }, { "path": "$APPLOG/**" }]
+    }
+  ]
+}

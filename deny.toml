@@ -1,0 +1,59 @@
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+# Each ignore is a transitive dependency we cannot fix from here; revisit when
+# the upstream crates (russh, keyring, tauri) bump them.
+ignore = [
+    # rsa (Marvin timing side channel) comes in through russh. Real but narrow
+    # exposure: RSA private-key signing during publickey auth to a server that
+    # may be hostile or compromised, which can time our responses and so
+    # attack the user's RSA key. ed25519 and ECDSA keys are unaffected. No
+    # fix exists upstream (rsa 0.9 and 0.10-rc are both affected). Advisory:
+    # https://rustsec.org/advisories/RUSTSEC-2023-0071
+    # Tracker: https://github.com/RustCrypto/RSA/issues/626
+    "RUSTSEC-2023-0071",
+    # Unmaintained, not vulnerable: zbus was merged from three crates into one
+    # in 6.0; keyring 4.2 (Secret Service on Linux) and tauri still use zbus 5.
+    "RUSTSEC-2026-0370", # zvariant
+    "RUSTSEC-2026-0371", # zbus_names
+    "RUSTSEC-2026-0372", # zvariant_derive
+    # Unmaintained proc macro, pulled by gtk-rs 0.18 (tauri/muda on Linux);
+    # build-time only.
+    "RUSTSEC-2024-0370",
+    # zip 4.x (via tauri-plugin-updater 2.14, which pins it) mishandles
+    # symlinks and SUID bits in ZipArchive::extract. Not reachable in practice:
+    # the archive is the update bundle, extracted only after its minisign
+    # signature verified against our pubkey, by a non-privileged user process.
+    # Fix is zip >= 9; revisit when the updater plugin bumps it.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+exceptions = [
+    # Build-time only (system-deps -> cfg-expr, via tauri's Linux GTK
+    # bindings); the LLVM exception only loosens the Apache-2.0 terms.
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "target-lexicon" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
