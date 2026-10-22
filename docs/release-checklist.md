@@ -94,10 +94,9 @@ cover it.
    "Version X available" banner appears.
 3. Click "Install and restart": the app restarts on the new version
    (Windows installs in passive mode) and the connections are still there.
-4. `.deb` (Linux): auto-update is not supported. Expected result: update by
-   installing the new `.deb` manually; if the banner appears, installing from
-   it must not corrupt the install. Check whether `latest.json` in the release
-   contains a `linux-x86_64-deb` entry (if it does, the banner may trigger a
-   pkexec / dpkg prompt; record the behaviour in the CHANGELOG).
+4. `.deb` (Linux): "Install and restart" asks for the administrator password
+   (pkexec / zenity / kdialog) and installs the new package; the app restarts
+   on the new version. Cancelling the password prompt leaves the old version
+   working.
 5. Offline start: no banner and no error shown.
 6. Download the assets and verify them with `sha256sum -c SHA256SUMS.txt`.

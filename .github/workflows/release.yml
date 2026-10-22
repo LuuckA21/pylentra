@@ -1,52 +1,83 @@
 name: Release
 
-# Run from the Actions tab ("Run workflow" on main) or by pushing a vX.Y.Z tag.
-# A manual run takes the tag from the workspace version; GitHub creates the tag
-# when the draft release is published.
+# Builds signed Linux (AppImage, .deb) and Windows (NSIS) packages into a
+# DRAFT release, to be checked and published by hand.
+#
+# Normal flow: a PR bumps `version` in the root Cargo.toml (and adds the
+# CHANGELOG.md section); when it lands on main this workflow sees a version
+# without a tag, creates the `vX.Y.Z` tag on that commit and builds the
+# release, with the CHANGELOG section as release notes. Pushes to main that
+# keep the version do nothing.
+#
+# Also possible: run it by hand on main (Actions -> Release) for a version
+# without a tag. There is no tag trigger: a tag can point at any commit, and a
+# tag-triggered run would use that commit's (unreviewed) copy of this file.
+# If a run fails, use "Re-run failed jobs": a whole new run sees the tag the
+# first one created and does nothing.
+#
+# Signing: TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD,
+# best kept as secrets of the `release` environment limited to main (see
+# README, Releasing). The last job verifies every package against the public
+# key in tauri.conf.json before attaching latest.json, which installed apps
+# read from the latest *published* release: never publish a draft without it.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: [Cargo.toml]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
-env:
-  CARGO_TERM_COLOR: always
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  tag:
+  prepare:
     runs-on: ubuntu-22.04
+    environment: release
+    permissions:
+      contents: write
     outputs:
-      name: ${{ steps.tag.outputs.name }}
-      notes: ${{ steps.notes.outputs.notes }}
+      tag: ${{ steps.version.outputs.tag }}
+      release: ${{ steps.version.outputs.release }}
+      release_id: ${{ steps.draft.outputs.id }}
     steps:
-      - uses: actions/checkout@v4
-      - id: tag
-        shell: bash
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve the version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            echo "name=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           if [ "$GITHUB_REF" != refs/heads/main ]; then
-            echo "::error::Run the release from main, not $GITHUB_REF_NAME."
+            echo "::error::Releases are built from main only (this run is on $GITHUB_REF)."
             exit 1
           fi
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
-          name="v$version"
-          if git ls-remote --exit-code --tags origin "refs/tags/$name" > /dev/null; then
-            echo "::error::Tag $name already exists. Bump version in Cargo.toml before releasing again."
-            exit 1
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          exists=false
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" > /dev/null 2>&1; then exists=true; fi
+          release=true
+          if [ "$exists" = true ]; then
+            if [ "$GITHUB_EVENT_NAME" = push ]; then
+              echo "$tag already released, nothing to do"
+              release=false
+            else
+              echo "::error::Tag $tag already exists. Bump version in Cargo.toml first."
+              exit 1
+            fi
           fi
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-      # The release notes are the CHANGELOG.md section of this version.
-      - id: notes
-        shell: bash
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+      - name: Extract the release notes
+        if: steps.version.outputs.release == 'true'
         env:
-          VERSION_TAG: ${{ steps.tag.outputs.name }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          version=${VERSION_TAG#v}
+          version=${TAG#v}
           section=$(awk -v head="## [$version]" '
             /^## \[/ { if (found) exit; found = index($0, head) == 1; next }
             found' CHANGELOG.md)
@@ -55,17 +86,89 @@ jobs:
             exit 1
           fi
           {
-            echo 'notes<<PYLENTRA_NOTES_EOF'
             echo "$section"
             echo
             echo '---'
             echo 'Checksums: `SHA256SUMS.txt`. Windows builds are unsigned: on the SmartScreen prompt choose "More info" → "Run anyway".'
-            echo 'PYLENTRA_NOTES_EOF'
-          } >> "$GITHUB_OUTPUT"
+          } > "$RUNNER_TEMP/notes.md"
+      # Fail before tagging if the signing secrets are missing, the password is
+      # wrong or the private key does not match the public key in the app.
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        if: steps.version.outputs.release == 'true'
+        with:
+          version: 10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: steps.version.outputs.release == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Check the updater signing key
+        if: steps.version.outputs.release == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set (see README, Releasing)."
+            exit 1
+          fi
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y minisign > /dev/null
+          pnpm install --frozen-lockfile
+          probe="$RUNNER_TEMP/key-probe"
+          echo "pylentra updater key probe" > "$probe"
+          pnpm tauri signer sign "$probe" > /dev/null
+          scripts/verify-updater-sig.sh "$probe"
+      - name: Create the tag
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" > /dev/null 2>&1; then
+            echo "$TAG exists already (re-run)"
+            exit 0
+          fi
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/git/tags" -f tag="$TAG" -f message="Pylentra $TAG" \
+            -f object="$GITHUB_SHA" -f type=commit --jq .sha)
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$sha" > /dev/null
+          echo "Created $TAG on $GITHUB_SHA"
+      # One draft for all build legs: tauri-action creates its release only after
+      # building, so legs finishing together could each make their own.
+      - name: Create the draft release
+        id: draft
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")
+          count=$(printf '%s' "$releases" | grep -c . || true)
+          if [ "$count" -gt 1 ]; then
+            echo "::error::$count releases exist for $TAG; delete the extra drafts first."
+            exit 1
+          elif [ "$count" -eq 1 ]; then
+            read -r id draft <<< "$releases"
+            if [ "$draft" != true ]; then
+              echo "::error::$TAG is already published."
+              exit 1
+            fi
+            echo "Reusing draft release $id"
+          else
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="Pylentra $TAG" \
+              -F body=@"$RUNNER_TEMP/notes.md" -F draft=true -F prerelease=false --jq .id)
+            echo "Created draft release $id"
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
     name: build (${{ matrix.os }})
-    needs: tag
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
+    environment: release
+    permissions:
+      contents: write
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -75,53 +178,82 @@ jobs:
       # aws-lc-sys (via russh) needs NASM on Windows x86-64; use the prebuilt objects.
       AWS_LC_SYS_PREBUILT_NASM: "1"
     steps:
-      - uses: actions/checkout@v4
-      - name: Check updater public key is configured
-        shell: bash
-        run: |
-          if grep -q REPLACE_WITH_OUTPUT_OF src-tauri/tauri.conf.json; then
-            echo "::error file=src-tauri/tauri.conf.json::plugins.updater.pubkey is still the placeholder. Run 'pnpm tauri signer generate -w ~/.tauri/pylentra.key', paste the public key into tauri.conf.json and add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD repository secrets (see README, Releasing)."
-            exit 1
-          fi
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install Tauri system packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
       - run: pnpm install --frozen-lockfile
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ needs.tag.outputs.name }}
-          releaseName: Pylentra ${{ needs.tag.outputs.name }}
-          releaseBody: ${{ needs.tag.outputs.notes }}
-          releaseDraft: true
-          includeUpdaterJson: true
+          # The draft created by `prepare`: every leg uploads to the same one.
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          # Written by the `publish-manifest` job once every package is uploaded:
+          # parallel legs updating one latest.json could overwrite each other.
+          includeUpdaterJson: false
 
-  checksums:
-    needs: [tag, build]
+  publish-manifest:
+    needs: [prepare, build]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
-      - name: Generate and upload SHA256SUMS.txt
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - name: Verify the packages, attach latest.json and SHA256SUMS.txt
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.tag.outputs.name }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          mkdir assets
-          gh release download "$TAG" --dir assets --clobber
-          (cd assets && sha256sum -- * > ../SHA256SUMS.txt)
-          cat SHA256SUMS.txt
-          gh release upload "$TAG" SHA256SUMS.txt --clobber
+          sudo apt-get update -q > /dev/null
+          sudo apt-get install -y minisign > /dev/null
+          dir="$RUNNER_TEMP/assets"
+          mkdir -p "$dir"
+          gh release download "$TAG" --dir "$dir" --clobber \
+            --pattern '*_amd64.AppImage*' --pattern '*_amd64.deb*' --pattern '*_x64-setup.exe*'
+          version=${TAG#v}
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          platforms='{}'
+          # Release asset -> updater targets ({os}-{arch}[-{bundle}]) it serves.
+          for entry in \
+            "Pylentra_${version}_amd64.AppImage linux-x86_64 linux-x86_64-appimage" \
+            "Pylentra_${version}_amd64.deb linux-x86_64-deb" \
+            "Pylentra_${version}_x64-setup.exe windows-x86_64 windows-x86_64-nsis"; do
+            read -r file targets <<< "$entry"
+            if [ ! -f "$dir/$file" ] || [ ! -f "$dir/$file.sig" ]; then
+              echo "::error::$file or its .sig is missing from the release."
+              exit 1
+            fi
+            scripts/verify-updater-sig.sh "$dir/$file"
+            for target in $targets; do
+              platforms=$(jq --arg t "$target" --arg sig "$(cat "$dir/$file.sig")" --arg url "$base/$file" \
+                '. + {($t): {signature: $sig, url: $url}}' <<< "$platforms")
+            done
+          done
+          jq -n --arg v "$version" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson p "$platforms" \
+            '{version: $v, notes: "", pub_date: $date, platforms: $p}' > "$dir/latest.json"
+          (cd "$dir" && sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS.txt")
+          cat "$RUNNER_TEMP/SHA256SUMS.txt"
+          gh release upload "$TAG" "$dir/latest.json" "$RUNNER_TEMP/SHA256SUMS.txt" --clobber
