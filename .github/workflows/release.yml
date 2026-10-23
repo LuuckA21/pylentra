@@ -34,8 +34,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # minisign (used to verify signatures) is packaged from Ubuntu 24.04 on.
   prepare:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     environment: release
     permissions:
       contents: write
@@ -213,7 +214,7 @@ jobs:
 
   publish-manifest:
     needs: [prepare, build]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
