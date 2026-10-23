@@ -16,6 +16,12 @@ All notable changes to Pylentra are documented here. The format follows
   update manifest (`latest.json`) is published, so a mis-signed build never
   reaches installed apps.
 
+### Security
+
+- Updated the `ctutils` crypto dependency (via `russh`) to 0.4.5 for
+  [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385)
+  (non-constant-time mask generation and `u128` comparisons).
+
 ## [0.1.0] - 2026-10-22
 
 ### Added
