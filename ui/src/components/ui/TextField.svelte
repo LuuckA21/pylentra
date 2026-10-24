@@ -41,8 +41,9 @@
     color: var(--fg-muted);
   }
 
-  .field:focus-within {
-    border-color: var(--accent);
+  .field:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   input {
@@ -56,5 +57,9 @@
 
   input:focus-visible {
     outline: none;
+  }
+
+  input::placeholder {
+    color: var(--fg-muted);
   }
 </style>
