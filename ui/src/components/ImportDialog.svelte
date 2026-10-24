@@ -77,14 +77,15 @@
   async function submit() {
     busy = true;
     try {
-      let group: string | null = groupId || null;
       if (groupId === NEW_GROUP) {
-        group = crypto.randomUUID();
-        await saveGroup({ id: group, name: "ssh config" });
+        const id = crypto.randomUUID();
+        await saveGroup({ id, name: "ssh config" });
+        // A retry after a failed import reuses this group.
+        groupId = id;
       }
       const n = await api.connectionsImport(
         prepare(candidates, selected, user.trim()),
-        group,
+        groupId || null,
       );
       await refresh();
       toast(t("import.done", { n }), "success");
@@ -124,15 +125,29 @@
           {#each candidates as c (c.connection.id)}
             {@const id = c.connection.id}
             {@const needed = requiredBy(candidates, selected, id)}
+            {@const dropped = jumpDropped(c)}
+            {@const noteIds = [
+              ...(c.error ? [`n-${id}-err`] : []),
+              ...c.notes.map((_, i) => `n-${id}-${i}`),
+              ...(selected.has(id) && needed.length ? [`n-${id}-req`] : []),
+              ...(dropped ? [`n-${id}-drop`] : []),
+            ]}
             <li>
               <label class="row">
                 <input
                   type="checkbox"
                   checked={selected.has(id)}
                   disabled={!selectable(c)}
+                  aria-describedby={noteIds.join(" ") || undefined}
                   onchange={() => (selected = toggle(selected, candidates, id))}
                 />
-                <Avatar name={c.connection.name} color={null} size={28} />
+                <span aria-hidden="true"
+                  ><Avatar
+                    name={c.connection.name}
+                    color={null}
+                    size={28}
+                  /></span
+                >
                 <span class="main">
                   <span class="name">{c.connection.name}</span>
                   <span class="meta">
@@ -142,18 +157,18 @@
                 {#if c.exists}<Pill>{t("import.exists")}</Pill>{/if}
               </label>
               {#if c.error}
-                <p class="note error">{noteText(c.error)}</p>
+                <p class="note error" id="n-{id}-err">{noteText(c.error)}</p>
               {/if}
               {#each c.notes as n, i (i)}
-                <p class="note">{noteText(n)}</p>
+                <p class="note" id="n-{id}-{i}">{noteText(n)}</p>
               {/each}
               {#if selected.has(id) && needed.length}
-                <p class="note">
+                <p class="note" id="n-{id}-req">
                   {t("import.requiredBy", { names: needed.join(", ") })}
                 </p>
               {/if}
-              {#if jumpDropped(c)}
-                <p class="note">{t("import.jumpDropped")}</p>
+              {#if dropped}
+                <p class="note" id="n-{id}-drop">{t("import.jumpDropped")}</p>
               {/if}
             </li>
           {/each}
@@ -167,10 +182,13 @@
               required
               aria-required="true"
               aria-invalid={userMissing ? "true" : undefined}
+              aria-describedby={userMissing ? "import-user-err" : undefined}
               bind:value={user}
             />
             {#if userMissing}
-              <p class="note error">{t("import.userRequired")}</p>
+              <p class="note error" id="import-user-err">
+                {t("import.userRequired")}
+              </p>
             {/if}
           </div>
         {/if}
@@ -188,7 +206,9 @@
     {/if}
 
     {#if readOnly}
-      <p class="note error">{t("error.config.read_only")}</p>
+      <p class="note error" role="status">
+        {t("error.config.read_only")}
+      </p>
     {/if}
     <div class="actions">
       <button type="button" onclick={onclose}>{t("common.cancel")}</button>

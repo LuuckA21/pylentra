@@ -93,6 +93,10 @@ test("candidates with an error are disabled and show the reason", async () => {
     ((await screen.findByRole("checkbox")) as HTMLInputElement).disabled,
   ).toBe(true);
   expect(screen.getByText("Invalid port: 99999.")).toBeTruthy();
+  const ids = screen.getByRole("checkbox").getAttribute("aria-describedby");
+  expect(document.getElementById(ids!)?.textContent).toBe(
+    "Invalid port: 99999.",
+  );
 });
 
 test("user field appears and is required when a selected host has no User", async () => {
@@ -179,4 +183,25 @@ test("read-only library disables Import", async () => {
   await open();
   await screen.findByRole("checkbox");
   expect((importBtn() as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("a retry after a failed import reuses the new group", async () => {
+  vi.mocked(api.connectionsImport)
+    .mockRejectedValueOnce({ code: "io", params: { reason: "x" } })
+    .mockResolvedValueOnce(1);
+  scan([cand("web")]);
+  const onclose = await open();
+  await fireEvent.change(await screen.findByLabelText("Destination group"), {
+    target: { value: "__new__" },
+  });
+  await fireEvent.click(importBtn());
+  await waitFor(() => expect(toasts.at(-1)?.kind).toBe("error"));
+  await fireEvent.click(importBtn());
+  await waitFor(() => expect(onclose).toHaveBeenCalled());
+  expect(api.groupSave).toHaveBeenCalledTimes(1);
+  const id = vi.mocked(api.groupSave).mock.calls[0]![0].id;
+  expect(vi.mocked(api.connectionsImport).mock.calls.map((c) => c[1])).toEqual([
+    id,
+    id,
+  ]);
 });
