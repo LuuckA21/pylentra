@@ -112,6 +112,8 @@ fn conn(server: &TestServer, auth: AuthMethod) -> Connection {
         auth,
         jump_via: None,
         forwards: vec![],
+        color: None,
+        icon: None,
     }
 }
 

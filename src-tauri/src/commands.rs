@@ -340,6 +340,8 @@ mod tests {
             auth: AuthMethod::Password { save: true },
             jump_via: None,
             forwards: vec![],
+            color: None,
+            icon: None,
         }
     }
 

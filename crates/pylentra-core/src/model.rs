@@ -1,5 +1,6 @@
 use crate::error::CoreError;
-use serde::{Deserialize, Serialize};
+use serde::de::{DeserializeOwned, IntoDeserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
@@ -9,6 +10,54 @@ pub const MAX_JUMP_DEPTH: usize = 5;
 
 fn default_port() -> u16 {
     22
+}
+
+/// Reads an optional value, turning anything `T` does not recognise into `None`
+/// so a newer or hand-edited file never makes the whole library unreadable.
+pub(crate) fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
+    let text = Option::<String>::deserialize(d)?;
+    Ok(text.and_then(|s| {
+        T::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(s)).ok()
+    }))
+}
+
+/// Like [`lenient`], falling back to `T::default()`.
+// Task-15 settings use this; until then only the unit test does.
+#[allow(dead_code)]
+pub(crate) fn lenient_or_default<'de, D: Deserializer<'de>, T: DeserializeOwned + Default>(
+    d: D,
+) -> Result<T, D::Error> {
+    Ok(lenient(d)?.unwrap_or_default())
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TagColor {
+    Red,
+    Orange,
+    Amber,
+    Green,
+    Teal,
+    Blue,
+    Violet,
+    Gray,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ConnIcon {
+    Server,
+    Database,
+    Web,
+    Nas,
+    Raspberry,
+    Cloud,
+    Container,
+    Terminal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -27,6 +76,20 @@ pub struct Connection {
     pub jump_via: Option<Uuid>,
     #[serde(default)]
     pub forwards: Vec<ForwardRule>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
+    #[ts(optional)]
+    pub color: Option<TagColor>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
+    #[ts(optional)]
+    pub icon: Option<ConnIcon>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -67,6 +130,13 @@ pub enum ForwardRule {
 pub struct Group {
     pub id: Uuid,
     pub name: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
+    #[ts(optional)]
+    pub color: Option<TagColor>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, TS)]
@@ -194,6 +264,32 @@ mod tests {
     use std::path::PathBuf;
     use uuid::Uuid;
 
+    #[derive(Deserialize, Debug, PartialEq)]
+    struct Probe {
+        #[serde(default, deserialize_with = "lenient")]
+        color: Option<TagColor>,
+        #[serde(default, deserialize_with = "lenient_or_default")]
+        icon: ConnIcon2,
+    }
+
+    #[derive(Deserialize, Debug, Default, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    enum ConnIcon2 {
+        #[default]
+        A,
+        B,
+    }
+
+    #[test]
+    fn lenient_falls_back_on_unknown_or_missing() {
+        let p: Probe = toml::from_str("color = 'teal'\nicon = 'b'").unwrap();
+        assert_eq!((p.color, p.icon), (Some(TagColor::Teal), ConnIcon2::B));
+        let p: Probe = toml::from_str("color = 'pink'\nicon = 'z'").unwrap();
+        assert_eq!((p.color, p.icon), (None, ConnIcon2::A));
+        let p: Probe = toml::from_str("").unwrap();
+        assert_eq!((p.color, p.icon), (None, ConnIcon2::A));
+    }
+
     fn conn() -> Connection {
         Connection {
             id: Uuid::new_v4(),
@@ -205,6 +301,8 @@ mod tests {
             auth: AuthMethod::Password { save: false },
             jump_via: None,
             forwards: vec![],
+            color: None,
+            icon: None,
         }
     }
 

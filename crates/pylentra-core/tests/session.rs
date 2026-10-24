@@ -54,6 +54,8 @@ fn conn(host: &str, port: u16) -> Connection {
         auth: AuthMethod::Password { save: false },
         jump_via: None,
         forwards: vec![],
+        color: None,
+        icon: None,
     }
 }
 
