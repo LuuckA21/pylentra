@@ -19,6 +19,9 @@ export function parseTarget(
   if (parts.length > 2 || parts[0] === "" || parts.at(-1) === "")
     return fail("quick.error.format");
   const user = parts.length === 2 ? parts[0] : defaults.user;
+  // user is shown in the tab title: keep passwords, URLs and option-like text out
+  if (parts.length === 2 && /^-|[:/[]/.test(parts[0]))
+    return fail("quick.error.format");
   const rest = parts.at(-1)!;
 
   let host = rest;

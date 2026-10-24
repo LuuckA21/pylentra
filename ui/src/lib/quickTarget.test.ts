@@ -60,6 +60,10 @@ test("format errors", () => {
     "[]",
     ":22",
     "[::1]x",
+    "u:p@h",
+    "ssh://u@h",
+    "-oProxyCommand=x@h",
+    "u[@h",
     "h: 22",
   ])
     expect(parseTarget(bad, d), bad).toEqual({
