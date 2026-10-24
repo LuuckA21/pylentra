@@ -72,6 +72,7 @@ fn main() {
             commands::settings_get,
             commands::settings_save,
             commands::session_open,
+            commands::session_open_quick,
             commands::session_write,
             commands::session_resize,
             commands::session_answer,

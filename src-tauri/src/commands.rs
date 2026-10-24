@@ -195,6 +195,49 @@ pub fn do_session_open(
     Ok(state.sessions.open(chain, cols, rows, sink))
 }
 
+// Async so the session task is spawned on Tauri's tokio runtime.
+#[tauri::command]
+pub async fn session_open_quick(
+    state: State<'_, AppState>,
+    connection: Connection,
+    cols: u16,
+    rows: u16,
+    data: Channel<InvokeResponseBody>,
+    events: Channel<SessionEvent>,
+) -> Result<SessionId, ApiError> {
+    do_session_open_quick(
+        &state,
+        connection,
+        cols,
+        rows,
+        Arc::new(ChannelSink { data, events }),
+    )
+}
+
+/// Opens a session for a connection the UI built, without saving it. It is a
+/// single hop, so a jump host or forwards (which need the store) are refused.
+/// Must run inside a tokio runtime.
+pub fn do_session_open_quick(
+    state: &AppState,
+    connection: Connection,
+    cols: u16,
+    rows: u16,
+    sink: Arc<dyn SessionSink>,
+) -> Result<SessionId, ApiError> {
+    let invalid = |field: &str, reason: &str| CoreError::InvalidInput {
+        field: field.into(),
+        reason: reason.into(),
+    };
+    if connection.jump_via.is_some() {
+        return Err(invalid("jump_via", "not allowed in a quick connection").into());
+    }
+    if !connection.forwards.is_empty() {
+        return Err(invalid("forwards", "not allowed in a quick connection").into());
+    }
+    connection.validate()?;
+    Ok(state.sessions.open(vec![connection], cols, rows, sink))
+}
+
 #[tauri::command]
 pub async fn session_write(
     state: State<'_, AppState>,
@@ -504,5 +547,73 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code, "config.invalid");
         assert_eq!(err.params["field"], "rule.bind_host");
+    }
+
+    struct NullSink;
+    impl SessionSink for NullSink {
+        fn data(&self, _: Vec<u8>) {}
+        fn event(&self, _: SessionEvent) {}
+    }
+
+    fn quick_open(state: &AppState, c: Connection) -> Result<SessionId, ApiError> {
+        // Nothing listens on port 1, so the background connect fails fast.
+        tauri::async_runtime::block_on(async {
+            do_session_open_quick(state, c, 80, 24, Arc::new(NullSink))
+        })
+    }
+
+    fn quick_conn() -> Connection {
+        Connection {
+            host: "127.0.0.1".into(),
+            port: 1,
+            auth: AuthMethod::Auto,
+            ..conn("quick")
+        }
+    }
+
+    #[test]
+    fn quick_session_is_not_saved() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        quick_open(&state, quick_conn()).unwrap();
+        assert!(do_library_get(&state).connections.is_empty());
+    }
+
+    #[test]
+    fn quick_session_rejects_jump_and_forwards() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let jump = Connection {
+            jump_via: Some(Uuid::new_v4()),
+            ..quick_conn()
+        };
+        let forwards = Connection {
+            forwards: vec![ForwardRule::Local {
+                bind_host: "127.0.0.1".into(),
+                bind_port: 8080,
+                dest_host: "db".into(),
+                dest_port: 5432,
+                auto_start: false,
+            }],
+            ..quick_conn()
+        };
+        for (c, field) in [(jump, "jump_via"), (forwards, "forwards")] {
+            let err = quick_open(&state, c).unwrap_err();
+            assert_eq!(err.code, "config.invalid");
+            assert_eq!(err.params["field"], field);
+        }
+    }
+
+    #[test]
+    fn quick_session_validates_fields() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = quick_open(
+            &state,
+            Connection {
+                host: " ".into(),
+                ..quick_conn()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "host");
     }
 }

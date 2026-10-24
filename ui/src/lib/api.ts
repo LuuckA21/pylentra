@@ -35,10 +35,9 @@ export const settingsSave = (settings: Settings) =>
 const toBytes = (m: ArrayBuffer | ArrayLike<number>): Uint8Array =>
   m instanceof ArrayBuffer ? new Uint8Array(m) : Uint8Array.from(m);
 
-export function sessionOpen(
-  connectionId: string,
-  cols: number,
-  rows: number,
+function openWithChannels(
+  command: string,
+  args: Record<string, unknown>,
   onData: (bytes: Uint8Array) => void,
   onEvent: (e: SessionEvent) => void,
 ): Promise<string> {
@@ -46,14 +45,37 @@ export function sessionOpen(
   data.onmessage = (m) => onData(toBytes(m));
   const events = new Channel<SessionEvent>();
   events.onmessage = onEvent;
-  return invoke<string>("session_open", {
-    connectionId,
-    cols,
-    rows,
-    data,
-    events,
-  });
+  return invoke<string>(command, { ...args, data, events });
 }
+
+export const sessionOpen = (
+  connectionId: string,
+  cols: number,
+  rows: number,
+  onData: (bytes: Uint8Array) => void,
+  onEvent: (e: SessionEvent) => void,
+) =>
+  openWithChannels(
+    "session_open",
+    { connectionId, cols, rows },
+    onData,
+    onEvent,
+  );
+
+// Opens a session for a connection that is not saved in the library.
+export const sessionOpenQuick = (
+  connection: Connection,
+  cols: number,
+  rows: number,
+  onData: (bytes: Uint8Array) => void,
+  onEvent: (e: SessionEvent) => void,
+) =>
+  openWithChannels(
+    "session_open_quick",
+    { connection, cols, rows },
+    onData,
+    onEvent,
+  );
 
 export function sessionWrite(
   id: string,
@@ -89,6 +111,7 @@ export const api = {
   settingsGet,
   settingsSave,
   sessionOpen,
+  sessionOpenQuick,
   sessionWrite,
   sessionResize,
   sessionAnswer,
