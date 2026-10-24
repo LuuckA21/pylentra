@@ -489,6 +489,26 @@ async fn missing_key_file_is_unreadable() {
 /// Serves an SSH agent holding `keys` on a fresh Unix socket; the dir owns the socket.
 #[cfg(unix)]
 async fn spawn_agent(keys: &[PrivateKey]) -> (TempDir, PathBuf) {
+    serve_agent(keys, ()).await
+}
+
+/// An agent that lists its keys but refuses every signature.
+#[cfg(unix)]
+#[derive(Clone)]
+struct RefusesToSign;
+
+#[cfg(unix)]
+impl russh::keys::agent::server::Agent for RefusesToSign {
+    async fn confirm_request(&self, msg: russh::keys::agent::server::MessageType) -> bool {
+        !matches!(msg, russh::keys::agent::server::MessageType::Sign)
+    }
+}
+
+#[cfg(unix)]
+async fn serve_agent<A>(keys: &[PrivateKey], agent: A) -> (TempDir, PathBuf)
+where
+    A: russh::keys::agent::server::Agent + Sync,
+{
     use russh::keys::agent::client::AgentClient;
     use tokio::net::UnixListener;
 
@@ -499,7 +519,7 @@ async fn spawn_agent(keys: &[PrivateKey]) -> (TempDir, PathBuf) {
         let next = l.accept().await.map(|(s, _)| s);
         Some((next, l))
     });
-    tokio::spawn(russh::keys::agent::server::serve(Box::pin(incoming), ()));
+    tokio::spawn(russh::keys::agent::server::serve(Box::pin(incoming), agent));
     let mut client = AgentClient::connect_uds(&sock).await.unwrap();
     for key in keys {
         client.add_identity(key, &[]).await.unwrap();
@@ -536,6 +556,19 @@ async fn agent_without_authorized_key_fails() {
     let error = closed_error(&sink).await;
     assert_eq!(error.code, "auth.all_failed");
     assert_eq!(error.params["tried"], "publickey");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_signing_failure_ends_auto_unavailable() {
+    let key = ed25519();
+    let server = key_and_pw_server(&key, None).await;
+    let (_agent, sock) = serve_agent(std::slice::from_ref(&key), RefusesToSign).await;
+    let env = auto_env(Some(sock), vec![]);
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    // auth.*, so auto-reconnect does not retry it; and no password prompt follows.
+    assert_eq!(closed_error(&sink).await.code, "auth.agent_unavailable");
+    assert!(prompts(&sink).is_empty());
 }
 
 #[tokio::test]

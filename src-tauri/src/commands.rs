@@ -171,7 +171,8 @@ pub fn do_settings_save(state: &AppState, settings: Settings) -> Result<(), ApiE
     Ok(())
 }
 
-#[tauri::command]
+// Async so the file read runs off the main thread.
+#[tauri::command(async)]
 pub fn ssh_config_scan(state: State<'_, AppState>) -> Result<ScanResult, ApiError> {
     match std::env::home_dir() {
         Some(home) => do_ssh_config_scan(&state, &home.join(".ssh").join("config")),
@@ -192,6 +193,21 @@ const MAX_SSH_CONFIG_BYTES: usize = 1024 * 1024;
 /// Reads `path` (never writes it) and marks the candidates already saved.
 pub fn do_ssh_config_scan(state: &AppState, path: &Path) -> Result<ScanResult, ApiError> {
     let shown = path.display().to_string();
+    // Checked before opening: a directory errors and a FIFO would block the read.
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => {
+            return Err(CoreError::InvalidInput {
+                field: "ssh_config".into(),
+                reason: "not a regular file".into(),
+            }
+            .into());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(missing_scan(shown));
+        }
+        Err(e) => return Err(CoreError::from(e).into()),
+    }
     let mut bytes = Vec::new();
     // One byte past the limit is enough to reject, without reading the rest.
     let read = std::fs::File::open(path).and_then(|f| {
@@ -306,6 +322,12 @@ pub fn do_session_open_quick(
     }
     if !connection.forwards.is_empty() {
         return Err(invalid("forwards", "not allowed in a quick connection").into());
+    }
+    if !matches!(connection.auth, AuthMethod::Auto) {
+        return Err(invalid("auth", "must be automatic in a quick connection").into());
+    }
+    if state.store().get(connection.id).is_ok() {
+        return Err(invalid("id", "already in the library").into());
     }
     connection.validate()?;
     Ok(state.sessions.open(vec![connection], cols, rows, sink))
@@ -717,6 +739,34 @@ mod tests {
         assert_eq!(err.code, "config.invalid");
         assert_eq!(err.params["field"], "host");
     }
+
+    #[test]
+    fn quick_session_rejects_auth_other_than_auto() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        for auth in [AuthMethod::Agent, AuthMethod::Password { save: false }] {
+            let err = quick_open(
+                &state,
+                Connection {
+                    auth,
+                    ..quick_conn()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(err.code, "config.invalid");
+            assert_eq!(err.params["field"], "auth");
+        }
+    }
+
+    #[test]
+    fn quick_session_rejects_an_id_in_the_library() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let saved = quick_conn();
+        do_connection_save(&state, saved.clone(), None, None).unwrap();
+        let err = quick_open(&state, saved).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "id");
+    }
+
     fn scan(state: &AppState, bytes: &[u8]) -> Result<ScanResult, ApiError> {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config");
@@ -731,6 +781,15 @@ mod tests {
         let r = do_ssh_config_scan(&state, &path).unwrap();
         assert!(r.missing && r.candidates.is_empty());
         assert_eq!(r.path, path.display().to_string());
+    }
+
+    #[test]
+    fn scan_rejects_a_directory() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = do_ssh_config_scan(&state, d.path()).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "ssh_config");
+        assert_eq!(err.params["reason"], "not a regular file");
     }
 
     #[test]

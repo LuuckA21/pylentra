@@ -248,11 +248,13 @@ impl Settings {
         Ok(())
     }
 
-    /// Connect timeout and keepalive interval (`None` when off) for new sessions.
+    /// Connect timeout and keepalive interval (`None` when off) for new sessions,
+    /// clamped to the valid ranges: a hand-edited file is loaded without `validate`.
     pub fn session_timeouts(&self) -> (Duration, Option<Duration>) {
+        let secs = |v: u16, lo, hi| Duration::from_secs(v.clamp(lo, hi).into());
         (
-            Duration::from_secs(self.connect_timeout_secs.into()),
-            (self.keepalive_secs != 0).then(|| Duration::from_secs(self.keepalive_secs.into())),
+            secs(self.connect_timeout_secs, 5, 120),
+            (self.keepalive_secs != 0).then(|| secs(self.keepalive_secs, 5, 300)),
         )
     }
 }
@@ -645,5 +647,21 @@ mod tests {
         );
         s.keepalive_secs = 0;
         assert_eq!(s.session_timeouts(), (Duration::from_secs(15), None));
+    }
+
+    #[test]
+    fn session_timeouts_clamp_hand_edited_values() {
+        let s = |connect, keepalive| Settings {
+            connect_timeout_secs: connect,
+            keepalive_secs: keepalive,
+            ..Settings::default()
+        };
+        let secs = Duration::from_secs;
+        assert_eq!(s(0, 1).session_timeouts(), (secs(5), Some(secs(5))));
+        assert_eq!(
+            s(1_000, 1_000).session_timeouts(),
+            (secs(120), Some(secs(300)))
+        );
+        assert_eq!(s(0, 0).session_timeouts(), (secs(5), None));
     }
 }

@@ -4,12 +4,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use russh::MethodKind;
 use russh::client::{AuthResult, Handle, Handler, KeyboardInteractiveAuthResponse, Prompt};
 use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::{
     HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey, load_public_key, load_secret_key,
 };
+use russh::{AgentAuthError, MethodKind};
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
@@ -105,7 +105,10 @@ async fn auto<H: Handler>(
     let mut offered = vec![];
     match agent(handle, &conn.username, ctx.opts, &mut offered).await {
         Ok(()) => return Ok(()),
-        Err(CoreError::AgentUnavailable { reason }) => log::debug!("no agent: {reason}"),
+        // Unavailable after offering a key means it failed to sign: that ends `Auto`.
+        Err(CoreError::AgentUnavailable { reason }) if offered.is_empty() => {
+            log::debug!("no agent: {reason}")
+        }
         Err(CoreError::AuthFailed { .. }) => {}
         Err(e) => return Err(e),
     }
@@ -407,7 +410,11 @@ async fn agent<H: Handler>(
         let result = handle
             .authenticate_publickey_with(user, key, hash, &mut client)
             .await
-            .map_err(|e| CoreError::Ssh(e.to_string()))?;
+            .map_err(|e| match e {
+                // The agent refused or failed to sign: retrying would not help.
+                AgentAuthError::Key(e) => agent_unavailable(e),
+                AgentAuthError::Send(e) => CoreError::Ssh(e.to_string()),
+            })?;
         if result.success() {
             return Ok(());
         }
