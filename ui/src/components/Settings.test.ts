@@ -248,3 +248,26 @@ test("a rejected field is shown in its own category", async () => {
     "true",
   );
 });
+
+test("hashed known hosts with the same key render as separate rows", async () => {
+  const hashed = {
+    host: null,
+    port: 22,
+    algo: "ssh-rsa",
+    fingerprint: "SHA256:bbb",
+  };
+  vi.mocked(api.knownHostsList).mockResolvedValue([hashed, { ...hashed }]);
+  setup();
+  await goTo("Security");
+  expect(await screen.findAllByText("Encrypted entry")).toHaveLength(2);
+});
+
+test("updates section hides the version line when it is unknown", async () => {
+  vi.mocked(getVersion).mockRejectedValue(new Error("no"));
+  setup();
+  await goTo("Updates");
+  expect(
+    screen.getByRole("switch", { name: "Check for updates at startup" }),
+  ).toBeTruthy();
+  expect(screen.queryByText(/Installed version/)).toBeNull();
+});

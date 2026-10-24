@@ -42,7 +42,7 @@
   <p class="hint">{t("settings.knownHostsEmpty")}</p>
 {:else if hosts}
   <ul>
-    {#each hosts as h (`${h.host}:${h.port}:${h.algo}:${h.fingerprint}`)}
+    {#each hosts as h, i (i)}
       <li>
         <div class="entry">
           <strong>

@@ -168,7 +168,7 @@ export const en = {
   "settings.section.security": "Security",
   "settings.section.updates": "Updates",
   "settings.version": "Pylentra {version}",
-  "settings.terminalTheme": "Colour theme",
+  "settings.terminalTheme": "Color theme",
   "settings.terminalTheme.app": "App",
   "settings.terminalTheme.dracula": "Dracula",
   "settings.terminalTheme.nord": "Nord",

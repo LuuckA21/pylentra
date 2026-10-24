@@ -95,6 +95,7 @@ test("changing cursor style updates open terminals", () => {
   settings.scrollback = 2000;
   settings.terminal_theme = "nord";
   flushSync();
+  expect(made.terms).toHaveLength(1);
   expect(term.options).toMatchObject({
     cursorStyle: "bar",
     cursorBlink: false,
@@ -116,4 +117,19 @@ test("copy on select copies a non-empty selection", async () => {
   term.selection = "";
   term.onSelect?.();
   expect(writeText).toHaveBeenCalledTimes(1);
+});
+
+test("copy on select ignores a rejected clipboard write", async () => {
+  const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  const unhandled = vi.fn();
+  process.on("unhandledRejection", unhandled);
+  settings.copy_on_select = true;
+  const term = setup();
+  term.selection = "ls";
+  term.onSelect?.();
+  await new Promise((r) => setTimeout(r, 0));
+  process.off("unhandledRejection", unhandled);
+  expect(writeText).toHaveBeenCalledWith("ls");
+  expect(unhandled).not.toHaveBeenCalled();
 });

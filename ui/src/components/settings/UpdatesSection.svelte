@@ -7,9 +7,11 @@
   let { save, version }: SectionProps & { version: string } = $props();
 </script>
 
-<p class="version">
-  {t("settings.installedVersion")}: <strong>{version}</strong>
-</p>
+{#if version}
+  <p class="version">
+    {t("settings.installedVersion")}: <strong>{version}</strong>
+  </p>
+{/if}
 
 <Toggle
   label={t("settings.checkUpdates")}
