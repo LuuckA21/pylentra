@@ -47,6 +47,7 @@
       onopen={openTab}
       onedit={(connection) => (editing = { connection })}
       onsettings={() => (settingsOpen = true)}
+      onimport={() => {}}
     />
     <main>
       {#if sessions.tabs.length}
@@ -109,7 +110,7 @@
   .body {
     flex: 1;
     display: grid;
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: auto 1fr;
     min-height: 0;
   }
   main {
