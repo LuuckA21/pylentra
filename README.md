@@ -5,6 +5,13 @@ servers in a searchable library with groups, open them in terminal tabs, chain
 jump hosts, and manage local and remote port forwards, with secrets stored in
 the OS keychain and signed automatic updates.
 
+- Quick connect: type `user@host` and go, then save it if you like.
+- Import your servers from `~/.ssh/config` with a preview.
+- Colors and icons for connections and groups; a welcome screen with recent
+  connections.
+- Terminal themes (Dracula, Nord, Solarized), automatic reconnection and
+  confirmation before closing live sessions.
+
 Built with Rust, [Tauri 2](https://tauri.app) and Svelte. The UI is available
 in English and Italian.
 
