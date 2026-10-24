@@ -2,6 +2,7 @@ use crate::error::CoreError;
 use crate::model::{Connection, Group, MAX_JUMP_DEPTH, Settings, Warning};
 use crate::secrets::{SecretKind, SecretStore};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
@@ -230,11 +231,11 @@ impl ConnectionStore {
             return Ok(0);
         }
         let mut candidate = self.library.clone();
-        let taken = |id: Uuid| candidate.connections.iter().any(|x| x.id == id);
+        let mut seen: HashSet<Uuid> = candidate.connections.iter().map(|x| x.id).collect();
         for c in &mut conns {
             c.group_id = group_id;
             c.validate()?;
-            if taken(c.id) {
+            if !seen.insert(c.id) {
                 return Err(CoreError::InvalidInput {
                     field: "id".into(),
                     reason: "already exists".into(),
@@ -957,5 +958,25 @@ mod tests {
             s.import(vec![conn("a")], None),
             Err(CoreError::ReadOnly)
         ));
+    }
+    #[test]
+    fn import_rejects_duplicate_ids_in_one_batch() {
+        let (d, mut s) = store();
+        s.upsert_connection(conn("old")).unwrap();
+        let path = d.path().join("connections.toml");
+        let before = fs::read_to_string(&path).unwrap();
+        let a = conn("a");
+        let err = s.import(vec![a.clone(), a], None).unwrap_err();
+        assert!(matches!(err, CoreError::InvalidInput { field, reason }
+            if field == "id" && reason == "already exists"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn import_empty_into_read_only_library_fails() {
+        let d = TempDir::new().unwrap();
+        let (path, _) = newer_file(&d);
+        let (mut s, _) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(s.import(vec![], None), Err(CoreError::ReadOnly)));
     }
 }

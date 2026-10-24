@@ -1,6 +1,7 @@
 //! Thin Tauri commands. Each delegates to a `do_<name>` that takes the state
 //! directly, so the logic is testable without a Tauri runtime.
 
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -187,13 +188,19 @@ const MAX_SSH_CONFIG_BYTES: usize = 1024 * 1024;
 /// Reads `path` (never writes it) and marks the candidates already saved.
 pub fn do_ssh_config_scan(state: &AppState, path: &Path) -> Result<ScanResult, ApiError> {
     let shown = path.display().to_string();
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
+    let mut bytes = Vec::new();
+    // One byte past the limit is enough to reject, without reading the rest.
+    let read = std::fs::File::open(path).and_then(|f| {
+        f.take(MAX_SSH_CONFIG_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+    });
+    match read {
+        Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(missing_scan(shown));
         }
         Err(e) => return Err(CoreError::from(e).into()),
-    };
+    }
     if bytes.len() > MAX_SSH_CONFIG_BYTES {
         return Err(CoreError::InvalidInput {
             field: "ssh_config".into(),
