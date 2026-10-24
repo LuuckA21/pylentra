@@ -38,6 +38,10 @@
     background: var(--danger-bg);
     box-shadow: var(--shadow);
   }
+  .toast.success {
+    border-color: var(--ok);
+    background: var(--surface-2);
+  }
   .toast.warning {
     border-color: var(--border);
     background: var(--warning-bg);

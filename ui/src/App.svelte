@@ -3,6 +3,7 @@
   import QuickConnect from "./components/QuickConnect.svelte";
   import Banner from "./components/Banner.svelte";
   import ConnectionForm from "./components/ConnectionForm.svelte";
+  import ImportDialog from "./components/ImportDialog.svelte";
   import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import TerminalTab from "./components/TerminalTab.svelte";
@@ -35,6 +36,7 @@
     null,
   );
   let settingsOpen = $state(false);
+  let importOpen = $state(false);
 
   const connOf = (id: string) => library.connections.find((c) => c.id === id);
   const nameOf = (id: string) => connOf(id)?.name ?? id;
@@ -72,7 +74,7 @@
       onopen={openTab}
       onedit={(connection) => (editing = { connection })}
       onsettings={() => (settingsOpen = true)}
-      onimport={() => {}}
+      onimport={() => (importOpen = true)}
     />
     <main>
       {#if sessions.tabs.length}
@@ -135,6 +137,9 @@
     }}
     oncancel={() => (editing = null)}
   />
+{/if}
+{#if importOpen}
+  <ImportDialog onclose={() => (importOpen = false)} />
 {/if}
 {#if settingsOpen}
   <Settings onclose={() => (settingsOpen = false)} />
