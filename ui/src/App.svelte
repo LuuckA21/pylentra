@@ -192,7 +192,10 @@
     white-space: nowrap;
   }
   .title.closed {
-    opacity: 0.6;
+    color: var(--fg-muted);
+  }
+  .title.closed .dot {
+    opacity: 0.45;
   }
   .dot {
     flex: none;
@@ -203,12 +206,15 @@
   }
   .close {
     padding: 2px var(--space-2);
-    visibility: hidden;
+    /* Not visibility: hidden, which would take the button out of the tab order. */
+    opacity: 0;
+    pointer-events: none;
   }
   .tab.active .close,
   .tab:hover .close,
   .close:focus-visible {
-    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
   }
   .tabs {
     position: relative;
