@@ -1,11 +1,12 @@
 <script lang="ts">
   import { FitAddon } from "@xterm/addon-fit";
-  import { Terminal, type ITheme } from "@xterm/xterm";
+  import { Terminal } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
   import { onMount, untrack } from "svelte";
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import { t } from "../lib/i18n";
   import type { TabState } from "../lib/sessionReducer";
+  import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
   import { fromOtherModal, shortcutFor, type Action } from "../lib/shortcuts";
   import {
     answer,
@@ -42,17 +43,7 @@
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
 
-  // Colors come from the app's CSS tokens, so the terminal follows data-theme.
-  function theme(): ITheme {
-    const css = getComputedStyle(document.documentElement);
-    const v = (name: string) => css.getPropertyValue(name).trim();
-    return {
-      background: v("--surface-1"),
-      foreground: v("--fg"),
-      cursor: v("--fg"),
-      selectionBackground: v("--term-selection"),
-    };
-  }
+  const theme = () => terminalTheme(settings.terminal_theme, appTerminalTheme);
 
   function start() {
     const tm = term;
@@ -76,6 +67,9 @@
       fontFamily: settings.font_family,
       fontSize: settings.font_size,
       theme: theme(),
+      cursorStyle: settings.cursor_style,
+      cursorBlink: settings.cursor_blink,
+      scrollback: settings.scrollback,
     });
     const fa = new FitAddon();
     tm.loadAddon(fa);
@@ -99,6 +93,11 @@
       ),
     );
     tm.onResize(({ cols, rows }) => resize(tab, cols, rows));
+    tm.onSelectionChange(() => {
+      const text = settings.copy_on_select ? tm.getSelection() : "";
+      // A clipboard error here would only be noise.
+      if (text) navigator.clipboard?.writeText(text).catch(() => {});
+    });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
@@ -125,12 +124,18 @@
     };
   });
 
-  // Open terminals follow font changes from the settings dialog.
+  // Open terminals follow the terminal settings.
   $effect(() => {
-    const { font_family, font_size } = settings;
+    const o = {
+      fontFamily: settings.font_family,
+      fontSize: settings.font_size,
+      theme: theme(),
+      cursorStyle: settings.cursor_style,
+      cursorBlink: settings.cursor_blink,
+      scrollback: settings.scrollback,
+    };
     if (!term) return;
-    term.options.fontFamily = font_family;
-    term.options.fontSize = font_size;
+    Object.assign(term.options, o);
     fit?.fit();
   });
 
