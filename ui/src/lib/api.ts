@@ -3,6 +3,7 @@ import type { ApiError } from "./bindings/ApiError";
 import type { Connection } from "./bindings/Connection";
 import type { ForwardRule } from "./bindings/ForwardRule";
 import type { Group } from "./bindings/Group";
+import type { KnownHostEntry } from "./bindings/KnownHostEntry";
 import type { Library } from "./bindings/Library";
 import type { PromptAnswer } from "./bindings/PromptAnswer";
 import type { SessionEvent } from "./bindings/SessionEvent";
@@ -104,6 +105,8 @@ export const forwardStop = (sessionId: string, forwardId: number) =>
   invoke<void>("forward_stop", { sessionId, forwardId });
 export const knownHostForget = (host: string, port: number) =>
   invoke<number>("known_host_forget", { host, port });
+export const knownHostsList = () =>
+  invoke<KnownHostEntry[]>("known_hosts_list");
 export const logDir = () => invoke<string>("log_dir");
 
 export const api = {
@@ -127,5 +130,6 @@ export const api = {
   forwardStart,
   forwardStop,
   knownHostForget,
+  knownHostsList,
   logDir,
 };

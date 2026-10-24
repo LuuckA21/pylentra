@@ -82,6 +82,7 @@ fn main() {
             commands::forward_start,
             commands::forward_stop,
             commands::known_host_forget,
+            commands::known_hosts_list,
             commands::log_dir,
         ])
         .build(tauri::generate_context!())

@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pylentra_core::error::{ApiError, CoreError};
+use pylentra_core::known_hosts::KnownHostEntry;
 use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
 use pylentra_core::secrets::SecretKind;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
@@ -420,6 +421,11 @@ pub fn known_host_forget(
 pub fn do_known_host_forget(state: &AppState, host: &str, port: u16) -> Result<u32, ApiError> {
     let removed = state.known_hosts.forget(host, port)?;
     Ok(u32::try_from(removed).unwrap_or(u32::MAX))
+}
+
+#[tauri::command]
+pub fn known_hosts_list(state: State<'_, AppState>) -> Result<Vec<KnownHostEntry>, ApiError> {
+    Ok(state.known_hosts.list()?)
 }
 
 #[tauri::command]
