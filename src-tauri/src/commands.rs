@@ -1,6 +1,7 @@
 //! Thin Tauri commands. Each delegates to a `do_<name>` that takes the state
 //! directly, so the logic is testable without a Tauri runtime.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use pylentra_core::error::{ApiError, CoreError};
@@ -8,6 +9,7 @@ use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings,
 use pylentra_core::secrets::SecretKind;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
 use pylentra_core::ssh::{SessionId, SessionSink};
+use pylentra_core::ssh_config::{ScanResult, parse};
 use pylentra_core::store::Library;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
@@ -162,6 +164,66 @@ pub fn settings_save(state: State<'_, AppState>, settings: Settings) -> Result<(
 
 pub fn do_settings_save(state: &AppState, settings: Settings) -> Result<(), ApiError> {
     Ok(state.settings().save(settings)?)
+}
+
+#[tauri::command]
+pub fn ssh_config_scan(state: State<'_, AppState>) -> Result<ScanResult, ApiError> {
+    match std::env::home_dir() {
+        Some(home) => do_ssh_config_scan(&state, &home.join(".ssh").join("config")),
+        None => Ok(missing_scan(String::new())),
+    }
+}
+
+fn missing_scan(path: String) -> ScanResult {
+    ScanResult {
+        path,
+        missing: true,
+        ..parse("", &[])
+    }
+}
+
+const MAX_SSH_CONFIG_BYTES: usize = 1024 * 1024;
+
+/// Reads `path` (never writes it) and marks the candidates already saved.
+pub fn do_ssh_config_scan(state: &AppState, path: &Path) -> Result<ScanResult, ApiError> {
+    let shown = path.display().to_string();
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(missing_scan(shown));
+        }
+        Err(e) => return Err(CoreError::from(e).into()),
+    };
+    if bytes.len() > MAX_SSH_CONFIG_BYTES {
+        return Err(CoreError::InvalidInput {
+            field: "ssh_config".into(),
+            reason: "file too large".into(),
+        }
+        .into());
+    }
+    let mut result = parse(
+        &String::from_utf8_lossy(&bytes),
+        &state.store().library().connections,
+    );
+    result.path = shown;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn connections_import(
+    state: State<'_, AppState>,
+    connections: Vec<Connection>,
+    group_id: Option<Uuid>,
+) -> Result<usize, ApiError> {
+    do_connections_import(&state, connections, group_id)
+}
+
+pub fn do_connections_import(
+    state: &AppState,
+    connections: Vec<Connection>,
+    group_id: Option<Uuid>,
+) -> Result<usize, ApiError> {
+    Ok(state.store().import(connections, group_id)?)
 }
 
 // Async so the session task is spawned on Tauri's tokio runtime.
@@ -615,5 +677,55 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code, "config.invalid");
         assert_eq!(err.params["field"], "host");
+    }
+    fn scan(state: &AppState, bytes: &[u8]) -> Result<ScanResult, ApiError> {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config");
+        std::fs::write(&path, bytes).unwrap();
+        do_ssh_config_scan(state, &path)
+    }
+
+    #[test]
+    fn scan_missing_file() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let path = d.path().join("nope");
+        let r = do_ssh_config_scan(&state, &path).unwrap();
+        assert!(r.missing && r.candidates.is_empty());
+        assert_eq!(r.path, path.display().to_string());
+    }
+
+    #[test]
+    fn scan_rejects_files_over_1_mib() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = scan(&state, &vec![b'#'; 1024 * 1024 + 1]).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert!(scan(&state, &vec![b'#'; 1024 * 1024]).is_ok());
+    }
+
+    #[test]
+    fn scan_reads_non_utf8_bytes() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let r = scan(&state, b"Host a\n HostName h\xff\n").unwrap();
+        assert_eq!(r.candidates.len(), 1);
+        assert!(!r.missing && !r.path.is_empty());
+    }
+
+    #[test]
+    fn scan_marks_existing_names() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        do_connection_save(&state, conn("A"), None, None).unwrap();
+        let r = scan(&state, b"Host a b\n HostName h\n").unwrap();
+        let exists: Vec<bool> = r.candidates.iter().map(|c| c.exists).collect();
+        assert_eq!(exists, [true, false]);
+    }
+
+    #[test]
+    fn connections_import_adds_all_and_reports_count() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        assert_eq!(
+            do_connections_import(&state, vec![conn("a"), conn("b")], None).unwrap(),
+            2
+        );
+        assert_eq!(do_library_get(&state).connections.len(), 2);
     }
 }

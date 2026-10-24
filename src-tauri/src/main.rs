@@ -69,6 +69,8 @@ fn main() {
             commands::connection_delete,
             commands::group_save,
             commands::group_delete,
+            commands::ssh_config_scan,
+            commands::connections_import,
             commands::settings_get,
             commands::settings_save,
             commands::session_open,

@@ -6,6 +6,7 @@ import type { Group } from "./bindings/Group";
 import type { Library } from "./bindings/Library";
 import type { PromptAnswer } from "./bindings/PromptAnswer";
 import type { SessionEvent } from "./bindings/SessionEvent";
+import type { ScanResult } from "./bindings/ScanResult";
 import type { Settings } from "./bindings/Settings";
 import type { Warning } from "./bindings/Warning";
 
@@ -26,6 +27,11 @@ export const connectionDelete = (id: string) =>
 export const groupSave = (group: Group) =>
   invoke<void>("group_save", { group });
 export const groupDelete = (id: string) => invoke<void>("group_delete", { id });
+export const sshConfigScan = () => invoke<ScanResult>("ssh_config_scan");
+export const connectionsImport = (
+  connections: Connection[],
+  groupId: string | null,
+) => invoke<number>("connections_import", { connections, groupId });
 export const settingsGet = () => invoke<Settings>("settings_get");
 export const settingsSave = (settings: Settings) =>
   invoke<void>("settings_save", { settings });
@@ -108,6 +114,8 @@ export const api = {
   connectionDelete,
   groupSave,
   groupDelete,
+  sshConfigScan,
+  connectionsImport,
   settingsGet,
   settingsSave,
   sessionOpen,

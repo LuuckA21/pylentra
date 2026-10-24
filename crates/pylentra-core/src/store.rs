@@ -218,6 +218,51 @@ impl ConnectionStore {
         Ok((candidate, warnings))
     }
 
+    /// Adds `conns` with a single write; any invalid one cancels them all.
+    /// Names are not deduplicated: the caller leaves out the ones it has.
+    pub fn import(
+        &mut self,
+        mut conns: Vec<Connection>,
+        group_id: Option<Uuid>,
+    ) -> Result<usize, CoreError> {
+        self.writable()?;
+        if conns.is_empty() {
+            return Ok(0);
+        }
+        let mut candidate = self.library.clone();
+        let taken = |id: Uuid| candidate.connections.iter().any(|x| x.id == id);
+        for c in &mut conns {
+            c.group_id = group_id;
+            c.validate()?;
+            if taken(c.id) {
+                return Err(CoreError::InvalidInput {
+                    field: "id".into(),
+                    reason: "already exists".into(),
+                });
+            }
+        }
+        let n = conns.len();
+        let ids: Vec<Uuid> = conns.iter().map(|c| c.id).collect();
+        candidate.connections.extend(conns);
+        for id in ids {
+            if let Some(j) = candidate
+                .connections
+                .iter()
+                .find(|x| x.id == id)
+                .and_then(|x| x.jump_via)
+                && !candidate.connections.iter().any(|x| x.id == j)
+            {
+                return Err(CoreError::InvalidInput {
+                    field: "jump_via".into(),
+                    reason: "unknown jump host".into(),
+                });
+            }
+            chain_in(&candidate.connections, id)?;
+        }
+        self.commit(candidate)?;
+        Ok(n)
+    }
+
     pub fn dependents(&self, id: Uuid) -> Vec<Uuid> {
         dependents_in(&self.library.connections, id)
     }
@@ -837,5 +882,80 @@ mod tests {
         let (again, outcome) = SettingsStore::load(path);
         assert!(matches!(outcome, LoadOutcome::Ok));
         assert_eq!(again.get(), &new);
+    }
+    #[test]
+    fn import_writes_once_with_jumps_between_new_connections() {
+        let (d, mut s) = store();
+        let bastion = conn("bastion");
+        let web = via("web", &bastion);
+        assert_eq!(s.import(vec![web, bastion], None).unwrap(), 2);
+        let (again, _) = ConnectionStore::load(d.path().join("connections.toml")).unwrap();
+        assert_eq!(again.library(), s.library());
+        assert_eq!(again.library().connections.len(), 2);
+    }
+
+    #[test]
+    fn import_with_one_invalid_connection_changes_nothing() {
+        let (d, mut s) = store();
+        s.upsert_connection(conn("old")).unwrap();
+        let path = d.path().join("connections.toml");
+        let before = fs::read_to_string(&path).unwrap();
+        let mut bad = conn("bad");
+        bad.host = String::new();
+        let err = s.import(vec![conn("ok"), bad], None).unwrap_err();
+        assert!(matches!(err, CoreError::InvalidInput { field, .. } if field == "host"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(s.library().connections.len(), 1);
+    }
+
+    #[test]
+    fn import_rejects_unknown_jump_and_taken_ids() {
+        let (_d, mut s) = store();
+        let saved = conn("saved");
+        s.upsert_connection(saved.clone()).unwrap();
+        let orphan = Connection {
+            jump_via: Some(Uuid::new_v4()),
+            ..conn("orphan")
+        };
+        assert!(matches!(
+            s.import(vec![orphan], None),
+            Err(CoreError::InvalidInput { field, .. }) if field == "jump_via"
+        ));
+        assert!(matches!(
+            s.import(vec![saved], None),
+            Err(CoreError::InvalidInput { field, .. }) if field == "id"
+        ));
+        assert_eq!(s.library().connections.len(), 1);
+    }
+
+    #[test]
+    fn import_sets_the_group() {
+        let (_d, mut s) = store();
+        let g = Uuid::new_v4();
+        s.import(vec![conn("a"), conn("b")], Some(g)).unwrap();
+        assert!(
+            s.library()
+                .connections
+                .iter()
+                .all(|c| c.group_id == Some(g))
+        );
+    }
+
+    #[test]
+    fn import_empty_writes_nothing() {
+        let (d, mut s) = store();
+        assert_eq!(s.import(vec![], None).unwrap(), 0);
+        assert!(!d.path().join("connections.toml").exists());
+    }
+
+    #[test]
+    fn import_into_read_only_library_fails() {
+        let d = TempDir::new().unwrap();
+        let (path, _) = newer_file(&d);
+        let (mut s, _) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(
+            s.import(vec![conn("a")], None),
+            Err(CoreError::ReadOnly)
+        ));
     }
 }
