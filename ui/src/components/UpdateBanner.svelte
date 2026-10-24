@@ -45,9 +45,11 @@
   .update {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 6px 12px;
-    background: var(--bg-alt);
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-3);
+    margin: var(--space-2) var(--space-3) 0;
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
   }
 </style>

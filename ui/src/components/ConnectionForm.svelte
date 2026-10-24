@@ -405,10 +405,10 @@
     width: min(560px, calc(100vw - 32px));
     max-height: calc(100vh - 32px);
     overflow-y: auto;
-    padding: 16px;
-    background: var(--bg);
+    padding: var(--space-6);
+    background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow);
   }
   h2 {
@@ -417,9 +417,9 @@
   }
   fieldset {
     margin: 0 0 12px;
-    padding: 8px 12px 12px;
+    padding: var(--space-2) var(--space-3) var(--space-3);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
   }
   .field {
     display: flex;

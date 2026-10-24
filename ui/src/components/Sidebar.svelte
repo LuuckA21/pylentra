@@ -953,7 +953,7 @@
   }
   .menu button:hover,
   .menu button:focus-visible {
-    background: var(--bg-hover);
+    background: var(--surface-3);
   }
   .backdrop {
     position: fixed;
@@ -965,10 +965,10 @@
   }
   .dialog {
     max-width: min(440px, calc(100vw - 32px));
-    padding: 16px;
-    background: var(--bg);
+    padding: var(--space-6);
+    background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow);
   }
   h2 {
@@ -979,5 +979,6 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+    margin-top: 20px;
   }
 </style>

@@ -19,8 +19,8 @@
 <style>
   .toasts {
     position: fixed;
-    right: 16px;
-    bottom: 16px;
+    right: var(--space-4);
+    bottom: var(--space-4);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -30,10 +30,10 @@
   .toast {
     display: flex;
     gap: 8px;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
-    border-radius: 6px;
+    padding: var(--space-2) var(--space-4);
+    border-radius: 999px;
     border: 1px solid var(--danger);
     background: var(--danger-bg);
     box-shadow: var(--shadow);
@@ -45,6 +45,6 @@
   .toast button {
     border: 0;
     background: none;
-    padding: 0 4px;
+    padding: 0 var(--space-1);
   }
 </style>

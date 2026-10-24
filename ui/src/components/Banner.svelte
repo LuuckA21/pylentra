@@ -13,9 +13,11 @@
 
 <style>
   .banner {
-    padding: 6px 12px;
+    margin: var(--space-2) var(--space-3) 0;
+    padding: var(--space-2) var(--space-4);
     background: var(--warning-bg);
-    border-bottom: 1px solid var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
   }
   p {
     margin: 2px 0;
