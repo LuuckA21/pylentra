@@ -505,11 +505,13 @@
                       openMenu({ conn }, e.currentTarget, e.clientX, e.clientY);
                     }}
                   >
-                    <Avatar
-                      name={conn.name}
-                      icon={conn.icon}
-                      color={colorOf(conn, library.groups)}
-                    />
+                    <span aria-hidden="true"
+                      ><Avatar
+                        name={conn.name}
+                        icon={conn.icon}
+                        color={colorOf(conn, library.groups)}
+                      /></span
+                    >
                     <span class="name">{conn.name}</span>
                     <span class="host">{conn.username}@{conn.host}</span>
                     {#if openConnectionIds.has(conn.id)}

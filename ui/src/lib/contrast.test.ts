@@ -39,6 +39,10 @@ describe.each(Object.entries(themes))("%s", (_name, selector) => {
     ["--fg", "--surface-0"],
     ["--fg", "--surface-1"],
     ["--fg-muted", "--surface-1"],
+    ["--ok", "--surface-1"],
+    ...["--ok", "--danger", "--fg-muted", "--fg"].flatMap((fg) =>
+      ["--surface-2", "--surface-3"].map((bg): [string, string] => [fg, bg]),
+    ),
     ["--accent-fg", "--accent"],
     ...COLORS.map((c): [string, string] => [`--tag-${c}-fg`, `--tag-${c}-bg`]),
   ];

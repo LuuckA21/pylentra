@@ -13,7 +13,7 @@
   --danger: #b42318;
   --danger-bg: #fdecea;
   --warning-bg: #fff4d6;
-  --ok: #1a7f37;
+  --ok: #15702f;
   --shadow: 0 8px 28px rgb(40 20 80 / 0.22);
   --term-selection: #6d28d94d;
   --backdrop: rgb(0 0 0 / 0.4);
@@ -56,12 +56,6 @@
   --space-5: 20px;
   --space-6: 24px;
   --font-ui: "Manrope Variable", system-ui, sans-serif;
-
-  /* Aliases for components not yet migrated to --surface-*. */
-  --bg: var(--surface-1);
-  --bg-alt: var(--surface-2);
-  --bg-hover: var(--surface-3);
-  --bg-selected: var(--surface-3);
 }
 
 :root[data-theme="dark"] {
@@ -270,6 +264,7 @@ button:disabled {
 }
 
 .segmented label {
+  position: relative;
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -307,6 +302,7 @@ button:disabled {
   display: grid;
   place-items: center;
   background: var(--backdrop);
+  -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
   z-index: 10;
 }

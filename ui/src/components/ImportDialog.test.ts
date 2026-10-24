@@ -58,7 +58,7 @@ async function open() {
 const box = (name: string) =>
   screen.getByRole("checkbox", { name: new RegExp(`\\b${name}\\b`) });
 const importBtn = () =>
-  screen.getByRole("button", { name: /^Import \d+ connections$/ });
+  screen.getByRole("button", { name: /^Import \d+ connections?$/ });
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -141,6 +141,7 @@ test("Import sends the prepared connections and the chosen group, then toasts", 
 });
 
 test("new 'ssh config' group is created before importing", async () => {
+  vi.mocked(api.connectionsImport).mockResolvedValue(1);
   scan([cand("web")]);
   await open();
   await fireEvent.change(await screen.findByLabelText("Destination group"), {
@@ -154,6 +155,9 @@ test("new 'ssh config' group is created before importing", async () => {
   expect(vi.mocked(api.groupSave).mock.invocationCallOrder[0]).toBeLessThan(
     vi.mocked(api.connectionsImport).mock.invocationCallOrder[0]!,
   );
+  await waitFor(() =>
+    expect(toasts.at(-1)?.message).toBe("Imported 1 connection"),
+  );
 });
 
 test("an import error keeps the dialog open", async () => {
@@ -164,7 +168,7 @@ test("an import error keeps the dialog open", async () => {
   scan([cand("web")]);
   const onclose = await open();
   await fireEvent.click(
-    await screen.findByRole("button", { name: "Import 1 connections" }),
+    await screen.findByRole("button", { name: "Import 1 connection" }),
   );
   await waitFor(() => expect(toasts.at(-1)?.kind).toBe("error"));
   expect(onclose).not.toHaveBeenCalled();

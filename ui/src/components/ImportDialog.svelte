@@ -88,7 +88,7 @@
         groupId || null,
       );
       await refresh();
-      toast(t("import.done", { n }), "success");
+      toast(n === 1 ? t("import.doneOne") : t("import.done", { n }), "success");
       onclose();
     } catch (e) {
       toastError(e);
@@ -216,7 +216,10 @@
         type="button"
         class="primary"
         disabled={busy || count === 0 || readOnly || userMissing}
-        onclick={submit}>{t("import.submit", { n: count })}</button
+        onclick={submit}
+        >{count === 1
+          ? t("import.submitOne")
+          : t("import.submit", { n: count })}</button
       >
     </div>
   </div>

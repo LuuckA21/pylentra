@@ -266,7 +266,9 @@ export const it: Record<MessageKey, string> = {
   "import.group": "Gruppo di destinazione",
   "import.group.new": 'Nuovo gruppo "ssh config"',
   "import.submit": "Importa {n} connessioni",
+  "import.submitOne": "Importa 1 connessione",
   "import.done": "Importate {n} connessioni",
+  "import.doneOne": "Importata 1 connessione",
   "import.note.Include": "Include non viene seguito.",
   "import.note.Match": "I blocchi Match vengono saltati.",
   "import.note.IdentityTokens":

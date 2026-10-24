@@ -16,7 +16,7 @@ const win = vi.hoisted(() => ({
   closeRequested: undefined as
     ((e: { preventDefault: () => void }) => void) | undefined,
   unlisten: vi.fn(),
-  destroy: vi.fn(),
+  destroy: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -112,6 +112,18 @@ test("the window close is held back while a session is ready", async () => {
   expect(win.destroy).not.toHaveBeenCalled();
   await fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(win.destroy).toHaveBeenCalled();
+});
+
+test("a failed window destroy shows an error and dismisses the dialog", async () => {
+  win.destroy.mockRejectedValueOnce(new Error("denied"));
+  openReady();
+  render(App);
+  await waitFor(() => expect(win.closeRequested).toBeDefined());
+  win.closeRequested?.({ preventDefault: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+  await waitFor(() => expect(toasts.at(-1)).toMatchObject({ kind: "error" }));
+  expect(toasts.at(-1)?.message).toContain("denied");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
 test("the window closes freely without ready sessions or with the setting off", async () => {

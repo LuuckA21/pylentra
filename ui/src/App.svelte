@@ -110,7 +110,7 @@
           n === 1
             ? t("confirm.window.bodyOne")
             : t("confirm.window.body", { n }),
-        action: () => void getCurrentWindow().destroy(),
+        action: () => void getCurrentWindow().destroy().catch(toastError),
       };
     });
     return () => void unlisten.then((f) => f());
@@ -204,8 +204,10 @@
     confirmLabel={t("common.close")}
     danger
     onconfirm={() => {
-      confirming?.action();
+      // Dismissed first, so a throwing action cannot leave it on screen.
+      const action = confirming?.action;
       confirming = null;
+      action?.();
     }}
     oncancel={() => (confirming = null)}
   />

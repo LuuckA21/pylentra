@@ -1,23 +1,8 @@
 <script lang="ts">
-  import { warn } from "@tauri-apps/plugin-log";
-  import { relaunch } from "@tauri-apps/plugin-process";
   import { t } from "../lib/i18n";
-  import { updates } from "../lib/stores/updates.svelte";
+  import { installUpdate, updates } from "../lib/stores/updates.svelte";
 
   const update = $derived(updates.available);
-  let installing = $state(false);
-
-  async function install() {
-    if (!update) return;
-    installing = true;
-    try {
-      await update.downloadAndInstall();
-      await relaunch();
-    } catch (e) {
-      warn(`update install failed: ${e}`);
-      installing = false;
-    }
-  }
 </script>
 
 {#if update}
@@ -27,8 +12,10 @@
     aria-label={t("update.available", { version: update.version })}
   >
     <span>{t("update.available", { version: update.version })}</span>
-    <button type="button" disabled={installing} onclick={install}
-      >{installing ? t("update.installing") : t("update.install")}</button
+    <button type="button" disabled={updates.installing} onclick={installUpdate}
+      >{updates.installing
+        ? t("update.installing")
+        : t("update.install")}</button
     >
   </div>
 {/if}

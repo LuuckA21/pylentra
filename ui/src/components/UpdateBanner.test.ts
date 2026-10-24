@@ -13,6 +13,7 @@ import UpdateBanner from "./UpdateBanner.svelte";
 beforeEach(() => {
   vi.resetAllMocks();
   updates.available = null;
+  updates.installing = false;
   setLang("en");
 });
 

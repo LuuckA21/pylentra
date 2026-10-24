@@ -32,6 +32,7 @@ beforeEach(() => {
   toasts.splice(0);
   updates.available = null;
   updates.checking = false;
+  updates.installing = false;
   Object.assign(settings, {
     theme: "System",
     font_family: "monospace",
@@ -299,6 +300,11 @@ test("Check now: up to date -> toast; update -> store; error -> error toast", as
   await checkNow();
   await waitFor(() => expect(updates.available?.version).toBe("2.0.0"));
   expect(toasts).toHaveLength(1);
+  // The app banner sits behind this modal: the section says it itself.
+  expect(await screen.findByText("Version 2.0.0 available")).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Install and restart" }),
+  ).toBeTruthy();
 
   vi.mocked(check).mockRejectedValueOnce(new Error("offline"));
   await checkNow();

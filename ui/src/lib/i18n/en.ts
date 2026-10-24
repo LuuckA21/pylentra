@@ -260,7 +260,9 @@ export const en = {
   "import.group": "Destination group",
   "import.group.new": 'New group "ssh config"',
   "import.submit": "Import {n} connections",
+  "import.submitOne": "Import 1 connection",
   "import.done": "Imported {n} connections",
+  "import.doneOne": "Imported 1 connection",
   "import.note.Include": "Include is not followed.",
   "import.note.Match": "Match blocks are skipped.",
   "import.note.IdentityTokens":
