@@ -333,3 +333,50 @@ button:disabled {
   gap: 8px;
   margin-top: 12px;
 }
+
+/* Tag colors: .tag-<name> / .tag-none expose --tag-fg|bg|solid for Avatar, Pill and friends. */
+.tag-red {
+  --tag-fg: var(--tag-red-fg);
+  --tag-bg: var(--tag-red-bg);
+  --tag-solid: var(--tag-red-solid);
+}
+.tag-orange {
+  --tag-fg: var(--tag-orange-fg);
+  --tag-bg: var(--tag-orange-bg);
+  --tag-solid: var(--tag-orange-solid);
+}
+.tag-amber {
+  --tag-fg: var(--tag-amber-fg);
+  --tag-bg: var(--tag-amber-bg);
+  --tag-solid: var(--tag-amber-solid);
+}
+.tag-green {
+  --tag-fg: var(--tag-green-fg);
+  --tag-bg: var(--tag-green-bg);
+  --tag-solid: var(--tag-green-solid);
+}
+.tag-teal {
+  --tag-fg: var(--tag-teal-fg);
+  --tag-bg: var(--tag-teal-bg);
+  --tag-solid: var(--tag-teal-solid);
+}
+.tag-blue {
+  --tag-fg: var(--tag-blue-fg);
+  --tag-bg: var(--tag-blue-bg);
+  --tag-solid: var(--tag-blue-solid);
+}
+.tag-violet {
+  --tag-fg: var(--tag-violet-fg);
+  --tag-bg: var(--tag-violet-bg);
+  --tag-solid: var(--tag-violet-solid);
+}
+.tag-gray {
+  --tag-fg: var(--tag-gray-fg);
+  --tag-bg: var(--tag-gray-bg);
+  --tag-solid: var(--tag-gray-solid);
+}
+.tag-none {
+  --tag-fg: var(--tag-none-fg);
+  --tag-bg: var(--tag-none-bg);
+  --tag-solid: var(--tag-none-solid);
+}
