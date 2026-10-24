@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import QuickConnect from "./components/QuickConnect.svelte";
   import Banner from "./components/Banner.svelte";
   import ConnectionForm from "./components/ConnectionForm.svelte";
   import Settings from "./components/Settings.svelte";
@@ -12,7 +13,12 @@
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
   import { library, refresh } from "./lib/stores/library.svelte";
-  import { closeTab, openTab, sessions } from "./lib/stores/sessions.svelte";
+  import {
+    closeTab,
+    linkQuickTab,
+    openTab,
+    sessions,
+  } from "./lib/stores/sessions.svelte";
   import { loadSettings } from "./lib/stores/settings.svelte";
   import { toastError } from "./lib/stores/toasts.svelte";
 
@@ -23,8 +29,11 @@
         .map((tab) => tab.connectionId),
     ),
   );
-  // `connection` undefined means a new connection.
-  let editing = $state<{ connection?: Connection } | null>(null);
+  // `connection` undefined means a new connection. `quickTabId`: the form
+  // saves that quick tab's connection (pre-filled, created as new).
+  let editing = $state<{ connection?: Connection; quickTabId?: string } | null>(
+    null,
+  );
   let settingsOpen = $state(false);
 
   const connOf = (id: string) => library.connections.find((c) => c.id === id);
@@ -37,6 +46,16 @@
   function edit(connectionId: string) {
     const connection = library.connections.find((c) => c.id === connectionId);
     if (connection) editing = { connection };
+  }
+
+  // Opens the new-connection form pre-filled from a quick tab, named after its host.
+  function saveQuick(tabId: string) {
+    const quick = sessions.tabs.find((tab) => tab.tabId === tabId)?.quick;
+    if (quick)
+      editing = {
+        connection: { ...quick, name: quick.host },
+        quickTabId: tabId,
+      };
   }
 
   onMount(() => {
@@ -71,7 +90,7 @@
                 >
                   <span class="dot tag-{dotOf(tab.connectionId) ?? 'none'}"
                   ></span>
-                  {nameOf(tab.connectionId)}
+                  {tab.quick?.name ?? nameOf(tab.connectionId)}
                 </button>
                 <button
                   type="button"
@@ -83,20 +102,24 @@
               </div>
             {/each}
           </div>
-          <!-- Quick connect goes here. -->
-          <div class="quick"></div>
+          <div class="quick"><QuickConnect onopen={openTab} /></div>
         </div>
         <div class="tabs">
           {#each sessions.tabs as tab (tab.tabId)}
             <TerminalTab
               {tab}
               active={tab.tabId === sessions.active}
-              onedit={edit}
+              onedit={(id) => (tab.quick ? saveQuick(tab.tabId) : edit(id))}
+              onsave={saveQuick}
             />
           {/each}
         </div>
       {:else}
-        <div class="home"><Welcome onopen={openTab} /></div>
+        <div class="home">
+          <Welcome onopen={openTab}>
+            {#snippet quick()}<QuickConnect onopen={openTab} />{/snippet}
+          </Welcome>
+        </div>
       {/if}
     </main>
   </div>
@@ -105,7 +128,11 @@
 {#if editing}
   <ConnectionForm
     connection={editing.connection}
-    onsaved={() => (editing = null)}
+    isNew={!!editing.quickTabId}
+    onsaved={(saved) => {
+      if (editing?.quickTabId) linkQuickTab(editing.quickTabId, saved);
+      editing = null;
+    }}
     oncancel={() => (editing = null)}
   />
 {/if}
@@ -149,7 +176,9 @@
     gap: var(--space-3);
   }
   .quick {
+    display: flex;
     flex: 1;
+    justify-content: flex-end;
   }
   .tabbar {
     display: flex;

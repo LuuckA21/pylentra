@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { HTMLInputAttributes } from "svelte/elements";
   import Icon, { type UiIcon } from "./Icon.svelte";
 
   let {
@@ -8,7 +9,8 @@
     value = $bindable(),
     onkeydown,
     inputEl = $bindable(),
-  }: {
+    ...rest
+  }: HTMLInputAttributes & {
     icon: UiIcon;
     label: string;
     placeholder?: string;
@@ -26,6 +28,7 @@
     aria-label={label}
     {placeholder}
     {onkeydown}
+    {...rest}
   />
 </div>
 

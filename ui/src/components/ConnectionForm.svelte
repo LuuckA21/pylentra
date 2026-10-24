@@ -16,11 +16,14 @@
 
   let {
     connection,
+    isNew = false,
     onsaved,
     oncancel,
   }: {
     connection?: Connection;
-    onsaved: () => void;
+    /** `connection` only pre-fills the form (e.g. a quick tab); saving creates it. */
+    isNew?: boolean;
+    onsaved: (saved: Connection) => void;
     oncancel: () => void;
   } = $props();
 
@@ -149,14 +152,15 @@
       authType === "Key" && savePassphrase && passphrase ? passphrase : null;
     saving = true;
     try {
+      const saved = build();
       const warnings = await saveConnection(
-        build(),
+        saved,
         pw ?? undefined,
         pp ?? undefined,
       );
       for (const w of warnings)
         toast(t("warning.keyFileMissing", { path: w.path }), "warning");
-      onsaved();
+      onsaved(saved);
     } catch (err) {
       const field =
         isApiError(err) && err.code === "config.invalid"
@@ -224,7 +228,7 @@
     use:modal={oncancel}
   >
     <h2 id="form-title">
-      {connection ? t("form.titleEdit") : t("form.titleNew")}
+      {connection && !isNew ? t("form.titleEdit") : t("form.titleNew")}
     </h2>
     <form bind:this={formEl} onsubmit={submit} novalidate>
       <fieldset>

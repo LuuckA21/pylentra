@@ -10,11 +10,14 @@
     connection,
     groups,
     onforwards,
+    onsave,
   }: {
     tab: TabState;
     connection: Connection | undefined;
     groups: Group[];
     onforwards: () => void;
+    /** Only for quick (unsaved) tabs. */
+    onsave?: () => void;
   } = $props();
 
   const group = $derived(groups.find((g) => g.id === connection?.group_id));
@@ -54,6 +57,10 @@
     disabled={tab.phase !== "ready"}
     onclick={onforwards}>{t("status.forward")}</button
   >
+  {#if onsave}
+    <button type="button" class="fwd" onclick={onsave}>{t("quick.save")}</button
+    >
+  {/if}
   <span class="gap"></span>
   {#if connected}
     <span class="time">{t("status.connectedFor")} <span>{connected}</span></span

@@ -30,3 +30,9 @@ export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   Object.assign(settings, next);
   apply();
 }
+
+// Task 15 reads these from the settings.
+export const quickDefaults = (): { user: string | null; port: number } => ({
+  user: null,
+  port: 22,
+});

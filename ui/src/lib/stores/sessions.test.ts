@@ -3,6 +3,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 vi.mock("../api", () => ({
   api: {
     sessionOpen: vi.fn(),
+    sessionOpenQuick: vi.fn(),
     sessionClose: vi.fn(),
     sessionAnswer: vi.fn(),
   },
@@ -16,6 +17,8 @@ import {
   closeTab,
   connect,
   cycleTab,
+  linkQuickTab,
+  openQuickTab,
   openTab,
   sessions,
 } from "./sessions.svelte";
@@ -30,6 +33,7 @@ beforeEach(() => {
     emit = onEvent;
     return Promise.resolve("s1");
   });
+  vi.mocked(api.sessionOpenQuick).mockResolvedValue("q1");
   vi.mocked(api.sessionClose).mockResolvedValue();
   vi.mocked(api.sessionAnswer).mockResolvedValue();
 });
@@ -123,4 +127,73 @@ test("a tab that becomes ready is recorded as recent", () => {
   expect(recentIds(new Set(["c1"]))).toEqual([]);
   emit({ type: "Status", stage: "Ready" });
   expect(recentIds(new Set(["c1"]))).toEqual(["c1"]);
+});
+
+const target = { user: "luca", host: "Example.com", port: 2222 };
+
+test("openQuickTab opens a tab named user@host with Auto auth", () => {
+  const id = openQuickTab(target);
+  const tab = sessions.tabs[0];
+  expect(sessions.active).toBe(id);
+  expect(tab.quick).toMatchObject({
+    name: "luca@Example.com",
+    host: "Example.com",
+    port: 2222,
+    username: "luca",
+    auth: { type: "Auto" },
+    group_id: null,
+    jump_via: null,
+    forwards: [],
+  });
+  expect(tab.connectionId).toBe(tab.quick?.id);
+});
+
+test("connect uses sessionOpenQuick for quick tabs and does not record them as recent", async () => {
+  localStorage.clear();
+  const id = openQuickTab(target);
+  const quick = sessions.tabs[0].quick;
+  let onEvent: (e: SessionEvent) => void = () => {};
+  vi.mocked(api.sessionOpenQuick).mockImplementation((_c, _w, _h, _d, ev) => {
+    onEvent = ev;
+    return Promise.resolve("q1");
+  });
+  connect(
+    id,
+    80,
+    24,
+    () => {},
+    () => {},
+  );
+  await flush();
+  expect(api.sessionOpenQuick).toHaveBeenCalledWith(
+    quick,
+    80,
+    24,
+    expect.any(Function),
+    expect.any(Function),
+  );
+  expect(api.sessionOpen).not.toHaveBeenCalled();
+  expect(sessions.tabs[0].quick).toEqual(quick); // survives the restart
+  onEvent({ type: "Status", stage: "Ready" });
+  expect(recentIds(new Set([quick!.id]))).toEqual([]);
+});
+
+test("linkQuickTab points the tab at the saved connection", async () => {
+  const id = openQuickTab(target);
+  connect(
+    id,
+    80,
+    24,
+    () => {},
+    () => {},
+  );
+  await flush();
+  linkQuickTab(id, {
+    ...sessions.tabs[0].quick!,
+    id: "saved",
+    name: "Example.com",
+  });
+  expect(sessions.tabs[0].connectionId).toBe("saved");
+  expect(sessions.tabs[0].quick).toBeUndefined();
+  expect(sessions.tabs[0].sessionId).toBe("q1");
 });

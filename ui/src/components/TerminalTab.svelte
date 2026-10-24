@@ -28,10 +28,12 @@
     tab,
     active,
     onedit,
+    onsave,
   }: {
     tab: TabState;
     active: boolean;
     onedit: (connectionId: string) => void;
+    onsave: (tabId: string) => void;
   } = $props();
 
   let el: HTMLDivElement;
@@ -141,9 +143,13 @@
   function run(a: Action, e: KeyboardEvent) {
     // Copy and paste act on the terminal only when it has focus; elsewhere the
     // native behavior stays.
-    // Search focuses the sidebar's search box, which handles it.
+    // Search and quick connect focus their own fields, which handle them.
     const inTerminal = el.contains(e.target as Node);
-    if (a === "search" || ((a === "copy" || a === "paste") && !inTerminal))
+    if (
+      a === "search" ||
+      a === "quickConnect" ||
+      ((a === "copy" || a === "paste") && !inTerminal)
+    )
       return;
     e.preventDefault();
     if (a === "copy") {
@@ -183,6 +189,7 @@
       connection={library.connections.find((c) => c.id === tab.connectionId)}
       groups={library.groups}
       onforwards={() => (forwardsOpen = !forwardsOpen)}
+      onsave={tab.quick ? () => onsave(tab.tabId) : undefined}
     />
   </div>
 

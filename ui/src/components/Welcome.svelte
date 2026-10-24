@@ -18,7 +18,7 @@
 <section class="welcome">
   <h1>{t("welcome.title")}</h1>
   <p class="hint">{t("main.placeholder")}</p>
-  {@render quick?.()}
+  {#if quick}<div class="quick">{@render quick()}</div>{/if}
   {#if recent.length}
     <h2>{t("welcome.recent")}</h2>
     <ul>
@@ -59,6 +59,10 @@
   .hint {
     margin: 0 0 var(--space-4);
     color: var(--fg-muted);
+  }
+  .quick {
+    display: flex;
+    justify-content: center;
   }
   ul {
     margin: 0;

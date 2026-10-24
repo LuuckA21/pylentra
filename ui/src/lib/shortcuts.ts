@@ -1,14 +1,21 @@
 export type Action =
-  "copy" | "paste" | "closeTab" | "search" | "nextTab" | "prevTab";
+  | "copy"
+  | "paste"
+  | "closeTab"
+  | "search"
+  | "nextTab"
+  | "prevTab"
+  | "quickConnect";
 
 const WITH_SHIFT: Record<string, Action> = {
   C: "copy",
   V: "paste",
   W: "closeTab",
   F: "search",
+  K: "quickConnect",
 };
 
-// Ctrl+Shift+C/V/W/F and Ctrl+(Shift+)Tab; everything else (Ctrl+C included) belongs to the shell.
+// Ctrl+Shift+C/V/W/F/K and Ctrl+(Shift+)Tab; everything else (Ctrl+C included) belongs to the shell.
 export function shortcutFor(e: KeyboardEvent): Action | null {
   if (!e.ctrlKey || e.altKey || e.metaKey) return null;
   if (e.key === "Tab") return e.shiftKey ? "prevTab" : "nextTab";
