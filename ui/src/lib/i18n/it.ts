@@ -198,4 +198,7 @@ export const it: Record<MessageKey, string> = {
   "error.secret.unavailable": "Portachiavi non disponibile: {reason}",
   "error.ssh.protocol": "Errore SSH: {reason}",
   "error.unknown": "Qualcosa è andato storto.",
+  "quick.error.format": "Usa utente@host:porta",
+  "quick.error.port": "La porta deve essere tra 1 e 65535",
+  "quick.error.user": "Aggiungi utente@",
 };

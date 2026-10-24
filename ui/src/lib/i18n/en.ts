@@ -194,6 +194,9 @@ export const en = {
   "error.secret.unavailable": "Keychain unavailable: {reason}",
   "error.ssh.protocol": "SSH error: {reason}",
   "error.unknown": "Something went wrong.",
+  "quick.error.format": "Use user@host:port",
+  "quick.error.port": "Port must be between 1 and 65535",
+  "quick.error.user": "Add user@",
 } as const;
 
 export type MessageKey = keyof typeof en;
