@@ -41,7 +41,7 @@
     group?: Group;
     x: number;
     y: number;
-    mode: "main" | "move" | "more";
+    mode: "main" | "move";
   };
 
   let query = $state("");
@@ -50,10 +50,11 @@
   const GROUPS_KEY = "pylentra.sidebar.groups";
   const COLLAPSED_KEY = "pylentra.sidebar.collapsed";
   // Ids of the groups folded shut ("" is the no-group section).
+  const savedShut = getPref<unknown>(GROUPS_KEY, []);
   let shutGroups = $state<string[]>(
-    (getPref<unknown>(GROUPS_KEY, []) as unknown[]).filter(
-      (x): x is string => typeof x === "string",
-    ),
+    Array.isArray(savedShut)
+      ? savedShut.filter((x): x is string => typeof x === "string")
+      : [],
   );
   // Wide windows fold to an avatar rail by preference; narrow ones always do and
   // open the full panel over the sessions on demand.
@@ -535,7 +536,7 @@
           aria-label={t("sidebar.more")}
           title={t("sidebar.more")}
           aria-haspopup="menu"
-          aria-expanded={menu?.mode === "more"}
+          aria-expanded={!!menu && !menu.conn && !menu.group}
           onclick={(e) => {
             const el = e.currentTarget;
             const r = el.getBoundingClientRect();

@@ -408,3 +408,23 @@ test("on a narrow window the sidebar opens over the sessions and closes on Escap
   // The narrow overlay never touches the saved wide-window preference.
   expect(localStorage.getItem("pylentra.sidebar.collapsed")).toBeNull();
 });
+
+test.each(["null", "{}", "5", '"x"', "{oops"])(
+  "a junk stored sidebar state (%s) does not break rendering",
+  (junk) => {
+    localStorage.setItem("pylentra.sidebar.groups", junk);
+    localStorage.setItem("pylentra.sidebar.collapsed", junk);
+    setup();
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+  },
+);
+
+test("the More button reports expanded while its menu is open", async () => {
+  setup();
+  const more = screen.getByRole("button", { name: "More" });
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  await fireEvent.click(more);
+  expect(more.getAttribute("aria-expanded")).toBe("true");
+  await fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+});
