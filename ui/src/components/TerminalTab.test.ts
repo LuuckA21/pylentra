@@ -259,3 +259,41 @@ test("unmounting cancels the pending retry", async () => {
   expect(connect).toHaveBeenCalledTimes(1);
   vi.useRealTimers();
 });
+
+test("turning auto reconnect off during the wait stops the chain", async () => {
+  vi.useFakeTimers();
+  vi.mocked(connect).mockClear();
+  const { rerender } = render(TerminalTab, {
+    tab: initialTab("t1", "c1"),
+    active: true,
+    onedit: vi.fn(),
+    onsave: vi.fn(),
+  });
+  ready();
+  drop();
+  await rerender({
+    tab: {
+      ...initialTab("t1", "c1"),
+      phase: "closed",
+      closed: { type: "Error", error: { code: "network.timeout", params: {} } },
+    } satisfies TabState,
+  });
+  settings.auto_reconnect = false;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(attempts()).toBeUndefined();
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  vi.useRealTimers();
+});
+
+test("a second Closed during the wait does not add a second retry", async () => {
+  vi.useFakeTimers();
+  vi.mocked(connect).mockClear();
+  setup();
+  ready();
+  drop();
+  drop();
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(connect).toHaveBeenCalledTimes(2);
+  vi.useRealTimers();
+});

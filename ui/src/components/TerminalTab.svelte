@@ -80,7 +80,10 @@
             )
           ) {
             waiting = true;
+            clearTimeout(retryTimer);
             retryTimer = setTimeout(() => {
+              // The setting may have been turned off during the wait.
+              if (!settings.auto_reconnect) return cancelRetry();
               waiting = false;
               retries++;
               launch();
