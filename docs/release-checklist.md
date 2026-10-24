@@ -85,18 +85,21 @@ cover it.
 1. Type `tester@127.0.0.1:2201` in the Quick connect field and press Enter: the
    session opens without saving a connection (Auto authentication: agent, then
    default keys, then the password prompt).
-2. Repeat with an IPv6 target such as `tester@[::1]:2201` (and `::1` without a
-   port): it parses and connects.
+2. Optional (Docker Desktop on Windows may not listen on `::1`): repeat with an
+   IPv6 target such as `tester@[::1]:2201`, and without a port as
+   `tester@::1`: it parses and connects.
 3. Click "Save connection" on the tab: the connection appears in the sidebar
    and the tab now belongs to it.
 
 ## Import from ~/.ssh/config
 
-1. With a `~/.ssh/config` that has a few hosts, one of them with `ProxyJump`,
-   open Import: the preview lists every host and flags the ones it cannot
-   fully import.
-2. Import: the hosts land in the "ssh config" group and the jump host chain
-   works when opened.
+1. With a `~/.ssh/config` (Windows: `%USERPROFILE%\.ssh\config`) that has a
+   few hosts, one of them with `ProxyJump`, open Import (the sidebar "⋯" menu,
+   or the button in an empty library): the preview lists every host and flags
+   the ones it cannot fully import.
+2. Import: the hosts land in the chosen destination group, "No group" by
+   default; to test the group, choose `New group "ssh config"`. The jump host
+   chain works when opened.
 3. Run the import again: hosts already in the library are skipped.
 
 ## Colors and icons
@@ -131,9 +134,15 @@ cover it.
 
 ## Downgrade to 0.1.x
 
-1. With a library saved by 0.2, open it in 0.1.x: it opens read-only ("The configuration was
-   written by a newer version and is read-only"); edits are refused.
-2. Go back to 0.2: `connections.toml` is unchanged.
+1. Get a 0.1.x build from GitHub Releases (v0.1.1). Use a 0.2 library that
+   includes an Automatic connection (a saved quick connect, or an imported
+   host without `IdentityFile`), and back up `connections.toml` first: Linux
+   `~/.config/me.luucka.pylentra/`, Windows `%APPDATA%\me.luucka.pylentra\`.
+2. Open it in 0.1.x: it opens read-only ("The configuration was written by a
+   newer version and is read-only") and, since 0.1.x cannot read the Automatic
+   connection, the library shows empty; edits are refused.
+3. Go back to 0.2: every connection is there again, and `connections.toml` is
+   identical to the backup.
 
 ## Language
 

@@ -32,7 +32,10 @@ All notable changes to Pylentra are documented here. The format follows
   the light and dark themes.
 - The connection library file (`connections.toml`) moves to format version 2.
   Pylentra 0.1.x opens a 0.2 library read-only, so going back to 0.1 never
-  overwrites it.
+  overwrites it. If the library holds a connection with the new Automatic
+  authentication (quick connect saves, imported hosts without `IdentityFile`),
+  0.1.x cannot read it and shows an empty read-only library: nothing is lost,
+  and 0.2 shows everything again.
 
 ## [0.1.1] - 2026-10-23
 
