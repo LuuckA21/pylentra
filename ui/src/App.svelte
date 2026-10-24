@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { warn } from "@tauri-apps/plugin-log";
   import QuickConnect from "./components/QuickConnect.svelte";
   import Banner from "./components/Banner.svelte";
   import ConnectionForm from "./components/ConnectionForm.svelte";
@@ -9,6 +11,7 @@
   import TerminalTab from "./components/TerminalTab.svelte";
   import Toasts from "./components/Toasts.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
+  import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
   import Welcome from "./components/Welcome.svelte";
   import { colorOf } from "./lib/appearance";
   import type { Connection } from "./lib/bindings/Connection";
@@ -20,8 +23,9 @@
     openTab,
     sessions,
   } from "./lib/stores/sessions.svelte";
-  import { loadSettings } from "./lib/stores/settings.svelte";
+  import { loadSettings, settings } from "./lib/stores/settings.svelte";
   import { toastError } from "./lib/stores/toasts.svelte";
+  import { checkForUpdate } from "./lib/stores/updates.svelte";
 
   const openConnectionIds = $derived(
     new Set(
@@ -37,6 +41,30 @@
   );
   let settingsOpen = $state(false);
   let importOpen = $state(false);
+
+  // The one confirmation on screen; `action` runs if the user confirms.
+  let confirming = $state<{
+    title: string;
+    message: string;
+    action: () => void;
+  } | null>(null);
+
+  const liveCount = () =>
+    sessions.tabs.filter((tab) => tab.phase === "ready").length;
+
+  // Only a connected tab is worth asking about.
+  function requestClose(tabId: string) {
+    const tab = sessions.tabs.find((x) => x.tabId === tabId);
+    if (!tab || !settings.confirm_close_active || tab.phase !== "ready")
+      return closeTab(tabId);
+    confirming = {
+      title: t("confirm.tab.title"),
+      message: t("confirm.tab.body", {
+        name: tab.quick?.name ?? nameOf(tab.connectionId),
+      }),
+      action: () => closeTab(tabId),
+    };
+  }
 
   const connOf = (id: string) => library.connections.find((c) => c.id === id);
   const nameOf = (id: string) => connOf(id)?.name ?? id;
@@ -61,7 +89,31 @@
   }
 
   onMount(() => {
-    Promise.all([loadSettings(), refresh()]).catch(toastError);
+    // Updater failures (offline, endpoint down) are never shown at startup.
+    Promise.all([
+      loadSettings().then(() => {
+        if (settings.check_updates)
+          return checkForUpdate().catch((e) =>
+            warn(`update check failed: ${e}`),
+          );
+      }),
+      refresh(),
+    ]).catch(toastError);
+
+    const unlisten = getCurrentWindow().onCloseRequested((e) => {
+      const n = liveCount();
+      if (!settings.confirm_close_active || !n) return;
+      e.preventDefault();
+      confirming = {
+        title: t("confirm.window.title"),
+        message:
+          n === 1
+            ? t("confirm.window.bodyOne")
+            : t("confirm.window.body", { n }),
+        action: () => void getCurrentWindow().destroy(),
+      };
+    });
+    return () => void unlisten.then((f) => f());
   });
 </script>
 
@@ -99,7 +151,7 @@
                   class="close"
                   aria-label={t("tabs.close")}
                   title={t("tabs.close")}
-                  onclick={() => closeTab(tab.tabId)}>×</button
+                  onclick={() => requestClose(tab.tabId)}>×</button
                 >
               </div>
             {/each}
@@ -113,6 +165,7 @@
               active={tab.tabId === sessions.active}
               onedit={(id) => (tab.quick ? saveQuick(tab.tabId) : edit(id))}
               onsave={saveQuick}
+              onclose={requestClose}
             />
           {/each}
         </div>
@@ -143,6 +196,19 @@
 {/if}
 {#if settingsOpen}
   <Settings onclose={() => (settingsOpen = false)} />
+{/if}
+{#if confirming}
+  <ConfirmDialog
+    title={confirming.title}
+    message={confirming.message}
+    confirmLabel={t("common.close")}
+    danger
+    onconfirm={() => {
+      confirming?.action();
+      confirming = null;
+    }}
+    oncancel={() => (confirming = null)}
+  />
 {/if}
 <Toasts />
 

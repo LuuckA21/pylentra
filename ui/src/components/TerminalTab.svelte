@@ -11,7 +11,6 @@
   import { fromOtherModal, shortcutFor, type Action } from "../lib/shortcuts";
   import {
     answer,
-    closeTab,
     connect,
     cycleTab,
     resize,
@@ -32,11 +31,14 @@
     active,
     onedit,
     onsave,
+    onclose,
   }: {
     tab: TabState;
     active: boolean;
     onedit: (connectionId: string) => void;
     onsave: (tabId: string) => void;
+    // The parent decides whether closing needs confirmation.
+    onclose: (tabId: string) => void;
   } = $props();
 
   let el: HTMLDivElement;
@@ -212,7 +214,7 @@
         .readText()
         .then((text) => term?.paste(text))
         .catch(toastError);
-    } else if (a === "closeTab") closeTab(tab.tabId);
+    } else if (a === "closeTab") onclose(tab.tabId);
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
   }

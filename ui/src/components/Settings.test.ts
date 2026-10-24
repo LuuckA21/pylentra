@@ -11,12 +11,16 @@ vi.mock("../lib/api", () => ({
 }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn() }));
+vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
 
 import { getVersion } from "@tauri-apps/api/app";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { check } from "@tauri-apps/plugin-updater";
 import { api } from "../lib/api";
 import { setLang, t } from "../lib/i18n";
 import { settings } from "../lib/stores/settings.svelte";
+import { toasts } from "../lib/stores/toasts.svelte";
+import { updates } from "../lib/stores/updates.svelte";
 import Settings from "./Settings.svelte";
 
 beforeEach(() => {
@@ -25,6 +29,9 @@ beforeEach(() => {
   vi.mocked(api.knownHostsList).mockResolvedValue([]);
   vi.mocked(getVersion).mockResolvedValue("0.2.0");
   localStorage.clear();
+  toasts.splice(0);
+  updates.available = null;
+  updates.checking = false;
   Object.assign(settings, {
     theme: "System",
     font_family: "monospace",
@@ -270,4 +277,43 @@ test("updates section hides the version line when it is unknown", async () => {
     screen.getByRole("switch", { name: "Check for updates at startup" }),
   ).toBeTruthy();
   expect(screen.queryByText(/Installed version/)).toBeNull();
+});
+
+test("Check now: up to date -> toast; update -> store; error -> error toast", async () => {
+  setup();
+  await goTo("Updates");
+  const checkNow = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Check now" }));
+
+  vi.mocked(check).mockResolvedValueOnce(null);
+  await checkNow();
+  await waitFor(() =>
+    expect(toasts.at(-1)).toMatchObject({
+      kind: "success",
+      message: "You're up to date",
+    }),
+  );
+  expect(updates.available).toBeNull();
+
+  vi.mocked(check).mockResolvedValueOnce({ version: "2.0.0" } as never);
+  await checkNow();
+  await waitFor(() => expect(updates.available?.version).toBe("2.0.0"));
+  expect(toasts).toHaveLength(1);
+
+  vi.mocked(check).mockRejectedValueOnce(new Error("offline"));
+  await checkNow();
+  await waitFor(() => expect(toasts.at(-1)).toMatchObject({ kind: "error" }));
+  expect(toasts.at(-1)?.message).toContain("offline");
+});
+
+test("Check now is disabled while checking", async () => {
+  setup();
+  await goTo("Updates");
+  updates.checking = true;
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Check now" })).toHaveProperty(
+      "disabled",
+      true,
+    ),
+  );
 });

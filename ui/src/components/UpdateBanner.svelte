@@ -1,19 +1,11 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { warn } from "@tauri-apps/plugin-log";
   import { relaunch } from "@tauri-apps/plugin-process";
-  import { check, type Update } from "@tauri-apps/plugin-updater";
   import { t } from "../lib/i18n";
+  import { updates } from "../lib/stores/updates.svelte";
 
-  let update = $state<Update | null>(null);
+  const update = $derived(updates.available);
   let installing = $state(false);
-
-  // Updater failures (offline, endpoint down) are never shown to the user.
-  onMount(() => {
-    check()
-      .then((u) => (update = u))
-      .catch((e) => warn(`update check failed: ${e}`));
-  });
 
   async function install() {
     if (!update) return;

@@ -44,7 +44,6 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 vi.mock("../lib/stores/sessions.svelte", () => ({
   answer: vi.fn(),
-  closeTab: vi.fn(),
   connect: vi.fn(),
   cycleTab: vi.fn(),
   resize: vi.fn(),
@@ -87,6 +86,7 @@ const setup = () => {
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
+    onclose: vi.fn(),
   });
   return made.terms[0];
 };
@@ -178,6 +178,7 @@ test("shows the attempt and Cancel stops the retries", async () => {
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
+    onclose: vi.fn(),
   });
   ready();
   drop();
@@ -251,6 +252,7 @@ test("unmounting cancels the pending retry", async () => {
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
+    onclose: vi.fn(),
   });
   ready();
   drop();
@@ -268,6 +270,7 @@ test("turning auto reconnect off during the wait stops the chain", async () => {
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
+    onclose: vi.fn(),
   });
   ready();
   drop();
@@ -296,4 +299,21 @@ test("a second Closed during the wait does not add a second retry", async () => 
   await vi.advanceTimersByTimeAsync(60000);
   expect(connect).toHaveBeenCalledTimes(2);
   vi.useRealTimers();
+});
+
+test("Ctrl+Shift+W asks the parent to close the tab", async () => {
+  const onclose = vi.fn();
+  render(TerminalTab, {
+    tab: initialTab("t1", "c1"),
+    active: true,
+    onedit: vi.fn(),
+    onsave: vi.fn(),
+    onclose,
+  });
+  await fireEvent.keyDown(document.body, {
+    key: "W",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  expect(onclose).toHaveBeenCalledWith("t1");
 });
