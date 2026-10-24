@@ -401,6 +401,7 @@ impl SettingsStore {
     }
 
     pub fn save(&mut self, s: Settings) -> Result<(), CoreError> {
+        s.validate()?;
         let text = toml::to_string_pretty(&s).map_err(|e| CoreError::InvalidInput {
             field: "settings".into(),
             reason: e.to_string(),
@@ -865,6 +866,25 @@ mod tests {
             panic!("expected RecoveredFromCorrupt");
         };
         assert_eq!(fs::read_to_string(backup).unwrap(), "{{nope");
+        assert_eq!(s.get(), &Settings::default());
+    }
+
+    #[test]
+    fn save_rejects_invalid_settings() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("settings.toml");
+        let (mut s, _) = SettingsStore::load(path.clone());
+        s.save(Settings::default()).unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        let bad = Settings {
+            scrollback: 10,
+            ..Settings::default()
+        };
+        assert!(matches!(
+            s.save(bad),
+            Err(CoreError::InvalidInput { field, .. }) if field == "scrollback"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
         assert_eq!(s.get(), &Settings::default());
     }
 

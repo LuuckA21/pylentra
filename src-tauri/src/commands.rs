@@ -164,7 +164,10 @@ pub fn settings_save(state: State<'_, AppState>, settings: Settings) -> Result<(
 }
 
 pub fn do_settings_save(state: &AppState, settings: Settings) -> Result<(), ApiError> {
-    Ok(state.settings().save(settings)?)
+    let (connect_timeout, keepalive) = settings.session_timeouts();
+    state.settings().save(settings)?;
+    state.sessions.set_timeouts(connect_timeout, keepalive);
+    Ok(())
 }
 
 #[tauri::command]
@@ -439,6 +442,29 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let state = AppState::load(dir.path(), None, secrets).unwrap();
         (dir, state)
+    }
+
+    #[test]
+    fn settings_save_updates_session_timeouts() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        assert_eq!(state.sessions.options().connect_timeout.as_secs(), 15);
+        let new = Settings {
+            connect_timeout_secs: 40,
+            keepalive_secs: 0,
+            ..Settings::default()
+        };
+        do_settings_save(&state, new).unwrap();
+        let o = state.sessions.options();
+        assert_eq!(
+            (o.connect_timeout.as_secs(), o.keepalive_interval),
+            (40, None)
+        );
+        let bad = Settings {
+            connect_timeout_secs: 1,
+            ..Settings::default()
+        };
+        assert!(do_settings_save(&state, bad).is_err());
+        assert_eq!(state.sessions.options().connect_timeout.as_secs(), 40);
     }
 
     fn conn(name: &str) -> Connection {

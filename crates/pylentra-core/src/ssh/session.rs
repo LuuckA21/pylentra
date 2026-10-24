@@ -27,7 +27,8 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Clone, Debug)]
 pub struct SessionOptions {
     pub connect_timeout: Duration,
-    pub keepalive_interval: Duration,
+    /// `None` turns the keepalive off.
+    pub keepalive_interval: Option<Duration>,
     pub keepalive_max: usize,
     pub max_passphrase_attempts: u8,
     pub agent_path: Option<PathBuf>,
@@ -39,7 +40,7 @@ impl Default for SessionOptions {
     fn default() -> Self {
         Self {
             connect_timeout: Duration::from_secs(15),
-            keepalive_interval: Duration::from_secs(30),
+            keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_max: 3,
             max_passphrase_attempts: 3,
             agent_path: None,
@@ -82,7 +83,7 @@ fn not_found(id: SessionId) -> CoreError {
 pub struct SessionManager {
     secrets: Arc<dyn SecretStore>,
     known_hosts: Arc<KnownHosts>,
-    opts: SessionOptions,
+    opts: Mutex<SessionOptions>,
     broker: Arc<PromptBroker>,
     sessions: Sessions,
 }
@@ -96,10 +97,27 @@ impl SessionManager {
         Self {
             secrets,
             known_hosts,
-            opts,
+            opts: Mutex::new(opts),
             broker: Arc::default(),
             sessions: Arc::default(),
         }
+    }
+
+    fn opts(&self) -> MutexGuard<'_, SessionOptions> {
+        // Plain data, so a poisoned lock is still consistent.
+        self.opts.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Applies to sessions opened after this call; open ones keep theirs.
+    pub fn set_timeouts(&self, connect_timeout: Duration, keepalive_interval: Option<Duration>) {
+        let mut opts = self.opts();
+        opts.connect_timeout = connect_timeout;
+        opts.keepalive_interval = keepalive_interval;
+    }
+
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn options(&self) -> SessionOptions {
+        self.opts().clone()
     }
 
     /// Starts the session in the background; progress arrives on `sink`, ending with one `Closed`.
@@ -118,7 +136,7 @@ impl SessionManager {
             secrets: self.secrets.clone(),
             known_hosts: self.known_hosts.clone(),
             broker: self.broker.clone(),
-            opts: self.opts.clone(),
+            opts: self.opts().clone(),
             sink: sink.clone(),
             sessions: self.sessions.clone(),
         };

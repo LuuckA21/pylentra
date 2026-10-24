@@ -51,7 +51,7 @@ pub(crate) async fn connect_chain(
         });
     };
     let config = Arc::new(client::Config {
-        keepalive_interval: Some(ctx.opts.keepalive_interval),
+        keepalive_interval: ctx.opts.keepalive_interval,
         keepalive_max: ctx.opts.keepalive_max,
         ..Default::default()
     });

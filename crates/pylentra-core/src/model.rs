@@ -3,6 +3,7 @@ use serde::de::{DeserializeOwned, IntoDeserializer};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -24,8 +25,6 @@ pub(crate) fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(
 }
 
 /// Like [`lenient`], falling back to `T::default()`.
-// Task-15 settings use this; until then only the unit test does.
-#[allow(dead_code)]
 pub(crate) fn lenient_or_default<'de, D: Deserializer<'de>, T: DeserializeOwned + Default>(
     d: D,
 ) -> Result<T, D::Error> {
@@ -149,6 +148,28 @@ pub enum Theme {
     Dark,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum TerminalTheme {
+    #[default]
+    App,
+    Dracula,
+    Nord,
+    SolarizedDark,
+    SolarizedLight,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CursorStyle {
+    #[default]
+    Block,
+    Bar,
+    Underline,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
 #[serde(default)]
 #[ts(export)]
@@ -157,6 +178,21 @@ pub struct Settings {
     pub font_family: String,
     pub font_size: u16,
     pub language: Option<String>,
+    #[serde(deserialize_with = "lenient_or_default")]
+    pub terminal_theme: TerminalTheme,
+    #[serde(deserialize_with = "lenient_or_default")]
+    pub cursor_style: CursorStyle,
+    pub cursor_blink: bool,
+    pub scrollback: u32,
+    pub copy_on_select: bool,
+    pub default_user: Option<String>,
+    pub default_port: u16,
+    pub connect_timeout_secs: u16,
+    /// 0 turns the keepalive off.
+    pub keepalive_secs: u16,
+    pub auto_reconnect: bool,
+    pub confirm_close_active: bool,
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -166,7 +202,58 @@ impl Default for Settings {
             font_family: "monospace".into(),
             font_size: 14,
             language: None,
+            terminal_theme: TerminalTheme::App,
+            cursor_style: CursorStyle::Block,
+            cursor_blink: true,
+            scrollback: 10_000,
+            copy_on_select: false,
+            default_user: None,
+            default_port: 22,
+            connect_timeout_secs: 15,
+            keepalive_secs: 30,
+            auto_reconnect: false,
+            confirm_close_active: true,
+            check_updates: true,
         }
+    }
+}
+
+impl Settings {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        fn range(field: &str, v: u32, lo: u32, hi: u32) -> Result<(), CoreError> {
+            if (lo..=hi).contains(&v) {
+                return Ok(());
+            }
+            Err(invalid(field, &format!("must be between {lo} and {hi}")))
+        }
+        range("font_size", self.font_size.into(), 8, 32)?;
+        range("scrollback", self.scrollback, 1_000, 100_000)?;
+        range("default_port", self.default_port.into(), 1, 65_535)?;
+        range(
+            "connect_timeout_secs",
+            self.connect_timeout_secs.into(),
+            5,
+            120,
+        )?;
+        if self.keepalive_secs != 0 {
+            range("keepalive_secs", self.keepalive_secs.into(), 5, 300)?;
+        }
+        if self
+            .default_user
+            .as_deref()
+            .is_some_and(|u| u.trim().is_empty())
+        {
+            return Err(invalid("default_user", "must not be empty"));
+        }
+        Ok(())
+    }
+
+    /// Connect timeout and keepalive interval (`None` when off) for new sessions.
+    pub fn session_timeouts(&self) -> (Duration, Option<Duration>) {
+        (
+            Duration::from_secs(self.connect_timeout_secs.into()),
+            (self.keepalive_secs != 0).then(|| Duration::from_secs(self.keepalive_secs.into())),
+        )
     }
 }
 
@@ -463,5 +550,100 @@ mod tests {
             (s.theme, s.font_family.as_str(), s.font_size, s.language),
             (Theme::System, "monospace", 14, None)
         );
+    }
+
+    #[test]
+    fn v0_1_settings_file_loads_with_new_defaults() {
+        let s: Settings =
+            toml::from_str("theme = \"Dark\"\nfont_family = \"x\"\nfont_size = 12").unwrap();
+        assert_eq!(
+            s,
+            Settings {
+                theme: Theme::Dark,
+                font_family: "x".into(),
+                font_size: 12,
+                ..Settings::default()
+            }
+        );
+        assert_eq!((s.scrollback, s.check_updates), (10_000, true));
+    }
+
+    #[test]
+    fn unknown_terminal_theme_and_cursor_fall_back() {
+        let s: Settings =
+            toml::from_str("terminal_theme = \"matrix\"\ncursor_style = \"beam\"").unwrap();
+        assert_eq!(
+            (s.terminal_theme, s.cursor_style),
+            (TerminalTheme::App, CursorStyle::Block)
+        );
+        let s: Settings =
+            toml::from_str("terminal_theme = \"solarized_dark\"\ncursor_style = \"bar\"").unwrap();
+        assert_eq!(
+            (s.terminal_theme, s.cursor_style),
+            (TerminalTheme::SolarizedDark, CursorStyle::Bar)
+        );
+    }
+
+    #[test]
+    fn validate_ranges() {
+        type Set = fn(&mut Settings, u32);
+        // default_port's upper bound is the u16 type itself, so only its lower edge is probed.
+        let cases: [(&str, u32, u32, Set); 5] = [
+            ("font_size", 8, 32, |s, v| s.font_size = v as u16),
+            ("scrollback", 1_000, 100_000, |s, v| s.scrollback = v),
+            ("default_port", 1, 65_535, |s, v| s.default_port = v as u16),
+            ("connect_timeout_secs", 5, 120, |s, v| {
+                s.connect_timeout_secs = v as u16
+            }),
+            ("keepalive_secs", 5, 300, |s, v| s.keepalive_secs = v as u16),
+        ];
+        let field_of = |s: &Settings| match s.validate() {
+            Err(CoreError::InvalidInput { field, .. }) => Some(field),
+            Err(e) => panic!("{e:?}"),
+            Ok(()) => None,
+        };
+        assert_eq!(field_of(&Settings::default()), None);
+        for (field, lo, hi, set) in cases {
+            let mut s = Settings::default();
+            set(&mut s, lo);
+            assert_eq!(field_of(&s), None, "{field} low edge");
+            set(&mut s, hi);
+            assert_eq!(field_of(&s), None, "{field} high edge");
+            // keepalive 0 means off, so only the others reject lo - 1.
+            if field != "keepalive_secs" {
+                set(&mut s, lo - 1);
+                assert_eq!(field_of(&s).as_deref(), Some(field), "{field} below");
+            }
+            if field != "default_port" {
+                set(&mut s, hi + 1);
+                assert_eq!(field_of(&s).as_deref(), Some(field), "{field} above");
+            }
+        }
+        let with_keepalive = |keepalive_secs| Settings {
+            keepalive_secs,
+            ..Settings::default()
+        };
+        assert_eq!(field_of(&with_keepalive(0)), None);
+        assert_eq!(
+            field_of(&with_keepalive(4)).as_deref(),
+            Some("keepalive_secs")
+        );
+        let with_user = |u: &str| Settings {
+            default_user: Some(u.into()),
+            ..Settings::default()
+        };
+        assert_eq!(field_of(&with_user("  ")).as_deref(), Some("default_user"));
+        assert_eq!(field_of(&with_user("luca")), None);
+    }
+
+    #[test]
+    fn keepalive_zero_disables_keepalive() {
+        let mut s = Settings::default();
+        assert_eq!(
+            s.session_timeouts(),
+            (Duration::from_secs(15), Some(Duration::from_secs(30)))
+        );
+        s.keepalive_secs = 0;
+        assert_eq!(s.session_timeouts(), (Duration::from_secs(15), None));
     }
 }

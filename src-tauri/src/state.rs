@@ -29,10 +29,15 @@ impl AppState {
             config_dir.join("known_hosts"),
             openssh_known_hosts,
         ));
+        let (connect_timeout, keepalive_interval) = settings.get().session_timeouts();
         let sessions = SessionManager::new(
             secrets.clone(),
             known_hosts.clone(),
-            SessionOptions::default(),
+            SessionOptions {
+                connect_timeout,
+                keepalive_interval,
+                ..SessionOptions::default()
+            },
         );
         let warnings = [conn_outcome, settings_outcome]
             .into_iter()
