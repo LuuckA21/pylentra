@@ -253,6 +253,42 @@ test("rename group calls groupSave with same id and new name", async () => {
   );
 });
 
+test("group dialog saves the chosen color", async () => {
+  setup();
+  await openMore();
+  await fireEvent.click(screen.getByRole("menuitem", { name: "New group" }));
+  await fireEvent.input(screen.getByLabelText("Group name"), {
+    target: { value: "Servers" },
+  });
+  await fireEvent.click(screen.getByRole("radio", { name: "Teal" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(api.groupSave).toHaveBeenCalledOnce());
+  expect(vi.mocked(api.groupSave).mock.calls[0][0]).toMatchObject({
+    name: "Servers",
+    color: "teal",
+  });
+});
+
+test("renaming keeps the group color", async () => {
+  library.groups = groups = [{ id: "g", name: "Servers", color: "blue" }];
+  setup();
+  await fireEvent.contextMenu(
+    screen.getByRole("button", { name: /Servers/, expanded: true }),
+  );
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+  expect(
+    screen.getByRole("radio", { name: "Blue" }).getAttribute("aria-checked"),
+  ).toBe("true");
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(api.groupSave).toHaveBeenCalledWith({
+      id: "g",
+      name: "Servers",
+      color: "blue",
+    }),
+  );
+});
+
 test("delete group confirms, then calls groupDelete", async () => {
   library.groups = groups = [{ id: "g", name: "Servers" }];
   setup();

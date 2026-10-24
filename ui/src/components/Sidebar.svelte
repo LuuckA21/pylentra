@@ -2,6 +2,7 @@
   import { api } from "../lib/api";
   import type { Connection } from "../lib/bindings/Connection";
   import type { Group } from "../lib/bindings/Group";
+  import type { TagColor } from "../lib/bindings/TagColor";
   import { colorOf } from "../lib/appearance";
   import { t } from "../lib/i18n";
   import { modal } from "../lib/modal";
@@ -17,6 +18,7 @@
   } from "../lib/stores/library.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
   import Avatar from "./ui/Avatar.svelte";
+  import ColorPicker from "./ui/ColorPicker.svelte";
   import Icon from "./ui/Icon.svelte";
   import Pill from "./ui/Pill.svelte";
   import TextField from "./ui/TextField.svelte";
@@ -76,9 +78,12 @@
   let confirm = $state<{ conn: Connection; names: string[] } | null>(null);
   let confirmGroup = $state<Group | null>(null);
   // `id` is set when renaming; a new group gets its id on save.
-  let groupDialog = $state<{ id?: string; name: string; error: string } | null>(
-    null,
-  );
+  let groupDialog = $state<{
+    id?: string;
+    name: string;
+    color: TagColor | null;
+    error: string;
+  } | null>(null);
   let listEl: HTMLElement | undefined = $state();
   let menuEl: HTMLElement | undefined = $state();
   let searchEl = $state<HTMLInputElement>();
@@ -266,7 +271,13 @@
 
   function startGroupDialog(group?: Group) {
     closeMenu(false);
-    groupDialog = { id: group?.id, name: group?.name ?? "", error: "" };
+    groupDialog = {
+      id: group?.id,
+      name: group?.name ?? "",
+      // The menu only carries id and name; the color comes from the library.
+      color: library.groups.find((g) => g.id === group?.id)?.color ?? null,
+      error: "",
+    };
   }
 
   function closeGroupDialog() {
@@ -283,7 +294,12 @@
       return;
     }
     try {
-      await saveGroup({ id: groupDialog.id ?? crypto.randomUUID(), name });
+      const { color } = groupDialog;
+      await saveGroup({
+        id: groupDialog.id ?? crypto.randomUUID(),
+        name,
+        ...(color && { color }),
+      });
       closeGroupDialog();
     } catch (err) {
       toastError(err);
@@ -685,6 +701,14 @@
           {#if groupDialog.error}
             <p class="error" id="grp-name-err">{groupDialog.error}</p>
           {/if}
+        </div>
+        <div class="field">
+          <span>{t("group.color")}</span>
+          <ColorPicker
+            bind:value={groupDialog.color}
+            noneLabel={t("common.none")}
+            label={t("group.color")}
+          />
         </div>
         <div class="actions">
           <button type="button" onclick={closeGroupDialog}

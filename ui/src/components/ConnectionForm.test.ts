@@ -158,3 +158,50 @@ test("key passphrase: empty is null, typed is passed through", async () => {
     "hunter2",
   ]);
 });
+
+const radio = (name: string) => screen.getByRole("radio", { name });
+
+test("chosen icon and color are saved", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.click(radio("Database"));
+  await fireEvent.click(radio("Red"));
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  expect(vi.mocked(api.connectionSave).mock.calls[0][0]).toMatchObject({
+    icon: "database",
+    color: "red",
+  });
+});
+
+test("From group saves no color", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.click(radio("Red"));
+  await fireEvent.click(radio("From group"));
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  const [c] = vi.mocked(api.connectionSave).mock.calls[0];
+  expect(c.color).toBeUndefined();
+  expect(c.icon).toBeUndefined();
+});
+
+test("avatar preview follows the choices", async () => {
+  library.groups = [{ id: "g", name: "Servers", color: "teal" }];
+  const { container } = render(ConnectionForm, {
+    onsaved: vi.fn(),
+    oncancel: vi.fn(),
+  });
+  await type("Name", "prod-db");
+  const avatar = () => container.querySelector(".avatar")!;
+  expect(avatar().textContent?.trim()).toBe("PD");
+  expect(avatar().classList.contains("tag-none")).toBe(true);
+  await fireEvent.change(screen.getByLabelText("Group"), {
+    target: { value: "g" },
+  });
+  expect(avatar().classList.contains("tag-teal")).toBe(true);
+  await fireEvent.click(radio("Red"));
+  expect(avatar().classList.contains("tag-red")).toBe(true);
+  await fireEvent.click(radio("Server"));
+  expect(avatar().querySelector("svg")).not.toBeNull();
+});

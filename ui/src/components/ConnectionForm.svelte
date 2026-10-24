@@ -1,12 +1,18 @@
 <script lang="ts">
   import type { AuthMethod } from "../lib/bindings/AuthMethod";
   import type { Connection } from "../lib/bindings/Connection";
+  import type { ConnIcon } from "../lib/bindings/ConnIcon";
+  import type { TagColor } from "../lib/bindings/TagColor";
   import type { ForwardRule } from "../lib/bindings/ForwardRule";
+  import { colorOf } from "../lib/appearance";
   import { errorMessage, t, type MessageKey } from "../lib/i18n";
   import { modal } from "../lib/modal";
   import { library, saveConnection } from "../lib/stores/library.svelte";
   import { isApiError, toast, toastError } from "../lib/stores/toasts.svelte";
   import { validate } from "../lib/validate";
+  import Avatar from "./ui/Avatar.svelte";
+  import ColorPicker from "./ui/ColorPicker.svelte";
+  import IconPicker from "./ui/IconPicker.svelte";
 
   let {
     connection,
@@ -35,6 +41,8 @@
 
   let name = $state(initial?.name ?? "");
   let groupId = $state(initial?.group_id ?? "");
+  let color = $state<TagColor | null>(initial?.color ?? null);
+  let icon = $state<ConnIcon | null>(initial?.icon ?? null);
   let host = $state(initial?.host ?? "");
   let port = $state<number | null>(initial?.port ?? 22);
   let username = $state(initial?.username ?? "");
@@ -57,6 +65,9 @@
 
   const groups = $derived(
     [...library.groups].sort((a, b) => a.name.localeCompare(b.name)),
+  );
+  const previewColor = $derived(
+    colorOf({ color: color ?? undefined, group_id: groupId || null }, groups),
   );
   const jumpHosts = $derived(
     library.connections
@@ -102,6 +113,8 @@
       username: username.trim(),
       auth: method,
       jump_via: jumpVia || null,
+      ...(color && { color }),
+      ...(icon && { icon }),
       forwards: forwards.map((r): ForwardRule => {
         const common = {
           bind_port: r.bind_port!,
@@ -235,6 +248,30 @@
           username,
           (v) => (username = v),
         )}
+      </fieldset>
+
+      <fieldset>
+        <legend>{t("form.appearance")}</legend>
+        <div class="preview">
+          <Avatar
+            name={name.trim()}
+            icon={icon ?? undefined}
+            color={previewColor}
+            size={44}
+          />
+        </div>
+        <div class="field">
+          <span>{t("form.icon")}</span>
+          <IconPicker bind:value={icon} label={t("form.icon")} />
+        </div>
+        <div class="field">
+          <span>{t("form.color")}</span>
+          <ColorPicker
+            bind:value={color}
+            noneLabel={t("form.color.fromGroup")}
+            label={t("form.color")}
+          />
+        </div>
       </fieldset>
 
       <fieldset>
@@ -425,6 +462,9 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    margin-bottom: 8px;
+  }
+  .preview {
     margin-bottom: 8px;
   }
   .check {
