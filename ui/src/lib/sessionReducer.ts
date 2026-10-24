@@ -11,6 +11,8 @@ export type TabState = {
   prompt?: Extract<SessionEvent, { type: "HostKeyPrompt" | "SecretPrompt" }>;
   mismatch?: Extract<SessionEvent, { type: "HostKeyMismatch" }>;
   closed?: CloseReason;
+  /** Epoch ms of the first Ready; kept after the session closes. */
+  readyAt?: number;
   forwards: Record<number, { rule: ForwardRule; state: ForwardState }>;
 };
 
@@ -32,7 +34,12 @@ const PHASE = {
 export function reduce(s: TabState, e: SessionEvent): TabState {
   switch (e.type) {
     case "Status":
-      return { ...s, phase: PHASE[e.stage], prompt: undefined };
+      return {
+        ...s,
+        phase: PHASE[e.stage],
+        prompt: undefined,
+        readyAt: e.stage === "Ready" ? (s.readyAt ?? Date.now()) : s.readyAt,
+      };
     case "HostKeyPrompt":
     case "SecretPrompt":
       return { ...s, prompt: e };

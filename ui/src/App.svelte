@@ -7,6 +7,8 @@
   import TerminalTab from "./components/TerminalTab.svelte";
   import Toasts from "./components/Toasts.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
+  import Welcome from "./components/Welcome.svelte";
+  import { colorOf } from "./lib/appearance";
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
   import { library, refresh } from "./lib/stores/library.svelte";
@@ -25,8 +27,12 @@
   let editing = $state<{ connection?: Connection } | null>(null);
   let settingsOpen = $state(false);
 
-  const nameOf = (id: string) =>
-    library.connections.find((c) => c.id === id)?.name ?? id;
+  const connOf = (id: string) => library.connections.find((c) => c.id === id);
+  const nameOf = (id: string) => connOf(id)?.name ?? id;
+  const dotOf = (id: string) => {
+    const c = connOf(id);
+    return c ? colorOf(c, library.groups) : null;
+  };
 
   function edit(connectionId: string) {
     const connection = library.connections.find((c) => c.id === connectionId);
@@ -51,27 +57,34 @@
     />
     <main>
       {#if sessions.tabs.length}
-        <div class="tabbar" role="tablist" aria-label={t("tabs.label")}>
-          {#each sessions.tabs as tab (tab.tabId)}
-            <div class="tab" class:active={tab.tabId === sessions.active}>
-              <button
-                type="button"
-                role="tab"
-                class="title"
-                class:closed={tab.phase === "closed"}
-                aria-selected={tab.tabId === sessions.active}
-                onclick={() => (sessions.active = tab.tabId)}
-                >{nameOf(tab.connectionId)}</button
-              >
-              <button
-                type="button"
-                class="close"
-                aria-label={t("tabs.close")}
-                title={t("tabs.close")}
-                onclick={() => closeTab(tab.tabId)}>×</button
-              >
-            </div>
-          {/each}
+        <div class="topbar">
+          <div class="tabbar" role="tablist" aria-label={t("tabs.label")}>
+            {#each sessions.tabs as tab (tab.tabId)}
+              <div class="tab" class:active={tab.tabId === sessions.active}>
+                <button
+                  type="button"
+                  role="tab"
+                  class="title"
+                  class:closed={tab.phase === "closed"}
+                  aria-selected={tab.tabId === sessions.active}
+                  onclick={() => (sessions.active = tab.tabId)}
+                >
+                  <span class="dot tag-{dotOf(tab.connectionId) ?? 'none'}"
+                  ></span>
+                  {nameOf(tab.connectionId)}
+                </button>
+                <button
+                  type="button"
+                  class="close"
+                  aria-label={t("tabs.close")}
+                  title={t("tabs.close")}
+                  onclick={() => closeTab(tab.tabId)}>×</button
+                >
+              </div>
+            {/each}
+          </div>
+          <!-- Quick connect goes here. -->
+          <div class="quick"></div>
         </div>
         <div class="tabs">
           {#each sessions.tabs as tab (tab.tabId)}
@@ -83,7 +96,7 @@
           {/each}
         </div>
       {:else}
-        <p class="placeholder">{t("main.placeholder")}</p>
+        <div class="home"><Welcome onopen={openTab} /></div>
       {/if}
     </main>
   </div>
@@ -111,48 +124,91 @@
     flex: 1;
     display: grid;
     grid-template-columns: auto 1fr;
+    gap: var(--space-3);
+    padding: var(--space-3);
     min-height: 0;
   }
   main {
     display: flex;
     flex-direction: column;
+    gap: var(--space-3);
     min-width: 0;
     min-height: 0;
   }
-  .placeholder {
-    margin: auto;
-    color: var(--fg-muted);
+  .home {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .quick {
+    flex: 1;
   }
   .tabbar {
     display: flex;
+    gap: var(--space-1);
+    min-width: 0;
+    padding: 5px;
     overflow-x: auto;
-    background: var(--bg-alt);
-    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+    border-radius: var(--radius-md);
   }
   .tab {
     display: flex;
+    flex: none;
     align-items: center;
-    border-right: 1px solid var(--border);
+    height: 34px;
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+  }
+  .tab:hover {
+    background: var(--surface-2);
   }
   .tab.active {
-    background: var(--bg);
+    background: var(--surface-3);
+    color: var(--fg);
+    font-weight: 600;
   }
   .tab button {
     border: none;
-    border-radius: 0;
+    border-radius: var(--radius-sm);
     background: transparent;
   }
   .title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     max-width: 200px;
+    padding-right: var(--space-1);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .title.closed {
-    color: var(--fg-muted);
+    opacity: 0.6;
+  }
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--tag-solid);
   }
   .close {
-    padding: 4px 8px;
+    padding: 2px var(--space-2);
+    visibility: hidden;
+  }
+  .tab.active .close,
+  .tab:hover .close,
+  .close:focus-visible {
+    visibility: visible;
   }
   .tabs {
     position: relative;

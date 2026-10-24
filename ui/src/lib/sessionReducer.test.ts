@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { SessionEvent } from "./bindings/SessionEvent";
 import {
   initialTab,
@@ -100,4 +100,18 @@ test("ssh-keygen hint uses [host]:port for non-22", () => {
   expect(keygenHint("example.com", 2222)).toBe(
     'ssh-keygen -R "[example.com]:2222"',
   );
+});
+
+afterEach(() => vi.useRealTimers());
+
+test("Ready sets readyAt once", () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(1000);
+  let s = run({ type: "Status", stage: "Ready" });
+  expect(s.readyAt).toBe(1000);
+  vi.setSystemTime(5000);
+  s = reduce(s, { type: "Status", stage: "Ready" });
+  expect(s.readyAt).toBe(1000);
+  s = reduce(s, { type: "Closed", reason: { type: "UserClosed" } });
+  expect(s.readyAt).toBe(1000);
 });

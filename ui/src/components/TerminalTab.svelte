@@ -15,12 +15,14 @@
     resize,
     write,
   } from "../lib/stores/sessions.svelte";
+  import { library } from "../lib/stores/library.svelte";
   import { settings } from "../lib/stores/settings.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
   import ForwardPanel from "./ForwardPanel.svelte";
   import ErrorOverlay from "./ErrorOverlay.svelte";
   import HostKeyDialog from "./HostKeyDialog.svelte";
   import SecretPrompt from "./SecretPrompt.svelte";
+  import StatusBar from "./StatusBar.svelte";
 
   let {
     tab,
@@ -34,6 +36,7 @@
 
   let el: HTMLDivElement;
   let root: HTMLDivElement;
+  let forwardsOpen = $state(false);
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
 
@@ -42,10 +45,10 @@
     const css = getComputedStyle(document.documentElement);
     const v = (name: string) => css.getPropertyValue(name).trim();
     return {
-      background: v("--bg"),
+      background: v("--surface-1"),
       foreground: v("--fg"),
       cursor: v("--fg"),
-      selectionBackground: v("--bg-selected"),
+      selectionBackground: v("--term-selection"),
     };
   }
 
@@ -166,8 +169,22 @@
 <svelte:window onkeydown={onwindowkey} />
 
 <div class="tab" class:active bind:this={root}>
-  <div class="terminal" bind:this={el}></div>
-  {#if tab.phase === "ready"}<ForwardPanel {tab} />{/if}
+  <div class="inset"><div class="terminal" bind:this={el}></div></div>
+  <div class="anchor">
+    {#if tab.phase === "ready"}
+      <ForwardPanel
+        {tab}
+        bind:open={forwardsOpen}
+        onclose={() => (forwardsOpen = false)}
+      />
+    {/if}
+    <StatusBar
+      {tab}
+      connection={library.connections.find((c) => c.id === tab.connectionId)}
+      groups={library.groups}
+      onforwards={() => (forwardsOpen = !forwardsOpen)}
+    />
+  </div>
 
   {#if tab.phase === "connecting" || tab.phase === "authenticating"}
     <p class="status" role="status">
@@ -207,23 +224,33 @@
     inset: 0;
     display: none;
     flex-direction: column;
+    overflow: hidden;
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
   }
   .tab.active {
     display: flex;
   }
-  .terminal {
+  /* The fit addon measures its parent, so the padding sits one level above. */
+  .inset {
     flex: 1;
     min-height: 0;
-    background: var(--bg);
+    padding: var(--space-4) var(--space-5);
+  }
+  .terminal {
+    height: 100%;
+  }
+  .anchor {
+    position: relative;
   }
   .status {
     position: absolute;
-    top: 8px;
-    right: 12px;
+    top: var(--space-3);
+    right: var(--space-4);
     margin: 0;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: var(--bg-alt);
+    padding: 2px var(--space-3);
+    border-radius: 999px;
+    background: var(--surface-2);
     color: var(--fg-muted);
   }
 </style>

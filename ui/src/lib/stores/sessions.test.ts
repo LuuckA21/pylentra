@@ -9,6 +9,7 @@ vi.mock("../api", () => ({
 }));
 
 import { api } from "../api";
+import { recentIds } from "../recent";
 import type { SessionEvent } from "../bindings/SessionEvent";
 import {
   answer,
@@ -105,4 +106,20 @@ test("a failed session_open closes the tab with the error", async () => {
     type: "Error",
     error: { code: "not_found", params: {} },
   });
+});
+
+test("a tab that becomes ready is recorded as recent", () => {
+  localStorage.clear();
+  const id = openTab("c1");
+  connect(
+    id,
+    80,
+    24,
+    () => {},
+    () => {},
+  );
+  emit({ type: "Status", stage: "Authenticating" });
+  expect(recentIds(new Set(["c1"]))).toEqual([]);
+  emit({ type: "Status", stage: "Ready" });
+  expect(recentIds(new Set(["c1"]))).toEqual(["c1"]);
 });

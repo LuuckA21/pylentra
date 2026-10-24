@@ -1,6 +1,7 @@
 import { api } from "../api";
 import type { PromptAnswer } from "../bindings/PromptAnswer";
 import type { SessionEvent } from "../bindings/SessionEvent";
+import { recordRecent } from "../recent";
 import { initialTab, reduce, type TabState } from "../sessionReducer";
 import { isApiError, toastError } from "./toasts.svelte";
 
@@ -43,6 +44,8 @@ export function connect(
   const event = (e: SessionEvent) => {
     if (indexOf(tabId) < 0) return;
     update((t) => reduce(t, e));
+    if (e.type === "Status" && e.stage === "Ready")
+      recordRecent(sessions.tabs[indexOf(tabId)].connectionId);
     onEvent(e);
   };
   sessions.tabs[i] = initialTab(tabId, sessions.tabs[i].connectionId);
