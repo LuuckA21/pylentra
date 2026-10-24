@@ -80,6 +80,7 @@ export const it: Record<MessageKey, string> = {
   "form.auth.Password": "Password",
   "form.auth.Key": "File chiave",
   "form.auth.Agent": "Agente SSH",
+  "form.auth.Auto": "Automatico",
   "form.savePassword": "Salva la password nel portachiavi",
   "form.password": "Password",
   "form.keyPath": "Percorso della chiave",

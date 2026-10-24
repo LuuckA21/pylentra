@@ -31,6 +31,8 @@ pub struct SessionOptions {
     pub keepalive_max: usize,
     pub max_passphrase_attempts: u8,
     pub agent_path: Option<PathBuf>,
+    /// Key files `AuthMethod::Auto` tries after the agent; `~` is expanded on use.
+    pub default_keys: Vec<PathBuf>,
 }
 
 impl Default for SessionOptions {
@@ -41,6 +43,9 @@ impl Default for SessionOptions {
             keepalive_max: 3,
             max_passphrase_attempts: 3,
             agent_path: None,
+            default_keys: ["~/.ssh/id_ed25519", "~/.ssh/id_ecdsa", "~/.ssh/id_rsa"]
+                .map(PathBuf::from)
+                .into(),
         }
     }
 }

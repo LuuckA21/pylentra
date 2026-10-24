@@ -205,3 +205,16 @@ test("avatar preview follows the choices", async () => {
   await fireEvent.click(radio("Server"));
   expect(avatar().querySelector("svg")).not.toBeNull();
 });
+
+test("the Automatic method saves an Auto connection", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.change(screen.getByLabelText("Method"), {
+    target: { value: "Auto" },
+  });
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  const [c] = vi.mocked(api.connectionSave).mock.calls[0];
+  expect(c.auth).toEqual({ type: "Auto" });
+  expect(screen.getByRole("option", { name: "Automatic" })).toBeTruthy();
+});

@@ -77,6 +77,7 @@ export const en = {
   "form.auth.Password": "Password",
   "form.auth.Key": "Key file",
   "form.auth.Agent": "SSH agent",
+  "form.auth.Auto": "Automatic",
   "form.savePassword": "Save password in the keychain",
   "form.password": "Password",
   "form.keyPath": "Key path",

@@ -66,7 +66,7 @@ pub fn do_connection_save(
         AuthMethod::Key {
             save_passphrase, ..
         } => (false, *save_passphrase),
-        AuthMethod::Agent => (false, false),
+        AuthMethod::Agent | AuthMethod::Auto => (false, false),
     };
     let (keep_password, keep_passphrase) = keeps(&connection.auth);
     let old = store.get(connection.id).ok().map(|c| {

@@ -95,7 +95,8 @@
     ).find((el) => el.dataset.field === field);
 
   function build(): Connection {
-    let method: AuthMethod = { type: "Agent" };
+    let method: AuthMethod =
+      authType === "Auto" ? { type: "Auto" } : { type: "Agent" };
     if (authType === "Password")
       method = { type: "Password", save: savePassword };
     if (authType === "Key")
@@ -279,7 +280,7 @@
         <div class="field">
           <label for="f-auth">{t("form.authMethod")}</label>
           <select id="f-auth" bind:value={authType}>
-            {#each ["Password", "Key", "Agent"] as const as m (m)}
+            {#each ["Password", "Key", "Agent", "Auto"] as const as m (m)}
               <option value={m}>{t(`form.auth.${m}`)}</option>
             {/each}
           </select>

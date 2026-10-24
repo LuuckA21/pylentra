@@ -79,6 +79,8 @@ pub enum SessionEvent {
         host: String,
         port: u16,
         kind: PromptKind,
+        /// false: the answer is never saved, so the UI hides its "save" option.
+        can_save: bool,
     },
     Forward {
         forward_id: u32,

@@ -104,6 +104,8 @@ pub enum AuthMethod {
         save_passphrase: bool,
     },
     Agent,
+    /// The agent, then `SessionOptions::default_keys`, then password; nothing is saved.
+    Auto,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]

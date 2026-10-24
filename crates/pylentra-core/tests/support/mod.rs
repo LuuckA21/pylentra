@@ -31,6 +31,9 @@ pub struct TestServerConfig {
     /// true: a wrong password withdraws the method (russh's default); false: retries are
     /// allowed, like OpenSSH.
     pub single_password_try: bool,
+    /// Failed password, keyboard-interactive or publickey attempts allowed; one more ends
+    /// the connection (OpenSSH's `MaxAuthTries`). `None`: no limit.
+    pub max_auth_attempts: Option<usize>,
 }
 
 impl Default for TestServerConfig {
@@ -43,6 +46,7 @@ impl Default for TestServerConfig {
             authorized_key: None,
             allow_password_method: true,
             single_password_try: false,
+            max_auth_attempts: None,
         }
     }
 }
@@ -142,6 +146,7 @@ impl Server for Acceptor {
             listeners: HashMap::new(),
             relayed: HashSet::new(),
             otp_pending: false,
+            failures: 0,
         }
     }
 }
@@ -161,6 +166,8 @@ struct ConnHandler {
     relayed: HashSet<ChannelId>,
     /// The first keyboard-interactive round passed; the OTP round is next.
     otp_pending: bool,
+    /// Rejected auth attempts so far, for `max_auth_attempts`.
+    failures: usize,
 }
 
 impl Drop for ConnHandler {
@@ -181,10 +188,20 @@ impl ConnHandler {
     }
 
     /// Rejects but lets the client try again, like OpenSSH (russh would drop the method).
-    fn retry(&self) -> Auth {
-        Auth::Reject {
-            proceed_with_methods: Some(self.methods.clone()),
+    fn retry(&mut self) -> Result<Auth, russh::Error> {
+        let methods = self.methods.clone();
+        self.reject(Auth::Reject {
+            proceed_with_methods: Some(methods),
             partial_success: false,
+        })
+    }
+
+    /// Counts a failed attempt; one past `max_auth_attempts` ends the connection.
+    fn reject(&mut self, auth: Auth) -> Result<Auth, russh::Error> {
+        self.failures += 1;
+        match self.cfg.max_auth_attempts {
+            Some(max) if self.failures > max => Err(russh::Error::Disconnect),
+            _ => Ok(auth),
         }
     }
 }
@@ -196,9 +213,9 @@ impl Handler for ConnHandler {
         if self.cfg.allow_password_method && self.cfg.password.as_deref() == Some(password) {
             Ok(self.accept("password"))
         } else if self.cfg.single_password_try {
-            Ok(Auth::reject())
+            self.reject(Auth::reject())
         } else {
-            Ok(self.retry())
+            self.retry()
         }
     }
 
@@ -209,7 +226,7 @@ impl Handler for ConnHandler {
         response: Option<Response<'a>>,
     ) -> Result<Auth, Self::Error> {
         let Some((prompt, answer)) = self.cfg.kbd_interactive.clone() else {
-            return Ok(Auth::reject());
+            return self.reject(Auth::reject());
         };
         let Some(mut r) = response else {
             self.otp_pending = false;
@@ -221,12 +238,12 @@ impl Handler for ConnHandler {
         };
         let got = r.next();
         if std::mem::take(&mut self.otp_pending) {
-            return Ok(match &self.cfg.kbd_otp {
+            return match &self.cfg.kbd_otp {
                 Some(otp) if got.as_deref() == Some(otp.as_bytes()) => {
-                    self.accept("keyboard-interactive")
+                    Ok(self.accept("keyboard-interactive"))
                 }
                 _ => self.retry(),
-            });
+            };
         }
         if got.as_deref() == Some(answer.as_bytes()) {
             if self.cfg.kbd_otp.is_some() {
@@ -239,7 +256,7 @@ impl Handler for ConnHandler {
             }
             Ok(self.accept("keyboard-interactive"))
         } else {
-            Ok(self.retry())
+            self.retry()
         }
     }
 
@@ -248,17 +265,17 @@ impl Handler for ConnHandler {
         _user: &str,
         key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
-        Ok(match &self.cfg.authorized_key {
-            Some(k) if k.key_data() == key.key_data() => Auth::Accept,
-            _ => Auth::reject(),
-        })
+        match &self.cfg.authorized_key {
+            Some(k) if k.key_data() == key.key_data() => Ok(Auth::Accept),
+            _ => self.reject(Auth::reject()),
+        }
     }
 
     async fn auth_publickey(&mut self, _user: &str, key: &PublicKey) -> Result<Auth, Self::Error> {
-        Ok(match &self.cfg.authorized_key {
-            Some(k) if k.key_data() == key.key_data() => self.accept("publickey"),
-            _ => Auth::reject(),
-        })
+        match &self.cfg.authorized_key {
+            Some(k) if k.key_data() == key.key_data() => Ok(self.accept("publickey")),
+            _ => self.reject(Auth::reject()),
+        }
     }
 
     async fn channel_open_session(

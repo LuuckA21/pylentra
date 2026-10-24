@@ -1,4 +1,5 @@
-//! User authentication for one hop: password (with keyboard-interactive fallback), key file or agent.
+//! User authentication for one hop: password (with keyboard-interactive fallback), key file,
+//! agent, or all three in turn (`Auto`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -6,7 +7,9 @@ use std::sync::Arc;
 use russh::MethodKind;
 use russh::client::{AuthResult, Handle, Handler, KeyboardInteractiveAuthResponse, Prompt};
 use russh::keys::agent::client::{AgentClient, AgentStream};
-use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg, load_secret_key};
+use russh::keys::{
+    HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey, load_public_key, load_secret_key,
+};
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
@@ -28,11 +31,16 @@ pub(crate) struct AuthCtx<'a> {
     /// The hop being authenticated, lowercased; named in every prompt.
     pub host: &'a str,
     pub port: u16,
+    /// false: saved secrets are neither read nor written, and prompts say so.
+    pub can_save: bool,
 }
 
 impl AuthCtx<'_> {
     /// The saved secret; a keychain failure reads as none, so the user is asked instead.
     fn saved(&self, conn: Uuid, kind: SecretKind) -> Option<SecretString> {
+        if !self.can_save {
+            return None;
+        }
         self.secrets.get(conn, kind).unwrap_or_else(|e| {
             log::warn!("cannot read the saved {kind:?}: {e}");
             None
@@ -41,6 +49,9 @@ impl AuthCtx<'_> {
 
     /// Best effort: a keychain failure must not fail a session that already authenticated.
     fn save(&self, conn: Uuid, kind: SecretKind, value: &SecretString) {
+        if !self.can_save {
+            return;
+        }
         if let Err(e) = self.secrets.set(conn, kind, value) {
             log::warn!("cannot save the {kind:?}: {e}");
         }
@@ -51,6 +62,7 @@ impl AuthCtx<'_> {
             host: self.host.into(),
             port: self.port,
             kind,
+            can_save: self.can_save,
         };
         self.prompts.ask(self.session, self.sink, prompt).await
     }
@@ -73,8 +85,60 @@ pub(crate) async fn authenticate<H: Handler>(
     match &conn.auth {
         AuthMethod::Password { .. } => password(handle, conn, ctx).await,
         AuthMethod::Key { path, .. } => key(handle, conn, &expand_home(path), ctx).await,
-        AuthMethod::Agent => agent(handle, &conn.username, ctx.opts).await,
+        AuthMethod::Agent => agent(handle, &conn.username, ctx.opts, &mut vec![]).await,
+        AuthMethod::Auto => auto(handle, conn, ctx).await,
     }
+}
+
+/// The agent, then each existing default key file, then password; the first success wins.
+async fn auto<H: Handler>(
+    handle: &mut Handle<H>,
+    conn: &Connection,
+    ctx: &AuthCtx<'_>,
+) -> Result<(), CoreError> {
+    let mut tried: Vec<String> = vec![];
+    let mut note = |method: &str| {
+        if !tried.iter().any(|m| m == method) {
+            tried.push(method.into());
+        }
+    };
+    let mut offered = vec![];
+    match agent(handle, &conn.username, ctx.opts, &mut offered).await {
+        Ok(()) => return Ok(()),
+        Err(CoreError::AgentUnavailable { reason }) => log::debug!("no agent: {reason}"),
+        Err(CoreError::AuthFailed { .. }) => {}
+        Err(e) => return Err(e),
+    }
+    if !offered.is_empty() {
+        note("publickey");
+    }
+    for path in &ctx.opts.default_keys {
+        let path = expand_home(path);
+        if !path.is_file() || offered_by_agent(&path, &offered) {
+            continue;
+        }
+        match key(handle, conn, &path, ctx).await {
+            Ok(()) => return Ok(()),
+            Err(CoreError::AuthFailed { .. }) => note("publickey"),
+            // A key we cannot use, or whose passphrase the user would not give: the next one.
+            Err(CoreError::KeyUnreadable { .. } | CoreError::Cancelled) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    match password(handle, conn, ctx).await {
+        Err(CoreError::AuthFailed { tried: last }) => {
+            last.iter().for_each(|m| note(m));
+            Err(CoreError::AuthFailed { tried })
+        }
+        other => other,
+    }
+}
+
+/// Whether `<path>.pub` names a key the agent already offered; a missing or bad `.pub` is no.
+fn offered_by_agent(path: &Path, offered: &[PublicKey]) -> bool {
+    let mut public = path.as_os_str().to_owned();
+    public.push(".pub");
+    load_public_key(public).is_ok_and(|k| offered.iter().any(|o| o.key_data() == k.key_data()))
 }
 
 async fn password<H: Handler>(
@@ -324,10 +388,12 @@ async fn rsa_hash<H: Handler>(
     Ok(handle.best_supported_rsa_hash().await?.flatten())
 }
 
+/// Tries every agent identity; each one tried is added to `offered`.
 async fn agent<H: Handler>(
     handle: &mut Handle<H>,
     user: &str,
     opts: &SessionOptions,
+    offered: &mut Vec<PublicKey>,
 ) -> Result<(), CoreError> {
     let mut client = connect_agent(opts).await?;
     let identities = client
@@ -336,6 +402,7 @@ async fn agent<H: Handler>(
         .map_err(agent_unavailable)?;
     for identity in identities {
         let key = identity.public_key().into_owned();
+        offered.push(key.clone());
         let hash = rsa_hash(handle, key.algorithm()).await?;
         let result = handle
             .authenticate_publickey_with(user, key, hash, &mut client)

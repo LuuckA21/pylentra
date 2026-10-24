@@ -21,7 +21,7 @@
   // Each question arrives as a new prompt and remounts this component, so the
   // props are read once.
   // svelte-ignore state_referenced_locally
-  const { host, port, kind } = prompt;
+  const { host, port, kind, can_save } = prompt;
 
   // The prompt belongs to one hop of the jump chain: find its connection by host
   // and port. The core lowercases the prompt's host.
@@ -44,11 +44,12 @@
         : t("secret.kbd", { target });
 
   let save = $state(
-    kind.type === "Password"
-      ? conn?.auth.type === "Password" && conn.auth.save
-      : kind.type === "Passphrase"
-        ? conn?.auth.type === "Key" && conn.auth.save_passphrase
-        : false,
+    can_save &&
+      (kind.type === "Password"
+        ? conn?.auth.type === "Password" && conn.auth.save
+        : kind.type === "Passphrase"
+          ? conn?.auth.type === "Key" && conn.auth.save_passphrase
+          : false),
   );
   let values = $state(
     kind.type === "KeyboardInteractive" ? kind.prompts.map(() => "") : [""],
@@ -99,7 +100,7 @@
         </label>
       {/if}
       <!-- The core never saves keyboard-interactive answers. -->
-      {#if kind.type !== "KeyboardInteractive"}
+      {#if can_save && kind.type !== "KeyboardInteractive"}
         <label class="check">
           <input type="checkbox" bind:checked={save} />
           {t("secret.save")}

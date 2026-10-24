@@ -36,6 +36,7 @@ test("password prompt names the hop and defaults save to its preference", async 
       host: "bastion",
       port: 2222,
       kind: { type: "Passphrase", attempt: 2 },
+      can_save: true,
     },
     connectionId: "c1",
     onanswer,
@@ -74,6 +75,7 @@ test("keyboard-interactive shows one field per prompt and Esc cancels", async ()
           { text: "PIN:", echo: false },
         ],
       },
+      can_save: true,
     },
     connectionId: "c1",
     onanswer,
@@ -88,4 +90,30 @@ test("keyboard-interactive shows one field per prompt and Esc cancels", async ()
   expect(screen.queryByLabelText("Save to keychain")).toBeNull();
   await fireEvent.keyDown(screen.getByLabelText("PIN:"), { key: "Escape" });
   expect(onanswer).toHaveBeenCalledWith({ type: "Cancel" });
+});
+
+test("a prompt that cannot save hides the option and answers save false", async () => {
+  library.connections = [conn({ auth: { type: "Auto" } })];
+  const onanswer = vi.fn();
+  render(SecretPrompt, {
+    prompt: {
+      type: "SecretPrompt",
+      host: "web",
+      port: 22,
+      kind: { type: "Password" },
+      can_save: false,
+    },
+    connectionId: "c1",
+    onanswer,
+  });
+  expect(screen.queryByLabelText("Save to keychain")).toBeNull();
+  await fireEvent.input(screen.getByLabelText("Password"), {
+    target: { value: "pw" },
+  });
+  await fireEvent.click(screen.getByText("Connect"));
+  expect(onanswer).toHaveBeenCalledWith({
+    type: "Secret",
+    value: "pw",
+    save: false,
+  });
 });

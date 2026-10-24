@@ -48,6 +48,7 @@ test("events reach the tab and the answer clears the prompt", async () => {
     host: "h",
     port: 22,
     kind: { type: "Password" },
+    can_save: true,
   });
   expect(sessions.tabs[0].prompt?.type).toBe("SecretPrompt");
   await answer(id, { type: "Secret", value: "pw", save: false });
