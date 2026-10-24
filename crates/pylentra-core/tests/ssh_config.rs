@@ -298,3 +298,63 @@ fn empty_file() {
     let r = parse("", &[]);
     assert!(r.candidates.is_empty() && r.skipped.is_empty());
 }
+
+#[test]
+fn proxyjump_to_itself_is_dropped() {
+    let r = parse(
+        "Host app\nHost bastion\nHost *\n    ProxyJump bastion\n",
+        &[],
+    );
+    let bastion = get(&r, "bastion");
+    assert_eq!(
+        (bastion.connection.jump_via, bastion.notes.len()),
+        (None, 0)
+    );
+    assert_eq!(
+        get(&r, "app").connection.jump_via,
+        Some(bastion.connection.id)
+    );
+}
+
+#[test]
+fn long_alias_and_pathological_pattern() {
+    let long = "a".repeat(100_000);
+    let r = parse(&format!("Host {long}\n"), &[]);
+    assert_eq!(r.candidates[0].connection.host, long);
+
+    let pattern = format!("{}b", "*a".repeat(12));
+    let text = format!(
+        "Host {pattern}\n    User x\nHost {} {}b\n",
+        "a".repeat(40),
+        "a".repeat(40)
+    );
+    let r = parse(&text, &[]);
+    assert_eq!(r.candidates[0].connection.username, "");
+    assert_eq!(r.candidates[1].connection.username, "x");
+}
+
+#[test]
+fn empty_host_name_falls_back_to_the_alias() {
+    let r = parse(
+        "Host a\n    HostName \"\"\nHost b\n    HostName \"  \"\n",
+        &[],
+    );
+    assert_eq!(get(&r, "a").connection.host, "a");
+    assert_eq!(get(&r, "b").connection.host, "b");
+}
+
+#[test]
+fn garbage_input_does_not_break_the_import() {
+    let text = "\"\nPort=\nHost\nHost \"\"\nHost \" \"\n=x\nHöst ünïcode\n\t\n\
+                Host ok \"\nHost g\n    Port=\n    LocalForward 8080\n    Ünknown wert\n    \
+                HostName héllo\n    User \"\n    RemoteForward\n    ProxyJump\n";
+    let r = parse(text, &[]);
+    assert_eq!(names(&r), ["ok", "g"]);
+    for c in r.candidates.iter().filter(|c| c.error.is_none()) {
+        let mut conn = c.connection.clone();
+        if c.needs_user {
+            conn.username = "u".into();
+        }
+        assert!(conn.validate().is_ok(), "{conn:?}");
+    }
+}

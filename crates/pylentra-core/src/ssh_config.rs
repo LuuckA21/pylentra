@@ -83,18 +83,33 @@ fn tokens(text: &str) -> Vec<String> {
     }
 }
 
-/// `*` and `?` wildcards, ignoring ASCII case like OpenSSH.
+/// `*` and `?` wildcards, ignoring ASCII case like OpenSSH. Iterative, so a
+/// hostile file cannot make it backtrack exponentially or overflow the stack.
 fn glob(pattern: &[u8], s: &[u8]) -> bool {
-    match (pattern.split_first(), s.split_first()) {
-        (None, _) => s.is_empty(),
-        (Some((b'*', rest)), _) => {
-            glob(rest, s) || s.split_first().is_some_and(|(_, tail)| glob(pattern, tail))
+    let (mut p, mut i) = (0, 0);
+    // Pattern index just after the last `*`, and the text index it currently stands for.
+    let mut star = None;
+    while let Some(&c) = s.get(i) {
+        match pattern.get(p) {
+            Some(b'*') => {
+                p += 1;
+                star = Some((p, i));
+            }
+            Some(&q) if q == b'?' || q.eq_ignore_ascii_case(&c) => {
+                p += 1;
+                i += 1;
+            }
+            _ => match star {
+                Some((sp, si)) => {
+                    p = sp;
+                    i = si + 1;
+                    star = Some((sp, i));
+                }
+                None => return false,
+            },
         }
-        (Some((p, rest)), Some((c, tail))) => {
-            (*p == b'?' || p.eq_ignore_ascii_case(c)) && glob(rest, tail)
-        }
-        (Some(_), None) => false,
     }
+    pattern[p..].iter().all(|&c| c == b'*')
 }
 
 fn block_matches(patterns: &[String], alias: &str) -> bool {
@@ -211,7 +226,7 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
     // Concrete aliases in order of first appearance, ignoring case as OpenSSH does.
     let mut aliases: Vec<(&str, Uuid)> = Vec::new();
     for p in blocks.iter().flat_map(|b| &b.patterns) {
-        let concrete = !p.is_empty() && !p.contains(['*', '?']) && !p.starts_with('!');
+        let concrete = !p.trim().is_empty() && !p.contains(['*', '?']) && !p.starts_with('!');
         if concrete && !aliases.iter().any(|(a, _)| a.eq_ignore_ascii_case(p)) {
             aliases.push((p, Uuid::new_v4()));
         }
@@ -224,10 +239,11 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
             let mut forwards = Vec::new();
             for block in blocks.iter().filter(|b| block_matches(&b.patterns, alias)) {
                 for (key, args) in &block.lines {
-                    // Forwards add up over every matching block; everything else keeps its first value.
+                    // Forwards add up over every matching block; everything else keeps its first
+                    // non-blank value (`HostName ""` would otherwise give an unimportable empty host).
                     if key == "localforward" || key == "remoteforward" {
                         forwards.push((key.as_str(), args.as_slice()));
-                    } else if let Some(value) = args.first() {
+                    } else if let Some(value) = args.first().filter(|v| !v.trim().is_empty()) {
                         first.entry(key.as_str()).or_insert(value.as_str());
                     }
                 }
@@ -270,6 +286,8 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                     notes.push(ImportNote::JumpNotAlias { value: v.into() });
                     None
                 }
+                // `Host *` + `ProxyJump bastion` reaches bastion too; it simply connects directly.
+                Some(v) if v.eq_ignore_ascii_case(alias) => None,
                 // A saved connection wins: a candidate of the same name is marked `exists` and not imported.
                 Some(v) => saved
                     .iter()
