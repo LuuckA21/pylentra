@@ -118,6 +118,8 @@ export const en = {
   "session.authenticating": "Authenticating\u2026",
   "session.ended": "Session ended. Press Enter to reconnect.",
   "session.retry": "Retry",
+  "reconnect.attempt": "Reconnecting\u2026 attempt {n} of {max}",
+  "reconnect.cancel": "Cancel",
   "session.edit": "Edit connection",
   "session.errorTitle": "Connection failed",
   "session.expected": "Expected fingerprint",

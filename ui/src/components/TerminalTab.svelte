@@ -5,6 +5,7 @@
   import { onMount, untrack } from "svelte";
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import { t } from "../lib/i18n";
+  import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
   import type { TabState } from "../lib/sessionReducer";
   import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
   import { fromOtherModal, shortcutFor, type Action } from "../lib/shortcuts";
@@ -22,6 +23,7 @@
   import ForwardPanel from "./ForwardPanel.svelte";
   import ErrorOverlay from "./ErrorOverlay.svelte";
   import HostKeyDialog from "./HostKeyDialog.svelte";
+  import ReconnectOverlay from "./ReconnectOverlay.svelte";
   import SecretPrompt from "./SecretPrompt.svelte";
   import StatusBar from "./StatusBar.svelte";
 
@@ -45,19 +47,60 @@
 
   const theme = () => terminalTheme(settings.terminal_theme, appTerminalTheme);
 
-  function start() {
+  // Automatic reconnection: retries launched in the current chain (0 = none),
+  // and whether the next one is being waited for (the overlay shows then).
+  let retries = $state(0);
+  let waiting = $state(false);
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function launch() {
     const tm = term;
     if (!tm) return;
+    // Per session: tab.readyAt is not read here because connect resets it.
+    let wasReady = false;
     connect(
       tab.tabId,
       tm.cols,
       tm.rows,
       (bytes) => tm.write(bytes),
       (e) => {
-        if (e.type === "Closed" && e.reason.type !== "Error")
-          tm.write(`\r\n${t("session.ended")}\r\n`);
+        if (e.type === "Status" && e.stage === "Ready") {
+          wasReady = true;
+          retries = 0;
+        } else if (e.type === "Closed") {
+          if (e.reason.type !== "Error")
+            tm.write(`\r\n${t("session.ended")}\r\n`);
+          // A retry that fails is still part of a chain that started from a ready session.
+          else if (
+            retries < RECONNECT_DELAYS.length &&
+            shouldReconnect(
+              e.reason,
+              wasReady || retries > 0,
+              settings.auto_reconnect,
+            )
+          ) {
+            waiting = true;
+            retryTimer = setTimeout(() => {
+              waiting = false;
+              retries++;
+              launch();
+            }, RECONNECT_DELAYS[retries]);
+          }
+        }
       },
     );
+  }
+
+  function cancelRetry() {
+    clearTimeout(retryTimer);
+    waiting = false;
+    retries = 0;
+  }
+
+  // User-initiated (re)connection starts a new chain.
+  function start() {
+    cancelRetry();
+    launch();
   }
 
   const onanswer = (a: PromptAnswer) => answer(tab.tabId, a);
@@ -115,6 +158,7 @@
     start();
     return () => {
       clearTimeout(timer);
+      clearTimeout(retryTimer);
       ro.disconnect();
       mo.disconnect();
       dark.removeEventListener("change", retheme);
@@ -220,7 +264,13 @@
     {/if}
   {/key}
 
-  {#if tab.closed?.type === "Error"}
+  {#if waiting}
+    <ReconnectOverlay
+      attempt={retries + 1}
+      max={RECONNECT_DELAYS.length}
+      oncancel={cancelRetry}
+    />
+  {:else if tab.closed?.type === "Error"}
     <ErrorOverlay
       error={tab.closed.error}
       mismatch={tab.mismatch}

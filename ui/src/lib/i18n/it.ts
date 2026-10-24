@@ -121,6 +121,8 @@ export const it: Record<MessageKey, string> = {
   "session.authenticating": "Autenticazione\u2026",
   "session.ended": "Sessione terminata. Premi Invio per riconnetterti.",
   "session.retry": "Riprova",
+  "reconnect.attempt": "Riconnessione\u2026 tentativo {n} di {max}",
+  "reconnect.cancel": "Annulla",
   "session.edit": "Modifica connessione",
   "session.errorTitle": "Connessione non riuscita",
   "session.expected": "Fingerprint atteso",
