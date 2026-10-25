@@ -110,7 +110,9 @@
 
   const sections = $derived.by(() => {
     const known = new Set(library.groups.map((g) => g.id));
-    const visible = library.connections.filter((c) => matches(c, query));
+    const visible = library.connections.filter((c) =>
+      matches(c, query, library.groups),
+    );
     const of = (pred: (c: Connection) => boolean) =>
       visible.filter(pred).sort(byName);
     const all = [
@@ -507,6 +509,9 @@
                     role="option"
                     aria-selected={current === conn.id}
                     tabindex="0"
+                    {...conn.notes && {
+                      "aria-description": conn.notes.slice(0, 200),
+                    }}
                     data-row
                     class:selected={current === conn.id}
                     onfocus={() => (current = conn.id)}
@@ -525,6 +530,11 @@
                       /></span
                     >
                     <span class="name">{conn.name}</span>
+                    {#if conn.notes}
+                      <span class="note" aria-hidden="true" title={conn.notes}
+                        ><Icon name="note" size={14} /></span
+                      >
+                    {/if}
                     <span class="host">{conn.username}@{conn.host}</span>
                     {#if openConnectionIds.has(conn.id)}
                       <span class="live"
@@ -950,6 +960,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .note {
+    grid-column: 3;
+    grid-row: 1;
+    display: flex;
+    color: var(--fg-muted);
+  }
+  /* With a note icon in the first row, the label moves to the second. */
+  .note ~ .live {
+    grid-row: 2;
   }
   .host {
     grid-column: 2;

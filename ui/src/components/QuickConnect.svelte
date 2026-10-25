@@ -23,7 +23,11 @@
 
   const text = $derived(value.trim());
   const suggestions = $derived(
-    text ? library.connections.filter((c) => matches(c, text)).slice(0, 6) : [],
+    text
+      ? library.connections
+          .filter((c) => matches(c, text, library.groups))
+          .slice(0, 6)
+      : [],
   );
   // The last option is "Connect to <text>".
   const count = $derived(suggestions.length + 1);

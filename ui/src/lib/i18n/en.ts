@@ -34,6 +34,8 @@ export const en = {
   "form.appearance": "Appearance",
   "form.color": "Color",
   "form.color.fromGroup": "From group",
+  "form.notes": "Notes",
+  "form.notesTooLong": "Notes too long (at most 4 KB).",
   "form.icon": "Icon",
   "form.icon.initials": "Initials",
   "group.color": "Color",

@@ -46,6 +46,7 @@
   let groupId = $state(initial?.group_id ?? "");
   let color = $state<TagColor | null>(initial?.color ?? null);
   let icon = $state<ConnIcon | null>(initial?.icon ?? null);
+  let notes = $state(initial?.notes ?? "");
   let host = $state(initial?.host ?? "");
   let port = $state<number | null>(initial?.port ?? 22);
   let username = $state(initial?.username ?? "");
@@ -119,6 +120,7 @@
       jump_via: jumpVia || null,
       ...(color && { color }),
       ...(icon && { icon }),
+      ...(notes.trim() && { notes }),
       forwards: forwards.map((r): ForwardRule => {
         const common = {
           bind_port: r.bind_port!,
@@ -135,7 +137,16 @@
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
-    const found = validate({ name, host, port, username, forwards });
+    const found: Record<string, MessageKey> = validate({
+      name,
+      host,
+      port,
+      username,
+      forwards,
+    });
+    // Same limit as the core, which counts bytes.
+    if (new TextEncoder().encode(notes).length > 4096)
+      found.notes = "form.notesTooLong";
     errors = Object.fromEntries(
       Object.entries(found).map(([field, key]) => [
         field,
@@ -276,6 +287,18 @@
             noneLabel={t("form.color.fromGroup")}
             label={t("form.color")}
           />
+        </div>
+        <div class="field">
+          <label for="f-notes">{t("form.notes")}</label>
+          <textarea
+            id="f-notes"
+            data-field="notes"
+            rows="3"
+            bind:value={notes}
+            aria-invalid={errors.notes ? "true" : undefined}
+            aria-describedby={errors.notes ? eid("notes") : undefined}
+          ></textarea>
+          {@render error("notes")}
         </div>
       </fieldset>
 

@@ -36,6 +36,8 @@ export const it: Record<MessageKey, string> = {
   "form.appearance": "Aspetto",
   "form.color": "Colore",
   "form.color.fromGroup": "Dal gruppo",
+  "form.notes": "Note",
+  "form.notesTooLong": "Note troppo lunghe (massimo 4 KB).",
   "form.icon": "Icona",
   "form.icon.initials": "Iniziali",
   "group.color": "Colore",
