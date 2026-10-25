@@ -865,6 +865,7 @@
     justify-content: center;
     gap: var(--space-2);
     font-weight: 600;
+    white-space: nowrap;
   }
   .more {
     width: 44px;

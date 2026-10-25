@@ -17,6 +17,7 @@ category, the new look) is listed under
   again.
 - The settings button showed a sun-like icon that looked like a theme toggle;
   it now shows sliders.
+- The "New connection" button no longer wraps onto two lines.
 
 ## [0.2.0] - 2026-10-24
 
