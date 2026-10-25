@@ -470,7 +470,15 @@ fn self_named_or_none_hop_counts_as_free() {
         "Host a\nHost b\n    ProxyJump none\nHost t\n    ProxyJump a,b\n",
         &[],
     );
+    assert_eq!(jump(&r, "t"), id(&r, "b"));
     assert_eq!(jump(&r, "b"), id(&r, "a"));
+}
+
+#[test]
+fn proxyjump_with_no_hops_is_no_jump() {
+    let r = parse("Host t\n    ProxyJump ,\n", &[]);
+    assert_eq!(jump(&r, "t"), None);
+    assert!(get(&r, "t").notes.is_empty());
 }
 
 #[test]
@@ -535,6 +543,12 @@ fn shared_hops_compatible() {
     assert_eq!(jump(&r, "t1"), id(&r, "b"));
     assert_eq!(jump(&r, "t2"), id(&r, "b"));
     assert_eq!(jump(&r, "b"), id(&r, "a"));
+    assert_eq!(get(&r, "b").notes, [chained("t1"), chained("t2")]);
+    // Same notes, in the same order, whatever the order of the blocks.
+    let r = parse(
+        "Host a\nHost b\nHost t2\n    ProxyJump a,b\nHost t1\n    ProxyJump a,b\n",
+        &[],
+    );
     assert_eq!(get(&r, "b").notes, [chained("t1"), chained("t2")]);
 }
 

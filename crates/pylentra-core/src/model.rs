@@ -447,6 +447,11 @@ mod tests {
         assert_eq!(invalid_field(&c), "notes");
         c.notes = Some("a".repeat(MAX_NOTES_BYTES));
         assert!(c.validate().is_ok());
+        // The limit counts UTF-8 bytes: "è" takes two.
+        c.notes = Some("è".repeat(MAX_NOTES_BYTES / 2));
+        assert!(c.validate().is_ok());
+        c.notes = Some("è".repeat(MAX_NOTES_BYTES / 2) + "x");
+        assert_eq!(invalid_field(&c), "notes");
     }
 
     #[test]
