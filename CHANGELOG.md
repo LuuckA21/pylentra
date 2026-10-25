@@ -8,9 +8,10 @@ All notable changes to Pylentra are documented here. The format follows
 
 ### Fixed
 
-- An unreadable `snippets.toml` (for example, no permission to read it) no
-  longer stops Pylentra from starting. The app starts with no snippets, leaves
-  the file untouched, and the startup banner says why.
+- An unreadable `snippets.toml` (for example, no permission to read it, or a
+  damaged file that cannot be moved aside) no longer stops Pylentra from
+  starting. The app starts with no snippets, leaves the file untouched, and
+  the startup banner says why.
 - The snippet palette closes when you switch to another tab, and keeps a valid
   selection when the snippets change while it is open (Enter used to do
   nothing).

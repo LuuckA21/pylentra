@@ -27,7 +27,8 @@ impl AppState {
     ) -> Result<Self, CoreError> {
         let (store, conn_outcome) = ConnectionStore::load(config_dir.join("connections.toml"))?;
         let (settings, settings_outcome) = SettingsStore::load(config_dir.join("settings.toml"));
-        // Snippets are secondary: an unreadable file must not stop the app.
+        // Snippets are secondary: a file that cannot be read (or, if corrupt,
+        // moved aside) must not stop the app.
         let snippets_path = config_dir.join("snippets.toml");
         let (snippets, snippets_warning) = match SnippetStore::load(snippets_path.clone()) {
             Ok((s, outcome)) => (s, warning(outcome)),
@@ -35,7 +36,7 @@ impl AppState {
                 log::warn!("cannot read snippets: {e}");
                 let w = ApiError {
                     code: "config.unreadable".into(),
-                    params: [("reason".into(), e.to_string())].into(),
+                    params: [("reason".into(), reason(&e))].into(),
                 };
                 (SnippetStore::unavailable(snippets_path), Some(w))
             }
@@ -103,4 +104,12 @@ fn warning(outcome: LoadOutcome) -> Option<ApiError> {
         code: code.into(),
         params: [(param.0.into(), param.1)].into(),
     })
+}
+
+/// The OS message alone: the warning already says the file could not be read.
+fn reason(e: &CoreError) -> String {
+    match e {
+        CoreError::Io(io) => io.to_string(),
+        other => other.to_string(),
+    }
 }

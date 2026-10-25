@@ -53,7 +53,9 @@ export const saveConnection = (
 export const deleteConnection = (id: string) =>
   then(api.connectionDelete(id)).then(async (r) => {
     await loadSnippets().catch((e) =>
-      warn(`snippet reload failed: ${JSON.stringify(e)}`),
+      warn(
+        `snippet reload failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`,
+      ),
     );
     return r;
   });

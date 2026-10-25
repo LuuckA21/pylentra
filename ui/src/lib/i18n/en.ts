@@ -308,7 +308,7 @@ export const en = {
   "snippet.deleteTitle": "Delete snippet?",
   "snippet.deleteBody": '"{name}" will be deleted.',
   "snippet.readOnly":
-    "Snippets were written by a newer version and are read-only.",
+    "Snippets are read-only for now: the notice at the top says why.",
   "snippet.tooLong": "At most {max} characters.",
   "snippet.textTooLong": "Text too long (at most 64 KB).",
   "snippet.required": "Required.",

@@ -792,7 +792,11 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.unreadable");
         assert_eq!(warnings[0].params["file"], "snippets.toml");
-        assert!(!warnings[0].params["reason"].is_empty());
+        let reason = &warnings[0].params["reason"];
+        assert!(
+            !reason.is_empty() && !reason.starts_with("I/O error"),
+            "{reason}"
+        );
         assert!(do_snippets_get(&state).is_empty());
         let err = do_snippet_save(&state, snippet("a", None)).unwrap_err();
         assert_eq!(err.code, "config.read_only");

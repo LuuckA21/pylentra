@@ -415,18 +415,21 @@ test("delete asks first", async () => {
   await waitFor(() => expect(api.snippetDelete).toHaveBeenCalledWith("1"));
 });
 
-test("read-only disables editing", async () => {
-  await snippetsSection(
-    [snip("1", "Zed")],
-    [{ code: "config.read_only", params: { file: "snippets.toml" } }],
-  );
-  expect(
-    screen.getByText(
-      "Snippets were written by a newer version and are read-only.",
-    ),
-  ).toBeTruthy();
-  for (const name of ["New snippet", "Edit Zed", "Delete Zed"])
+test.each(["config.read_only", "config.unreadable"])(
+  "read-only (%s) disables editing and points to the notice",
+  async (code) => {
+    await snippetsSection(
+      [snip("1", "Zed")],
+      [{ code, params: { file: "snippets.toml" } }],
+    );
     expect(
-      (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-});
+      screen.getByText(
+        "Snippets are read-only for now: the notice at the top says why.",
+      ),
+    ).toBeTruthy();
+    for (const name of ["New snippet", "Edit Zed", "Delete Zed"])
+      expect(
+        (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
+      ).toBe(true);
+  },
+);

@@ -121,6 +121,10 @@ cover it.
    restart and `snippets.toml` sits next to `connections.toml`.
 6. Delete a connection that has snippets: its snippets are gone too, the
    global ones stay.
+7. Make `snippets.toml` unreadable (Linux: `chmod 000 snippets.toml`) and
+   start the app: it starts, the banner names the file and the reason,
+   Settings → Snippets says they are read-only, the file is not modified, and
+   deleting a connection still works. Restore the permissions afterwards.
 
 ## Notes
 
