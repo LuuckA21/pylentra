@@ -1,6 +1,6 @@
 import type { Connection } from "./bindings/Connection";
 
-const fold = (s: string) =>
+export const fold = (s: string) =>
   s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 export function matches(c: Connection, query: string): boolean {

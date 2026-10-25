@@ -17,6 +17,7 @@
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
   import { library, refresh } from "./lib/stores/library.svelte";
+  import { loadSnippets } from "./lib/stores/snippets.svelte";
   import {
     closeTab,
     linkQuickTab,
@@ -98,6 +99,7 @@
           );
       }),
       refresh(),
+      loadSnippets(),
     ]).catch(toastError);
 
     const unlisten = getCurrentWindow().onCloseRequested((e) => {

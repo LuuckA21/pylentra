@@ -9,6 +9,7 @@ import type { PromptAnswer } from "./bindings/PromptAnswer";
 import type { SessionEvent } from "./bindings/SessionEvent";
 import type { ScanResult } from "./bindings/ScanResult";
 import type { Settings } from "./bindings/Settings";
+import type { Snippet } from "./bindings/Snippet";
 import type { Warning } from "./bindings/Warning";
 
 // One wrapper per Rust command; a failed command rejects with an ApiError.
@@ -36,6 +37,11 @@ export const connectionsImport = (
 export const settingsGet = () => invoke<Settings>("settings_get");
 export const settingsSave = (settings: Settings) =>
   invoke<void>("settings_save", { settings });
+export const snippetsGet = () => invoke<Snippet[]>("snippets_get");
+export const snippetSave = (snippet: Snippet) =>
+  invoke<void>("snippet_save", { snippet });
+export const snippetDelete = (id: string) =>
+  invoke<void>("snippet_delete", { id });
 
 // Raw channel bodies arrive as an ArrayBuffer (InvokeResponseBody::Raw); a
 // number[] is accepted too, in case the body went through JSON.
@@ -121,6 +127,9 @@ export const api = {
   connectionsImport,
   settingsGet,
   settingsSave,
+  snippetsGet,
+  snippetSave,
+  snippetDelete,
   sessionOpen,
   sessionOpenQuick,
   sessionWrite,
