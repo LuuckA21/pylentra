@@ -214,6 +214,11 @@
     }
   });
 
+  // The two panels share a spot; the forwards one can also open by itself.
+  $effect(() => {
+    if (forwardsOpen) snippetsOpen = false;
+  });
+
   function toggleSnippets() {
     if (snippetsOpen) return closeSnippets();
     if (tab.phase !== "ready" || confirming || newSnippet) return;
@@ -271,7 +276,8 @@
   }
 
   function onwindowkey(e: KeyboardEvent) {
-    if (fromOtherModal(e, root)) return;
+    // Our own modals sit inside root, so fromOtherModal lets them through.
+    if (confirming || newSnippet || fromOtherModal(e, root)) return;
     const a = active ? shortcutFor(e) : null;
     if (a) run(a, e);
   }

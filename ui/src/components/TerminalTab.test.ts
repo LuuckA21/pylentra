@@ -60,7 +60,7 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
 import { initialTab, type TabState } from "../lib/sessionReducer";
-import { connect } from "../lib/stores/sessions.svelte";
+import { connect, cycleTab } from "../lib/stores/sessions.svelte";
 import { settings } from "../lib/stores/settings.svelte";
 import { snippets } from "../lib/stores/snippets.svelte";
 import TerminalTab from "./TerminalTab.svelte";
@@ -406,6 +406,31 @@ test("Esc in the palette gives the focus back to the terminal", async () => {
   await fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
   expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
   expect(term.focus).toHaveBeenCalled();
+});
+
+test("tab shortcuts do not act behind the new-snippet form", async () => {
+  const p = props(readyTab);
+  render(TerminalTab, p);
+  await shortcut();
+  await fireEvent.click(screen.getByText("New snippet"));
+  expect(screen.getByRole("dialog", { name: "New snippet" })).toBeTruthy();
+  await fireEvent.keyDown(document.body, { key: "Tab", ctrlKey: true });
+  await fireEvent.keyDown(document.body, {
+    key: "W",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  expect(cycleTab).not.toHaveBeenCalled();
+  expect(p.onclose).not.toHaveBeenCalled();
+});
+
+test("opening the forwards panel closes the palette", async () => {
+  setup2();
+  await shortcut();
+  expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  expect(screen.getByRole("dialog", { name: "Port forwarding" })).toBeTruthy();
 });
 
 let view: ReturnType<typeof render>;
