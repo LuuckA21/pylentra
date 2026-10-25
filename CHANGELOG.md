@@ -4,6 +4,35 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-25
+
+### Added
+
+- Snippets: saved commands, global or tied to one connection. Open the palette
+  with Ctrl+Shift+P or the "Snippets" button in the status bar; a snippet is
+  pasted into the terminal, and with "Run immediately" it also sends Enter.
+  Before pasting several lines into a shell that does not support bracketed
+  paste, Pylentra asks for confirmation. "Save selection as snippet" in the
+  palette turns the selected terminal text into a snippet. Manage them in
+  Settings → Snippets; they are stored in `snippets.toml`, next to
+  `connections.toml`, and deleting a connection deletes its snippets.
+- A note for each connection (a field in the connection form, under
+  Appearance). A note icon in the sidebar shows it on hover.
+- Importing from `~/.ssh/config` understands `ProxyJump a,b` with several
+  hops and turns it into a chain of jump hosts. A chain that conflicts with
+  another jump host is skipped, with a note.
+- The window reopens maximized if it was maximized, otherwise with the size and
+  position it had before.
+- A new app icon.
+
+### Changed
+
+- Searching the sidebar, and the Quick connect suggestions, also matches notes
+  and the group name.
+- Going back to 0.2.2 opens the library normally, but saving a connection
+  there drops its notes. Snippets stay in `snippets.toml`, which 0.2.2
+  ignores.
+
 ## [0.2.2] - 2026-10-25
 
 ### Fixed

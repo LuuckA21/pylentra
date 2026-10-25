@@ -101,6 +101,33 @@ cover it.
    default; to test the group, choose `New group "ssh config"`. The jump host
    chain works when opened.
 3. Run the import again: hosts already in the library are skipped.
+4. Import a host with `ProxyJump a,b` (two hops): it lands as a chain of jump
+   hosts and opens through both. A chain that conflicts with another jump
+   host is skipped, with a note in the preview.
+
+## Snippets
+
+1. Open the palette with `Ctrl+Shift+P` and with the "Snippets" button in the
+   status bar. Create a global snippet `ls` and a snippet tied to one
+   connection; the second appears only in that connection's tabs.
+2. Pick `ls` without "Run immediately": the text is pasted at the prompt and
+   nothing runs. With "Run immediately" on, it also runs.
+3. A multi-line snippet in bash (bracketed paste): pasted with no
+   confirmation. The same in `sh` (no bracketed paste, run `sh` first): a
+   confirmation appears first, and Cancel pastes nothing.
+4. Select text in the terminal, choose "Save selection as snippet" in the
+   palette: the snippet is created with that text.
+5. Settings, Snippets: edit and delete a snippet; the changes persist after a
+   restart and `snippets.toml` sits next to `connections.toml`.
+6. Delete a connection that has snippets: its snippets are gone too, the
+   global ones stay.
+
+## Notes
+
+1. Add a note to a connection (form, under Appearance): a note icon appears in
+   the sidebar, and hovering it shows the note.
+2. Search the sidebar and Quick connect for a word from the note, and for the
+   name of the connection's group: the connection is found.
 
 ## Colors and icons
 
@@ -140,6 +167,11 @@ cover it.
 3. With the window on a second monitor, close the app, unplug that monitor and
    open the app again: the window is visible on the main monitor.
 
+## Icon
+
+1. The new app icon shows in the taskbar (or dock), the application menu, the
+   window title bar and, on Windows, in the installer.
+
 ## Downgrade to 0.1.x
 
 1. Get a 0.1.x build from GitHub Releases (v0.1.1). Use a 0.2 library that
@@ -151,6 +183,16 @@ cover it.
    connection, the library shows empty; edits are refused.
 3. Go back to 0.2: every connection is there again, and `connections.toml` is
    identical to the backup.
+
+## Downgrade to 0.2.2
+
+1. Get a 0.2.2 build from GitHub Releases. Use a 0.3 library with a note on
+   one connection and a few snippets, and back up `connections.toml` and
+   `snippets.toml` first (same folders as for 0.1.x above).
+2. Open it in 0.2.2: the library opens normally and the connections are there.
+3. Save a connection in 0.2.2: that connection loses its note. `snippets.toml`
+   is untouched (0.2.2 ignores it).
+4. Go back to 0.3: the other notes and all the snippets are still there.
 
 ## Language
 
