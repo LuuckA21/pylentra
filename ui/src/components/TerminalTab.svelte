@@ -243,6 +243,7 @@
       connection={library.connections.find((c) => c.id === tab.connectionId)}
       groups={library.groups}
       onforwards={() => (forwardsOpen = !forwardsOpen)}
+      {forwardsOpen}
       onsave={tab.quick ? () => onsave(tab.tabId) : undefined}
     />
   </div>

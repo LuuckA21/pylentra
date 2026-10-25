@@ -163,3 +163,53 @@ test("remote tunnel has no bind address and invalid ports are rejected", async (
   expect(screen.getAllByText("Enter a port from 1 to 65535.")).toHaveLength(2);
   expect(api.forwardStart).not.toHaveBeenCalled();
 });
+
+const failedTab = () =>
+  tab({
+    1: {
+      rule: local,
+      state: {
+        type: "Failed",
+        error: { code: "forward.port_in_use", params: { port: "5432" } },
+      },
+    },
+  });
+
+test("opening moves focus into the panel and closing returns it", async () => {
+  const opener = document.createElement("button");
+  document.body.append(opener);
+  opener.focus();
+  const close = vi.fn();
+  const { rerender } = render(ForwardPanel, {
+    tab: tab({}),
+    open: false,
+    onclose: close,
+  });
+  await rerender({ open: true });
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole("dialog")),
+  );
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(close).toHaveBeenCalledOnce();
+  expect(document.activeElement).toBe(opener);
+  opener.remove();
+});
+
+test("a panel opened by a failed forward does not take focus", async () => {
+  const input = document.createElement("input");
+  document.body.append(input);
+  input.focus();
+  render(ForwardPanel, { tab: failedTab(), onclose });
+  await screen.findByRole("dialog");
+  expect(document.activeElement).toBe(input);
+  input.remove();
+});
+
+test("a forward that stays failed does not reopen a closed panel", async () => {
+  const { rerender } = render(ForwardPanel, { tab: failedTab(), onclose });
+  await screen.findByRole("dialog");
+  // What the parent does on close, then a later tab update with the same failure.
+  await rerender({ open: false });
+  await rerender({ tab: failedTab() });
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
