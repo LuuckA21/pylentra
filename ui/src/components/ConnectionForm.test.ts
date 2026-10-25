@@ -272,11 +272,19 @@ test("notes are saved; blank notes leave the key out", async () => {
   );
 });
 
+test("notes of exactly 4096 bytes are saved", async () => {
+  setup();
+  await fillBasics();
+  await type("Notes", "è".repeat(2048));
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalledTimes(1));
+});
+
 test("notes over 4096 bytes are refused under the field", async () => {
   setup();
   await fillBasics();
-  // 2049 two-byte characters: under 4096 characters, over 4096 bytes.
-  await type("Notes", "è".repeat(2049));
+  // 4097 bytes: 2048 two-byte characters plus one more byte.
+  await type("Notes", "è".repeat(2048) + "x");
   await save();
   const field = screen.getByLabelText("Notes");
   expect(field.getAttribute("aria-invalid")).toBe("true");
