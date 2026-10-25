@@ -42,6 +42,9 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   start a keyring after Pylentra, restart the app.
 - **Windows builds are unsigned.** SmartScreen shows "Windows protected your
   PC": click **More info**, then **Run anyway**.
+- **Windows icon cache.** After an update that changes the app icon, a
+  taskbar pin or Start menu shortcut can keep showing the old one until
+  Windows refreshes its icon cache: restart, or run `ie4uinit.exe -show`.
 - **`known_hosts`:** `@revoked` and `@cert-authority` markers and wildcard host
   patterns in `~/.ssh/known_hosts` are not honoured. Pylentra only reads that
   file and never writes to `~/.ssh`.

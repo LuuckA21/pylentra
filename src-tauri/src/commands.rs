@@ -769,6 +769,40 @@ mod tests {
     }
 
     #[test]
+    fn startup_warnings_reports_newer_snippets_read_only() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let warnings = do_startup_warnings(&state);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "config.read_only");
+        assert_eq!(warnings[0].params["file"], "snippets.toml");
+        assert_eq!(warnings[0].params["found"], "9");
+    }
+
+    #[test]
+    fn unreadable_snippets_file_starts_read_only() {
+        let dir = TempDir::new().unwrap();
+        // A directory where the file should be: reading it fails, not with NotFound.
+        std::fs::create_dir(dir.path().join("snippets.toml")).unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let warnings = do_startup_warnings(&state);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "config.unreadable");
+        assert_eq!(warnings[0].params["file"], "snippets.toml");
+        let reason = &warnings[0].params["reason"];
+        assert!(
+            !reason.is_empty() && !reason.starts_with("I/O error"),
+            "{reason}"
+        );
+        assert!(do_snippets_get(&state).is_empty());
+        let err = do_snippet_save(&state, snippet("a", None)).unwrap_err();
+        assert_eq!(err.code, "config.read_only");
+    }
+
+    #[test]
     fn startup_warnings_reports_newer_version_read_only() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("connections.toml"), "version = 7\n").unwrap();

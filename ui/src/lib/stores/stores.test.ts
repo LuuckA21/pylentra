@@ -5,6 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...a: unknown[]) => invoke(...a),
   Channel: class {},
 }));
+vi.mock("@tauri-apps/plugin-log", () => ({ warn: vi.fn() }));
 
 import {
   deleteConnection,
@@ -51,6 +52,18 @@ test("snippets.toml warnings only affect isSnippetsReadOnly", () => {
   library.warnings = [];
 });
 
+test("an unreadable snippets.toml makes the snippets read-only", () => {
+  library.warnings = [
+    {
+      code: "config.unreadable",
+      params: { reason: "Is a directory", file: "snippets.toml" },
+    },
+  ];
+  expect(isReadOnly()).toBe(false);
+  expect(isSnippetsReadOnly()).toBe(true);
+  library.warnings = [];
+});
+
 test("deleteConnection reloads the snippets too", async () => {
   const calls: string[] = [];
   invoke.mockImplementation(async (cmd: string) => {
@@ -60,6 +73,14 @@ test("deleteConnection reloads the snippets too", async () => {
   await deleteConnection("c");
   expect(calls[0]).toBe("connection_delete");
   expect(calls).toContain("snippets_get");
+});
+
+test("a failed snippet reload does not fail a delete that went through", async () => {
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === "snippets_get") throw { code: "io", params: {} };
+    return cmd === "library_get" ? lib : [];
+  });
+  await expect(deleteConnection("c")).resolves.toEqual([]);
 });
 
 test("settings apply data-theme on <html> and the language", async () => {

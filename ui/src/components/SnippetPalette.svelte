@@ -31,7 +31,7 @@
 
   let query = $state("");
   let inputEl = $state<HTMLInputElement>();
-  let active = $state(0);
+  let picked = $state(0);
 
   const groups = $derived(
     groupSnippets(
@@ -42,6 +42,8 @@
     ),
   );
   const flat = $derived([...groups.own, ...groups.global]);
+  // The list can shrink while open (snippets edited in Settings).
+  const active = $derived(Math.min(picked, Math.max(flat.length - 1, 0)));
   const sections = $derived([
     { label: connectionName, items: groups.own, offset: 0 },
     {
@@ -62,7 +64,7 @@
   function onkeydown(e: KeyboardEvent) {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      active = Math.max(
+      picked = Math.max(
         0,
         Math.min(active + (e.key === "ArrowDown" ? 1 : -1), flat.length - 1),
       );
@@ -92,7 +94,7 @@
     bind:value={query}
     bind:inputEl
     {onkeydown}
-    oninput={() => (active = 0)}
+    oninput={() => (picked = 0)}
     role="combobox"
     autocomplete="off"
     spellcheck={false}

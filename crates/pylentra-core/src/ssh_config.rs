@@ -261,7 +261,10 @@ fn link_chains(
                     .all(|l| wanted.get(&l.0).is_some_and(|v| v.len() == 1) && settable(l))
         })
         .collect();
-    for (((t, _), links), ok) in chains.iter().zip(&links).zip(ok) {
+    // By target name, so a shared hop's notes do not depend on block order.
+    let mut order: Vec<_> = chains.iter().zip(&links).zip(ok).collect();
+    order.sort_by_key(|((chain, _), _)| candidates[chain.0].connection.name.to_lowercase());
+    for (((t, _), links), ok) in order {
         if !ok {
             candidates[*t].notes.push(ImportNote::MultiHopJump);
             continue;

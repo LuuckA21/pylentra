@@ -1,3 +1,4 @@
+import { warn } from "@tauri-apps/plugin-log";
 import { api } from "../api";
 import type { ApiError } from "../bindings/ApiError";
 import type { Connection } from "../bindings/Connection";
@@ -19,7 +20,9 @@ export const isReadOnly = (): boolean =>
   );
 export const isSnippetsReadOnly = (): boolean =>
   library.warnings.some(
-    (w) => w.code === "config.read_only" && w.params.file === SNIPPETS_FILE,
+    (w) =>
+      (w.code === "config.read_only" || w.code === "config.unreadable") &&
+      w.params.file === SNIPPETS_FILE,
   );
 
 export async function refresh(): Promise<void> {
@@ -45,10 +48,15 @@ export const saveConnection = (
   passphrase?: string,
 ): Promise<Warning[]> =>
   then(api.connectionSave(c, password ?? null, passphrase ?? null));
-// Deleting a connection also drops its snippets on the Rust side.
+// Deleting a connection also drops its snippets on the Rust side. The delete
+// already succeeded, so a failed reload is only logged.
 export const deleteConnection = (id: string) =>
   then(api.connectionDelete(id)).then(async (r) => {
-    await loadSnippets();
+    await loadSnippets().catch((e) =>
+      warn(
+        `snippet reload failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`,
+      ),
+    );
     return r;
   });
 export const saveGroup = (g: Group) => then(api.groupSave(g));

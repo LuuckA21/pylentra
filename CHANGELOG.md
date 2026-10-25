@@ -4,6 +4,29 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-10-25
+
+### Fixed
+
+- An unreadable `snippets.toml` (for example, no permission to read it, or a
+  damaged file that cannot be moved aside) no longer stops Pylentra from
+  starting. The app starts with no snippets, leaves the file untouched, and
+  the startup banner says why.
+- The snippet palette closes when you switch to another tab, and keeps a valid
+  selection when the snippets change while it is open (Enter used to do
+  nothing).
+- Deleting a connection no longer shows an error when only reloading the
+  snippets afterwards fails: the connection was deleted.
+- Importing from `~/.ssh/config`: a jump host shared by several `ProxyJump`
+  chains lists its "set by the chain of" notes in the same order whatever the
+  order of the hosts in the file.
+
+### Changed
+
+- Documentation: after an update that changes the app icon, Windows may keep
+  showing the old icon on a pinned taskbar shortcut until it refreshes its
+  icon cache (restart, or `ie4uinit.exe -show`).
+
 ## [0.3.0] - 2026-10-25
 
 Going back to 0.2.2: the library opens normally, but any change saved there

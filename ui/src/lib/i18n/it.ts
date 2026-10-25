@@ -237,6 +237,8 @@ export const it: Record<MessageKey, string> = {
     "La configurazione è stata scritta da una versione più recente ed è in sola lettura.",
   "error.config.unsupported_version":
     "Versione di configurazione {found} non supportata.",
+  "error.config.unreadable":
+    "Il file non si può leggere ({reason}). Resta intatto e in sola lettura fino al prossimo avvio.",
   "error.config.recovered_corrupt":
     "Il file di configurazione era illeggibile. È stato conservato come {backup} e ne è stato creato uno nuovo.",
   "error.forward.permission_denied": "Permesso negato per la porta {port}.",
@@ -313,7 +315,7 @@ export const it: Record<MessageKey, string> = {
   "snippet.deleteTitle": "Eliminare lo snippet?",
   "snippet.deleteBody": "«{name}» verrà eliminato.",
   "snippet.readOnly":
-    "Gli snippet sono stati scritti da una versione più recente e sono in sola lettura.",
+    "Gli snippet sono in sola lettura per ora: l'avviso in alto spiega perché.",
   "snippet.tooLong": "Massimo {max} caratteri.",
   "snippet.textTooLong": "Testo troppo lungo (massimo 64 KB).",
   "snippet.required": "Obbligatorio.",

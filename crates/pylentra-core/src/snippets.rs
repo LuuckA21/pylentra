@@ -104,6 +104,16 @@ impl SnippetStore {
         Ok((store, outcome))
     }
 
+    /// An empty, read-only store for a file that could not be read, so the
+    /// app still starts and never overwrites it.
+    pub fn unavailable(path: PathBuf) -> Self {
+        Self {
+            path,
+            snippets: vec![],
+            read_only: true,
+        }
+    }
+
     pub fn list(&self) -> &[Snippet] {
         &self.snippets
     }

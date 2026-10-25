@@ -214,6 +214,11 @@
     }
   });
 
+  // A palette left open on a hidden tab would catch the keys of the next visit.
+  $effect(() => {
+    if (!active) snippetsOpen = false;
+  });
+
   // The two panels share a spot; the forwards one can also open by itself.
   $effect(() => {
     if (forwardsOpen) snippetsOpen = false;
