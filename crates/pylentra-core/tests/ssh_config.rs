@@ -403,10 +403,21 @@ fn three_hops() {
 
 #[test]
 fn spaces_and_trailing_comma() {
-    let r = parse("Host a\nHost b\nHost t\n    ProxyJump \"a, b,\"\n", &[]);
+    for value in ["a, b,", "\"a, b,\"", "a ,b"] {
+        let r = parse(
+            &format!("Host a\nHost b\nHost t\n    ProxyJump {value}\n"),
+            &[],
+        );
+        assert_eq!(jump(&r, "t"), id(&r, "b"), "{value}");
+        assert_eq!(jump(&r, "b"), id(&r, "a"), "{value}");
+        assert!(get(&r, "t").notes.is_empty(), "{value}");
+    }
+    // The first block's ProxyJump still wins over a later one.
+    let r = parse(
+        "Host a\nHost b\nHost t\n    ProxyJump a, b\nHost t\n    ProxyJump b, a\n",
+        &[],
+    );
     assert_eq!(jump(&r, "t"), id(&r, "b"));
-    assert_eq!(jump(&r, "b"), id(&r, "a"));
-    assert!(get(&r, "t").notes.is_empty());
     // One hop left after dropping the empty ones is a plain single jump.
     let r = parse("Host a\nHost t\n    ProxyJump ,a,\n", &[]);
     assert_eq!(jump(&r, "t"), id(&r, "a"));

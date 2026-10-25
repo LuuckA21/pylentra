@@ -279,7 +279,7 @@ export const it: Record<MessageKey, string> = {
   "import.note.IdentityTokens":
     "IdentityFile usa token %: autenticazione automatica.",
   "import.note.MultiHopJump":
-    "Più salti ProxyJump non sono supportati: nessun jump host.",
+    "I salti di ProxyJump sono in conflitto con altri jump host: nessun jump host.",
   "import.note.ChainedJump": "Jump host impostato dalla catena di {target}.",
   "import.note.JumpNotAlias":
     "ProxyJump {value} non è un alias: nessun jump host.",

@@ -340,6 +340,7 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
         .map(|(i, &(alias, id))| {
             let mut first: HashMap<&str, &str> = HashMap::new();
             let mut forwards = Vec::new();
+            let mut jump: Option<&[String]> = None;
             for block in blocks.iter().filter(|b| block_matches(&b.patterns, alias)) {
                 for (key, args) in &block.lines {
                     // Forwards add up over every matching block; everything else keeps its first
@@ -348,6 +349,10 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                         forwards.push((key.as_str(), args.as_slice()));
                     } else if let Some(value) = args.first().filter(|v| !v.trim().is_empty()) {
                         first.entry(key.as_str()).or_insert(value.as_str());
+                        // Unquoted `ProxyJump a, b` splits into several tokens; every one is a hop list.
+                        if key == "proxyjump" {
+                            jump.get_or_insert(args);
+                        }
                     }
                 }
             }
@@ -378,8 +383,9 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                 },
                 None => AuthMethod::Auto,
             };
-            let hops: Vec<&str> = first.get("proxyjump").map_or_else(Vec::new, |v| {
-                v.split(',')
+            let hops: Vec<&str> = jump.map_or_else(Vec::new, |args| {
+                args.iter()
+                    .flat_map(|a| a.split(','))
                     .map(str::trim)
                     .filter(|h| !h.is_empty())
                     .collect()
