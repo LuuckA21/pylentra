@@ -314,4 +314,11 @@ export const it: Record<MessageKey, string> = {
   "snippet.tooLong": "Massimo {max} caratteri.",
   "snippet.textTooLong": "Testo troppo lungo (massimo 64 KB).",
   "snippet.required": "Obbligatorio.",
+  "snippet.button": "Snippet",
+  "snippet.palette": "Snippet",
+  "snippet.saveSelection": "Salva la selezione come snippet",
+  "snippet.confirmTitle": "Incollare più righe?",
+  "snippet.confirmBody":
+    "Questa shell eseguirà ogni riga appena incollata. Continuare?",
+  "snippet.confirmOk": "Incolla",
 };

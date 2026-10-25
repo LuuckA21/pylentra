@@ -4,10 +4,12 @@
   import "@xterm/xterm/css/xterm.css";
   import { onMount, untrack } from "svelte";
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
+  import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
   import type { TabState } from "../lib/sessionReducer";
   import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
+  import { body, needsConfirm } from "../lib/snippets";
   import { fromOtherModal, shortcutFor, type Action } from "../lib/shortcuts";
   import {
     answer,
@@ -24,7 +26,10 @@
   import HostKeyDialog from "./HostKeyDialog.svelte";
   import ReconnectOverlay from "./ReconnectOverlay.svelte";
   import SecretPrompt from "./SecretPrompt.svelte";
+  import SnippetForm from "./SnippetForm.svelte";
+  import SnippetPalette from "./SnippetPalette.svelte";
   import StatusBar from "./StatusBar.svelte";
+  import ConfirmDialog from "./ui/ConfirmDialog.svelte";
 
   let {
     tab,
@@ -44,6 +49,12 @@
   let el: HTMLDivElement;
   let root: HTMLDivElement;
   let forwardsOpen = $state(false);
+  let snippetsOpen = $state(false);
+  // The terminal selection when the palette opened.
+  let selection = $state("");
+  // A multi-line snippet waiting for the user's go-ahead, and the new-snippet form.
+  let confirming = $state<Snippet>();
+  let newSnippet = $state<{ text: string }>();
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
 
@@ -194,6 +205,45 @@
       term?.focus();
   });
 
+  // A session that dropped under an open palette must not receive anything:
+  // the Enter would also restart a closed tab.
+  $effect(() => {
+    if (tab.phase !== "ready") {
+      snippetsOpen = false;
+      confirming = undefined;
+    }
+  });
+
+  function toggleSnippets() {
+    if (snippetsOpen) return closeSnippets();
+    if (tab.phase !== "ready" || confirming || newSnippet) return;
+    selection = term?.getSelection() ?? "";
+    forwardsOpen = false;
+    snippetsOpen = true;
+  }
+
+  function closeSnippets() {
+    snippetsOpen = false;
+    term?.focus();
+  }
+
+  function paste(s: Snippet) {
+    confirming = undefined;
+    if (tab.phase === "ready") {
+      term?.paste(body(s.text));
+      // Through onData, like typing.
+      if (s.run) term?.input("\r");
+    }
+    term?.focus();
+  }
+
+  function pick(s: Snippet) {
+    snippetsOpen = false;
+    if (term && needsConfirm(s.text, s.run, term.modes.bracketedPasteMode))
+      confirming = s;
+    else paste(s);
+  }
+
   function run(a: Action, e: KeyboardEvent) {
     // Copy and paste act on the terminal only when it has focus; elsewhere the
     // native behavior stays.
@@ -217,6 +267,7 @@
     } else if (a === "closeTab") onclose(tab.tabId);
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
+    else if (a === "snippets") toggleSnippets();
   }
 
   function onwindowkey(e: KeyboardEvent) {
@@ -237,6 +288,21 @@
         bind:open={forwardsOpen}
         onclose={() => (forwardsOpen = false)}
       />
+      {#if snippetsOpen}
+        <SnippetPalette
+          connectionId={tab.quick ? null : tab.connectionId}
+          connectionName={library.connections.find(
+            (c) => c.id === tab.connectionId,
+          )?.name}
+          {selection}
+          onpick={pick}
+          onnew={(text) => {
+            snippetsOpen = false;
+            newSnippet = { text };
+          }}
+          onclose={closeSnippets}
+        />
+      {/if}
     {/if}
     <StatusBar
       {tab}
@@ -244,6 +310,8 @@
       groups={library.groups}
       onforwards={() => (forwardsOpen = !forwardsOpen)}
       {forwardsOpen}
+      onsnippets={toggleSnippets}
+      {snippetsOpen}
       onsave={tab.quick ? () => onsave(tab.tabId) : undefined}
     />
   </div>
@@ -270,6 +338,33 @@
       />
     {/if}
   {/key}
+
+  {#if confirming}
+    {@const s = confirming}
+    <ConfirmDialog
+      title={t("snippet.confirmTitle")}
+      message={t("snippet.confirmBody")}
+      confirmLabel={t("snippet.confirmOk")}
+      onconfirm={() => paste(s)}
+      oncancel={() => {
+        confirming = undefined;
+        term?.focus();
+      }}
+    />
+  {/if}
+
+  {#if newSnippet}
+    <SnippetForm
+      preset={{
+        text: newSnippet.text,
+        connectionId: tab.quick ? null : tab.connectionId,
+      }}
+      onclose={() => {
+        newSnippet = undefined;
+        term?.focus();
+      }}
+    />
+  {/if}
 
   {#if waiting}
     <ReconnectOverlay

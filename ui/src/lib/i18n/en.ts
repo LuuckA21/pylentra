@@ -307,6 +307,13 @@ export const en = {
   "snippet.tooLong": "At most {max} characters.",
   "snippet.textTooLong": "Text too long (at most 64 KB).",
   "snippet.required": "Required.",
+  "snippet.button": "Snippets",
+  "snippet.palette": "Snippets",
+  "snippet.saveSelection": "Save selection as snippet",
+  "snippet.confirmTitle": "Paste several lines?",
+  "snippet.confirmBody":
+    "This shell will run each line as soon as it is pasted. Continue?",
+  "snippet.confirmOk": "Paste",
 } as const;
 
 export type MessageKey = keyof typeof en;

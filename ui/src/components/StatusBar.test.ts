@@ -80,3 +80,22 @@ test("the Forward button and pills report whether the panel is open", () => {
       .getAttribute("aria-pressed"),
   ).toBe("true");
 });
+
+test("the snippets button is disabled outside ready and opens the palette", async () => {
+  const onsnippets = vi.fn();
+  const base = tab(Date.now());
+  const { rerender } = render(StatusBar, {
+    tab: { ...base, phase: "connecting" },
+    connection,
+    groups,
+    onforwards: vi.fn(),
+    onsnippets,
+  });
+  const button = screen.getByRole("button", { name: "Snippets" });
+  expect(button).toHaveProperty("disabled", true);
+  await rerender({ tab: base, snippetsOpen: true });
+  expect(button).toHaveProperty("disabled", false);
+  expect(button.getAttribute("aria-expanded")).toBe("true");
+  await fireEvent.click(button);
+  expect(onsnippets).toHaveBeenCalledTimes(1);
+});
