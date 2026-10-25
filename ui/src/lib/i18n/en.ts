@@ -232,6 +232,8 @@ export const en = {
     "The configuration was written by a newer version and is read-only.",
   "error.config.unsupported_version":
     "Unsupported configuration version {found}.",
+  "error.config.unreadable":
+    "The file could not be read ({reason}). It stays untouched and read-only until the next start.",
   "error.config.recovered_corrupt":
     "The configuration file was unreadable. It was kept as {backup} and a new one was started.",
   "error.forward.permission_denied": "Permission denied for port {port}.",

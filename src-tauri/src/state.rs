@@ -27,7 +27,19 @@ impl AppState {
     ) -> Result<Self, CoreError> {
         let (store, conn_outcome) = ConnectionStore::load(config_dir.join("connections.toml"))?;
         let (settings, settings_outcome) = SettingsStore::load(config_dir.join("settings.toml"));
-        let (snippets, snippets_outcome) = SnippetStore::load(config_dir.join("snippets.toml"))?;
+        // Snippets are secondary: an unreadable file must not stop the app.
+        let snippets_path = config_dir.join("snippets.toml");
+        let (snippets, snippets_warning) = match SnippetStore::load(snippets_path.clone()) {
+            Ok((s, outcome)) => (s, warning(outcome)),
+            Err(e) => {
+                log::warn!("cannot read snippets: {e}");
+                let w = ApiError {
+                    code: "config.unreadable".into(),
+                    params: [("reason".into(), e.to_string())].into(),
+                };
+                (SnippetStore::unavailable(snippets_path), Some(w))
+            }
+        };
         let known_hosts = Arc::new(KnownHosts::new(
             config_dir.join("known_hosts"),
             openssh_known_hosts,
@@ -45,7 +57,7 @@ impl AppState {
         let warnings = [conn_outcome, settings_outcome]
             .into_iter()
             .filter_map(warning)
-            .chain(warning(snippets_outcome).map(|mut w| {
+            .chain(snippets_warning.map(|mut w| {
                 w.params.insert("file".into(), "snippets.toml".into());
                 w
             }))

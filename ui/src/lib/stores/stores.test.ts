@@ -51,6 +51,18 @@ test("snippets.toml warnings only affect isSnippetsReadOnly", () => {
   library.warnings = [];
 });
 
+test("an unreadable snippets.toml makes the snippets read-only", () => {
+  library.warnings = [
+    {
+      code: "config.unreadable",
+      params: { reason: "Is a directory", file: "snippets.toml" },
+    },
+  ];
+  expect(isReadOnly()).toBe(false);
+  expect(isSnippetsReadOnly()).toBe(true);
+  library.warnings = [];
+});
+
 test("deleteConnection reloads the snippets too", async () => {
   const calls: string[] = [];
   invoke.mockImplementation(async (cmd: string) => {

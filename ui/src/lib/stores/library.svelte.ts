@@ -19,7 +19,9 @@ export const isReadOnly = (): boolean =>
   );
 export const isSnippetsReadOnly = (): boolean =>
   library.warnings.some(
-    (w) => w.code === "config.read_only" && w.params.file === SNIPPETS_FILE,
+    (w) =>
+      (w.code === "config.read_only" || w.code === "config.unreadable") &&
+      w.params.file === SNIPPETS_FILE,
   );
 
 export async function refresh(): Promise<void> {
