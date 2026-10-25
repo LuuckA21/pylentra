@@ -6,6 +6,10 @@ All notable changes to Pylentra are documented here. The format follows
 
 ## [0.3.0] - 2026-10-25
 
+Going back to 0.2.2: the library opens normally, but any change saved there
+removes the notes of every connection. Snippets stay in `snippets.toml`, which
+0.2.2 ignores.
+
 ### Added
 
 - Snippets: saved commands, global or tied to one connection. Open the palette
@@ -29,9 +33,6 @@ All notable changes to Pylentra are documented here. The format follows
 
 - Searching the sidebar, and the Quick connect suggestions, also matches notes
   and the group name.
-- Going back to 0.2.2 opens the library normally, but saving a connection
-  there drops its notes. Snippets stay in `snippets.toml`, which 0.2.2
-  ignores.
 
 ## [0.2.2] - 2026-10-25
 

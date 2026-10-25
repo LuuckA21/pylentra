@@ -190,9 +190,10 @@ cover it.
    one connection and a few snippets, and back up `connections.toml` and
    `snippets.toml` first (same folders as for 0.1.x above).
 2. Open it in 0.2.2: the library opens normally and the connections are there.
-3. Save a connection in 0.2.2: that connection loses its note. `snippets.toml`
-   is untouched (0.2.2 ignores it).
-4. Go back to 0.3: the other notes and all the snippets are still there.
+3. Save any change in 0.2.2 (edit a connection, for example): every
+   connection loses its note, because 0.2.2 rewrites the whole
+   `connections.toml`. `snippets.toml` is untouched (0.2.2 ignores it).
+4. Go back to 0.3: all the notes are gone, and all the snippets are back.
 
 ## Language
 
