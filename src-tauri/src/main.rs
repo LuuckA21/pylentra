@@ -69,9 +69,12 @@ fn main() {
             commands::connection_delete,
             commands::group_save,
             commands::group_delete,
+            commands::ssh_config_scan,
+            commands::connections_import,
             commands::settings_get,
             commands::settings_save,
             commands::session_open,
+            commands::session_open_quick,
             commands::session_write,
             commands::session_resize,
             commands::session_answer,
@@ -79,6 +82,7 @@ fn main() {
             commands::forward_start,
             commands::forward_stop,
             commands::known_host_forget,
+            commands::known_hosts_list,
             commands::log_dir,
         ])
         .build(tauri::generate_context!())

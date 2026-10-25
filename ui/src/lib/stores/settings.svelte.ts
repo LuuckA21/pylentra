@@ -7,6 +7,18 @@ export const settings = $state<Settings>({
   font_family: "monospace",
   font_size: 14,
   language: null,
+  terminal_theme: "app",
+  cursor_style: "block",
+  cursor_blink: true,
+  scrollback: 10000,
+  copy_on_select: false,
+  default_user: null,
+  default_port: 22,
+  connect_timeout_secs: 15,
+  keepalive_secs: 30,
+  auto_reconnect: false,
+  confirm_close_active: true,
+  check_updates: true,
 });
 
 // "system" | "light" | "dark": the CSS decides what "system" looks like.
@@ -30,3 +42,8 @@ export async function saveSettings(patch: Partial<Settings>): Promise<void> {
   Object.assign(settings, next);
   apply();
 }
+
+export const quickDefaults = (): { user: string | null; port: number } => ({
+  user: settings.default_user,
+  port: settings.default_port,
+});

@@ -2,6 +2,7 @@ use crate::error::CoreError;
 use crate::model::{Connection, Group, MAX_JUMP_DEPTH, Settings, Warning};
 use crate::secrets::{SecretKind, SecretStore};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
@@ -10,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ts_rs::TS;
 use uuid::Uuid;
 
-pub const CONNECTIONS_VERSION: u32 = 1;
+pub const CONNECTIONS_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
 #[ts(export)]
@@ -155,8 +156,9 @@ impl ConnectionStore {
     }
 
     /// Saves `candidate` and only then makes it the live library.
-    fn commit(&mut self, candidate: Library) -> Result<(), CoreError> {
+    fn commit(&mut self, mut candidate: Library) -> Result<(), CoreError> {
         self.writable()?;
+        candidate.version = CONNECTIONS_VERSION;
         let text = toml::to_string_pretty(&candidate).map_err(|e| CoreError::InvalidInput {
             field: "library".into(),
             reason: e.to_string(),
@@ -215,6 +217,51 @@ impl ConnectionStore {
             chain_in(&candidate.connections, a)?;
         }
         Ok((candidate, warnings))
+    }
+
+    /// Adds `conns` with a single write; any invalid one cancels them all.
+    /// Names are not deduplicated: the caller leaves out the ones it has.
+    pub fn import(
+        &mut self,
+        mut conns: Vec<Connection>,
+        group_id: Option<Uuid>,
+    ) -> Result<usize, CoreError> {
+        self.writable()?;
+        if conns.is_empty() {
+            return Ok(0);
+        }
+        let mut candidate = self.library.clone();
+        let mut seen: HashSet<Uuid> = candidate.connections.iter().map(|x| x.id).collect();
+        for c in &mut conns {
+            c.group_id = group_id;
+            c.validate()?;
+            if !seen.insert(c.id) {
+                return Err(CoreError::InvalidInput {
+                    field: "id".into(),
+                    reason: "already exists".into(),
+                });
+            }
+        }
+        let n = conns.len();
+        let ids: Vec<Uuid> = conns.iter().map(|c| c.id).collect();
+        candidate.connections.extend(conns);
+        for id in ids {
+            if let Some(j) = candidate
+                .connections
+                .iter()
+                .find(|x| x.id == id)
+                .and_then(|x| x.jump_via)
+                && !candidate.connections.iter().any(|x| x.id == j)
+            {
+                return Err(CoreError::InvalidInput {
+                    field: "jump_via".into(),
+                    reason: "unknown jump host".into(),
+                });
+            }
+            chain_in(&candidate.connections, id)?;
+        }
+        self.commit(candidate)?;
+        Ok(n)
     }
 
     pub fn dependents(&self, id: Uuid) -> Vec<Uuid> {
@@ -354,6 +401,7 @@ impl SettingsStore {
     }
 
     pub fn save(&mut self, s: Settings) -> Result<(), CoreError> {
+        s.validate()?;
         let text = toml::to_string_pretty(&s).map_err(|e| CoreError::InvalidInput {
             field: "settings".into(),
             reason: e.to_string(),
@@ -367,7 +415,7 @@ impl SettingsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AuthMethod, Theme};
+    use crate::model::{AuthMethod, ConnIcon, TagColor, Theme};
     use crate::secrets::{MemorySecretStore, SecretKind};
     use tempfile::TempDir;
 
@@ -382,6 +430,8 @@ mod tests {
             auth: AuthMethod::Agent,
             jump_via: None,
             forwards: vec![],
+            color: None,
+            icon: None,
         }
     }
 
@@ -409,7 +459,7 @@ mod tests {
     #[test]
     fn missing_file_creates_empty() {
         let (_d, s) = store();
-        assert_eq!(s.library().version, 1);
+        assert_eq!(s.library().version, 2);
         assert!(s.library().groups.is_empty() && s.library().connections.is_empty());
     }
 
@@ -419,6 +469,7 @@ mod tests {
         let g = Group {
             id: Uuid::new_v4(),
             name: "prod".into(),
+            color: None,
         };
         s.upsert_group(g.clone()).unwrap();
         let mut a = conn("a");
@@ -509,7 +560,7 @@ mod tests {
         let path = dir.path().join("connections.toml");
         let id = Uuid::new_v4();
         let text = format!(
-            "version = 2\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n"
+            "version = 3\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n"
         );
         fs::write(&path, &text).unwrap();
         (path, text)
@@ -522,7 +573,7 @@ mod tests {
         let (mut s, outcome) = ConnectionStore::load(path.clone()).unwrap();
         assert!(matches!(
             outcome,
-            LoadOutcome::ReadOnlyNewerVersion { found: 2 }
+            LoadOutcome::ReadOnlyNewerVersion { found: 3 }
         ));
         assert_eq!(s.library().connections.len(), 1);
         let id = s.library().connections[0].id;
@@ -537,7 +588,8 @@ mod tests {
         assert!(matches!(
             s.upsert_group(Group {
                 id: Uuid::new_v4(),
-                name: "g".into()
+                name: "g".into(),
+                color: None
             }),
             Err(CoreError::ReadOnly)
         ));
@@ -546,6 +598,79 @@ mod tests {
             Err(CoreError::ReadOnly)
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn colors_and_icons_round_trip() {
+        let (d, mut s) = store();
+        let g = Group {
+            id: Uuid::new_v4(),
+            name: "prod".into(),
+            color: Some(TagColor::Teal),
+        };
+        s.upsert_group(g).unwrap();
+        let mut a = conn("a");
+        a.color = Some(TagColor::Red);
+        a.icon = Some(ConnIcon::Database);
+        s.upsert_connection(a).unwrap();
+        let (again, outcome) = ConnectionStore::load(d.path().join("connections.toml")).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(again.library(), s.library());
+        assert_eq!(again.library().groups[0].color, Some(TagColor::Teal));
+        assert_eq!(again.library().connections[0].color, Some(TagColor::Red));
+        assert_eq!(
+            again.library().connections[0].icon,
+            Some(ConnIcon::Database)
+        );
+    }
+
+    #[test]
+    fn unknown_color_and_icon_read_as_none() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let (id, gid) = (Uuid::new_v4(), Uuid::new_v4());
+        fs::write(
+            &path,
+            format!(
+                "version = 2\n\n[[groups]]\nid = \"{gid}\"\nname = \"g\"\ncolor = \"pink\"\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\ncolor = \"pink\"\nicon = \"rocket\"\nauth = {{ type = \"Agent\" }}\n"
+            ),
+        )
+        .unwrap();
+        let (s, outcome) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.library().groups[0].color, None);
+        let c = s.get(id).unwrap();
+        assert_eq!((c.color, c.icon), (None, None));
+    }
+
+    #[test]
+    fn empty_appearance_fields_not_written() {
+        let (d, mut s) = store();
+        s.upsert_connection(conn("a")).unwrap();
+        let text = fs::read_to_string(d.path().join("connections.toml")).unwrap();
+        assert!(!text.contains("color") && !text.contains("icon"), "{text}");
+    }
+
+    #[test]
+    fn v1_file_loads_and_is_rewritten_as_v2() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let id = Uuid::new_v4();
+        fs::write(
+            &path,
+            format!(
+                "version = 1\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n"
+            ),
+        )
+        .unwrap();
+        let (mut s, outcome) = ConnectionStore::load(path.clone()).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        s.upsert_connection(conn("x")).unwrap();
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .starts_with("version = 2")
+        );
     }
 
     #[test]
@@ -571,6 +696,7 @@ mod tests {
         let g = Group {
             id: Uuid::new_v4(),
             name: "g".into(),
+            color: None,
         };
         s.upsert_group(g.clone()).unwrap();
         let mut a = conn("a");
@@ -744,6 +870,25 @@ mod tests {
     }
 
     #[test]
+    fn save_rejects_invalid_settings() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("settings.toml");
+        let (mut s, _) = SettingsStore::load(path.clone());
+        s.save(Settings::default()).unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        let bad = Settings {
+            scrollback: 10,
+            ..Settings::default()
+        };
+        assert!(matches!(
+            s.save(bad),
+            Err(CoreError::InvalidInput { field, .. }) if field == "scrollback"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(s.get(), &Settings::default());
+    }
+
+    #[test]
     fn settings_save_then_reload() {
         let d = TempDir::new().unwrap();
         let path = d.path().join("settings.toml");
@@ -758,5 +903,100 @@ mod tests {
         let (again, outcome) = SettingsStore::load(path);
         assert!(matches!(outcome, LoadOutcome::Ok));
         assert_eq!(again.get(), &new);
+    }
+    #[test]
+    fn import_writes_once_with_jumps_between_new_connections() {
+        let (d, mut s) = store();
+        let bastion = conn("bastion");
+        let web = via("web", &bastion);
+        assert_eq!(s.import(vec![web, bastion], None).unwrap(), 2);
+        let (again, _) = ConnectionStore::load(d.path().join("connections.toml")).unwrap();
+        assert_eq!(again.library(), s.library());
+        assert_eq!(again.library().connections.len(), 2);
+    }
+
+    #[test]
+    fn import_with_one_invalid_connection_changes_nothing() {
+        let (d, mut s) = store();
+        s.upsert_connection(conn("old")).unwrap();
+        let path = d.path().join("connections.toml");
+        let before = fs::read_to_string(&path).unwrap();
+        let mut bad = conn("bad");
+        bad.host = String::new();
+        let err = s.import(vec![conn("ok"), bad], None).unwrap_err();
+        assert!(matches!(err, CoreError::InvalidInput { field, .. } if field == "host"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(s.library().connections.len(), 1);
+    }
+
+    #[test]
+    fn import_rejects_unknown_jump_and_taken_ids() {
+        let (_d, mut s) = store();
+        let saved = conn("saved");
+        s.upsert_connection(saved.clone()).unwrap();
+        let orphan = Connection {
+            jump_via: Some(Uuid::new_v4()),
+            ..conn("orphan")
+        };
+        assert!(matches!(
+            s.import(vec![orphan], None),
+            Err(CoreError::InvalidInput { field, .. }) if field == "jump_via"
+        ));
+        assert!(matches!(
+            s.import(vec![saved], None),
+            Err(CoreError::InvalidInput { field, .. }) if field == "id"
+        ));
+        assert_eq!(s.library().connections.len(), 1);
+    }
+
+    #[test]
+    fn import_sets_the_group() {
+        let (_d, mut s) = store();
+        let g = Uuid::new_v4();
+        s.import(vec![conn("a"), conn("b")], Some(g)).unwrap();
+        assert!(
+            s.library()
+                .connections
+                .iter()
+                .all(|c| c.group_id == Some(g))
+        );
+    }
+
+    #[test]
+    fn import_empty_writes_nothing() {
+        let (d, mut s) = store();
+        assert_eq!(s.import(vec![], None).unwrap(), 0);
+        assert!(!d.path().join("connections.toml").exists());
+    }
+
+    #[test]
+    fn import_into_read_only_library_fails() {
+        let d = TempDir::new().unwrap();
+        let (path, _) = newer_file(&d);
+        let (mut s, _) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(
+            s.import(vec![conn("a")], None),
+            Err(CoreError::ReadOnly)
+        ));
+    }
+    #[test]
+    fn import_rejects_duplicate_ids_in_one_batch() {
+        let (d, mut s) = store();
+        s.upsert_connection(conn("old")).unwrap();
+        let path = d.path().join("connections.toml");
+        let before = fs::read_to_string(&path).unwrap();
+        let a = conn("a");
+        let err = s.import(vec![a.clone(), a], None).unwrap_err();
+        assert!(matches!(err, CoreError::InvalidInput { field, reason }
+            if field == "id" && reason == "already exists"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn import_empty_into_read_only_library_fails() {
+        let d = TempDir::new().unwrap();
+        let (path, _) = newer_file(&d);
+        let (mut s, _) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(s.import(vec![], None), Err(CoreError::ReadOnly)));
     }
 }

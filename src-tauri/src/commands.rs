@@ -1,13 +1,17 @@
 //! Thin Tauri commands. Each delegates to a `do_<name>` that takes the state
 //! directly, so the logic is testable without a Tauri runtime.
 
+use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 
 use pylentra_core::error::{ApiError, CoreError};
+use pylentra_core::known_hosts::KnownHostEntry;
 use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
 use pylentra_core::secrets::SecretKind;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
 use pylentra_core::ssh::{SessionId, SessionSink};
+use pylentra_core::ssh_config::{ScanResult, parse};
 use pylentra_core::store::Library;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
@@ -66,7 +70,7 @@ pub fn do_connection_save(
         AuthMethod::Key {
             save_passphrase, ..
         } => (false, *save_passphrase),
-        AuthMethod::Agent => (false, false),
+        AuthMethod::Agent | AuthMethod::Auto => (false, false),
     };
     let (keep_password, keep_passphrase) = keeps(&connection.auth);
     let old = store.get(connection.id).ok().map(|c| {
@@ -161,7 +165,92 @@ pub fn settings_save(state: State<'_, AppState>, settings: Settings) -> Result<(
 }
 
 pub fn do_settings_save(state: &AppState, settings: Settings) -> Result<(), ApiError> {
-    Ok(state.settings().save(settings)?)
+    let (connect_timeout, keepalive) = settings.session_timeouts();
+    state.settings().save(settings)?;
+    state.sessions.set_timeouts(connect_timeout, keepalive);
+    Ok(())
+}
+
+// Async so the file read runs off the main thread.
+#[tauri::command(async)]
+pub fn ssh_config_scan(state: State<'_, AppState>) -> Result<ScanResult, ApiError> {
+    match std::env::home_dir() {
+        Some(home) => do_ssh_config_scan(&state, &home.join(".ssh").join("config")),
+        None => Ok(missing_scan(String::new())),
+    }
+}
+
+fn missing_scan(path: String) -> ScanResult {
+    ScanResult {
+        path,
+        missing: true,
+        ..parse("", &[])
+    }
+}
+
+const MAX_SSH_CONFIG_BYTES: usize = 1024 * 1024;
+
+/// Reads `path` (never writes it) and marks the candidates already saved.
+pub fn do_ssh_config_scan(state: &AppState, path: &Path) -> Result<ScanResult, ApiError> {
+    let shown = path.display().to_string();
+    // Checked before opening: a directory errors and a FIFO would block the read.
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => {
+            return Err(CoreError::InvalidInput {
+                field: "ssh_config".into(),
+                reason: "not a regular file".into(),
+            }
+            .into());
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(missing_scan(shown));
+        }
+        Err(e) => return Err(CoreError::from(e).into()),
+    }
+    let mut bytes = Vec::new();
+    // One byte past the limit is enough to reject, without reading the rest.
+    let read = std::fs::File::open(path).and_then(|f| {
+        f.take(MAX_SSH_CONFIG_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+    });
+    match read {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(missing_scan(shown));
+        }
+        Err(e) => return Err(CoreError::from(e).into()),
+    }
+    if bytes.len() > MAX_SSH_CONFIG_BYTES {
+        return Err(CoreError::InvalidInput {
+            field: "ssh_config".into(),
+            reason: "file too large".into(),
+        }
+        .into());
+    }
+    let mut result = parse(
+        &String::from_utf8_lossy(&bytes),
+        &state.store().library().connections,
+    );
+    result.path = shown;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn connections_import(
+    state: State<'_, AppState>,
+    connections: Vec<Connection>,
+    group_id: Option<Uuid>,
+) -> Result<usize, ApiError> {
+    do_connections_import(&state, connections, group_id)
+}
+
+pub fn do_connections_import(
+    state: &AppState,
+    connections: Vec<Connection>,
+    group_id: Option<Uuid>,
+) -> Result<usize, ApiError> {
+    Ok(state.store().import(connections, group_id)?)
 }
 
 // Async so the session task is spawned on Tauri's tokio runtime.
@@ -193,6 +282,55 @@ pub fn do_session_open(
 ) -> Result<SessionId, ApiError> {
     let chain = state.store().jump_chain(connection_id)?;
     Ok(state.sessions.open(chain, cols, rows, sink))
+}
+
+// Async so the session task is spawned on Tauri's tokio runtime.
+#[tauri::command]
+pub async fn session_open_quick(
+    state: State<'_, AppState>,
+    connection: Connection,
+    cols: u16,
+    rows: u16,
+    data: Channel<InvokeResponseBody>,
+    events: Channel<SessionEvent>,
+) -> Result<SessionId, ApiError> {
+    do_session_open_quick(
+        &state,
+        connection,
+        cols,
+        rows,
+        Arc::new(ChannelSink { data, events }),
+    )
+}
+
+/// Opens a session for a connection the UI built, without saving it. It is a
+/// single hop, so a jump host or forwards (which need the store) are refused.
+/// Must run inside a tokio runtime.
+pub fn do_session_open_quick(
+    state: &AppState,
+    connection: Connection,
+    cols: u16,
+    rows: u16,
+    sink: Arc<dyn SessionSink>,
+) -> Result<SessionId, ApiError> {
+    let invalid = |field: &str, reason: &str| CoreError::InvalidInput {
+        field: field.into(),
+        reason: reason.into(),
+    };
+    if connection.jump_via.is_some() {
+        return Err(invalid("jump_via", "not allowed in a quick connection").into());
+    }
+    if !connection.forwards.is_empty() {
+        return Err(invalid("forwards", "not allowed in a quick connection").into());
+    }
+    if !matches!(connection.auth, AuthMethod::Auto) {
+        return Err(invalid("auth", "must be automatic in a quick connection").into());
+    }
+    if state.store().get(connection.id).is_ok() {
+        return Err(invalid("id", "already in the library").into());
+    }
+    connection.validate()?;
+    Ok(state.sessions.open(vec![connection], cols, rows, sink))
 }
 
 #[tauri::command]
@@ -308,6 +446,11 @@ pub fn do_known_host_forget(state: &AppState, host: &str, port: u16) -> Result<u
 }
 
 #[tauri::command]
+pub fn known_hosts_list(state: State<'_, AppState>) -> Result<Vec<KnownHostEntry>, ApiError> {
+    Ok(state.known_hosts.list()?)
+}
+
+#[tauri::command]
 pub fn log_dir(app: AppHandle) -> Result<String, ApiError> {
     let dir = app
         .path()
@@ -329,6 +472,29 @@ mod tests {
         (dir, state)
     }
 
+    #[test]
+    fn settings_save_updates_session_timeouts() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        assert_eq!(state.sessions.options().connect_timeout.as_secs(), 15);
+        let new = Settings {
+            connect_timeout_secs: 40,
+            keepalive_secs: 0,
+            ..Settings::default()
+        };
+        do_settings_save(&state, new).unwrap();
+        let o = state.sessions.options();
+        assert_eq!(
+            (o.connect_timeout.as_secs(), o.keepalive_interval),
+            (40, None)
+        );
+        let bad = Settings {
+            connect_timeout_secs: 1,
+            ..Settings::default()
+        };
+        assert!(do_settings_save(&state, bad).is_err());
+        assert_eq!(state.sessions.options().connect_timeout.as_secs(), 40);
+    }
+
     fn conn(name: &str) -> Connection {
         Connection {
             id: Uuid::new_v4(),
@@ -340,6 +506,8 @@ mod tests {
             auth: AuthMethod::Password { save: true },
             jump_via: None,
             forwards: vec![],
+            color: None,
+            icon: None,
         }
     }
 
@@ -502,5 +670,160 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.code, "config.invalid");
         assert_eq!(err.params["field"], "rule.bind_host");
+    }
+
+    struct NullSink;
+    impl SessionSink for NullSink {
+        fn data(&self, _: Vec<u8>) {}
+        fn event(&self, _: SessionEvent) {}
+    }
+
+    fn quick_open(state: &AppState, c: Connection) -> Result<SessionId, ApiError> {
+        // Nothing listens on port 1, so the background connect fails fast.
+        tauri::async_runtime::block_on(async {
+            do_session_open_quick(state, c, 80, 24, Arc::new(NullSink))
+        })
+    }
+
+    fn quick_conn() -> Connection {
+        Connection {
+            host: "127.0.0.1".into(),
+            port: 1,
+            auth: AuthMethod::Auto,
+            ..conn("quick")
+        }
+    }
+
+    #[test]
+    fn quick_session_is_not_saved() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        quick_open(&state, quick_conn()).unwrap();
+        assert!(do_library_get(&state).connections.is_empty());
+    }
+
+    #[test]
+    fn quick_session_rejects_jump_and_forwards() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let jump = Connection {
+            jump_via: Some(Uuid::new_v4()),
+            ..quick_conn()
+        };
+        let forwards = Connection {
+            forwards: vec![ForwardRule::Local {
+                bind_host: "127.0.0.1".into(),
+                bind_port: 8080,
+                dest_host: "db".into(),
+                dest_port: 5432,
+                auto_start: false,
+            }],
+            ..quick_conn()
+        };
+        for (c, field) in [(jump, "jump_via"), (forwards, "forwards")] {
+            let err = quick_open(&state, c).unwrap_err();
+            assert_eq!(err.code, "config.invalid");
+            assert_eq!(err.params["field"], field);
+        }
+    }
+
+    #[test]
+    fn quick_session_validates_fields() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = quick_open(
+            &state,
+            Connection {
+                host: " ".into(),
+                ..quick_conn()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "host");
+    }
+
+    #[test]
+    fn quick_session_rejects_auth_other_than_auto() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        for auth in [AuthMethod::Agent, AuthMethod::Password { save: false }] {
+            let err = quick_open(
+                &state,
+                Connection {
+                    auth,
+                    ..quick_conn()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(err.code, "config.invalid");
+            assert_eq!(err.params["field"], "auth");
+        }
+    }
+
+    #[test]
+    fn quick_session_rejects_an_id_in_the_library() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let saved = quick_conn();
+        do_connection_save(&state, saved.clone(), None, None).unwrap();
+        let err = quick_open(&state, saved).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "id");
+    }
+
+    fn scan(state: &AppState, bytes: &[u8]) -> Result<ScanResult, ApiError> {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config");
+        std::fs::write(&path, bytes).unwrap();
+        do_ssh_config_scan(state, &path)
+    }
+
+    #[test]
+    fn scan_missing_file() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let path = d.path().join("nope");
+        let r = do_ssh_config_scan(&state, &path).unwrap();
+        assert!(r.missing && r.candidates.is_empty());
+        assert_eq!(r.path, path.display().to_string());
+    }
+
+    #[test]
+    fn scan_rejects_a_directory() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = do_ssh_config_scan(&state, d.path()).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "ssh_config");
+        assert_eq!(err.params["reason"], "not a regular file");
+    }
+
+    #[test]
+    fn scan_rejects_files_over_1_mib() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = scan(&state, &vec![b'#'; 1024 * 1024 + 1]).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert!(scan(&state, &vec![b'#'; 1024 * 1024]).is_ok());
+    }
+
+    #[test]
+    fn scan_reads_non_utf8_bytes() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let r = scan(&state, b"Host a\n HostName h\xff\n").unwrap();
+        assert_eq!(r.candidates.len(), 1);
+        assert!(!r.missing && !r.path.is_empty());
+    }
+
+    #[test]
+    fn scan_marks_existing_names() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        do_connection_save(&state, conn("A"), None, None).unwrap();
+        let r = scan(&state, b"Host a b\n HostName h\n").unwrap();
+        let exists: Vec<bool> = r.candidates.iter().map(|c| c.exists).collect();
+        assert_eq!(exists, [true, false]);
+    }
+
+    #[test]
+    fn connections_import_adds_all_and_reports_count() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        assert_eq!(
+            do_connections_import(&state, vec![conn("a"), conn("b")], None).unwrap(),
+            2
+        );
+        assert_eq!(do_library_get(&state).connections.len(), 2);
     }
 }

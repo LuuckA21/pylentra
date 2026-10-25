@@ -26,6 +26,8 @@ const local: ForwardRule = {
   auto_start: false,
 };
 
+const onclose = () => {};
+
 const tab = (
   forwards: Record<number, { rule: ForwardRule; state: ForwardState }>,
 ) =>
@@ -48,6 +50,8 @@ beforeEach(() => {
 
 test("saved and active rules are listed once", () => {
   render(ForwardPanel, {
+    open: true,
+    onclose,
     tab: tab({
       3: { rule: local, state: { type: "Active", bound_port: 5432 } },
     }),
@@ -57,7 +61,7 @@ test("saved and active rules are listed once", () => {
 });
 
 test("saved rule starts with forwardStart", async () => {
-  render(ForwardPanel, { tab: tab({}) });
+  render(ForwardPanel, { tab: tab({}), open: true, onclose });
   expect(screen.getByText("Stopped")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Start" }));
   expect(api.forwardStart).toHaveBeenCalledWith("s1", local);
@@ -65,6 +69,8 @@ test("saved rule starts with forwardStart", async () => {
 
 test("failed forward shows localized error and Start button", () => {
   render(ForwardPanel, {
+    open: true,
+    onclose,
     tab: tab({
       2: {
         rule: local,
@@ -80,9 +86,12 @@ test("failed forward shows localized error and Start button", () => {
 });
 
 test("panel opens when a forward fails", async () => {
-  const { container, rerender } = render(ForwardPanel, { tab: tab({}) });
-  const details = container.querySelector("details")!;
-  expect(details.open).toBe(false);
+  const { rerender } = render(ForwardPanel, {
+    tab: tab({}),
+    open: false,
+    onclose,
+  });
+  expect(screen.queryByRole("dialog", { name: "Port forwarding" })).toBeNull();
   await rerender({
     tab: tab({
       2: {
@@ -94,11 +103,21 @@ test("panel opens when a forward fails", async () => {
       },
     }),
   });
-  expect(details.open).toBe(true);
+  expect(screen.getByRole("dialog", { name: "Port forwarding" })).toBeTruthy();
+});
+
+test("close button and Escape call onclose", async () => {
+  const close = vi.fn();
+  render(ForwardPanel, { tab: tab({}), open: true, onclose: close });
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(close).toHaveBeenCalledTimes(2);
 });
 
 test("stop calls forwardStop with id", async () => {
   render(ForwardPanel, {
+    open: true,
+    onclose,
     tab: tab({
       7: { rule: local, state: { type: "Active", bound_port: 5432 } },
     }),
@@ -108,7 +127,7 @@ test("stop calls forwardStop with id", async () => {
 });
 
 test("runtime tunnel is not persisted", async () => {
-  render(ForwardPanel, { tab: tab({}) });
+  render(ForwardPanel, { tab: tab({}), open: true, onclose });
   await fireEvent.click(screen.getByRole("button", { name: "Add tunnel" }));
   await fireEvent.input(screen.getByLabelText("Bind port"), {
     target: { value: "8080" },
@@ -131,7 +150,7 @@ test("runtime tunnel is not persisted", async () => {
 });
 
 test("remote tunnel has no bind address and invalid ports are rejected", async () => {
-  render(ForwardPanel, { tab: tab({}) });
+  render(ForwardPanel, { tab: tab({}), open: true, onclose });
   await fireEvent.click(screen.getByRole("button", { name: "Add tunnel" }));
   await fireEvent.change(screen.getByLabelText("Type"), {
     target: { value: "Remote" },

@@ -65,6 +65,8 @@ fn conn(env: &Env, forwards: Vec<ForwardRule>) -> Connection {
         auth: AuthMethod::Password { save: false },
         jump_via: None,
         forwards,
+        color: None,
+        icon: None,
     }
 }
 

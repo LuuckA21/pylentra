@@ -74,27 +74,31 @@ impl Env {
             .unwrap();
     }
 
-    /// Writes `key` as an OpenSSH file, encrypted when `passphrase` is given.
     fn key_file(&self, key: &PrivateKey, passphrase: Option<&str>) -> PathBuf {
-        let path = self.dir.path().join(format!("id_{}", Uuid::new_v4()));
-        let key = match passphrase {
-            // One bcrypt round keeps the tests fast; the format is the same.
-            Some(p) => key
-                .encrypt_with(
-                    Cipher::Aes256Ctr,
-                    Kdf::Bcrypt {
-                        salt: vec![7; 16],
-                        rounds: 1,
-                    },
-                    42,
-                    p,
-                )
-                .unwrap(),
-            None => key.clone(),
-        };
-        key.write_openssh_file(&path, LineEnding::LF).unwrap();
-        path
+        write_key(self.dir.path(), key, passphrase)
     }
+}
+
+/// Writes `key` as an OpenSSH file in `dir`, encrypted when `passphrase` is given.
+fn write_key(dir: &Path, key: &PrivateKey, passphrase: Option<&str>) -> PathBuf {
+    let path = dir.join(format!("id_{}", Uuid::new_v4()));
+    let key = match passphrase {
+        // One bcrypt round keeps the tests fast; the format is the same.
+        Some(p) => key
+            .encrypt_with(
+                Cipher::Aes256Ctr,
+                Kdf::Bcrypt {
+                    salt: vec![7; 16],
+                    rounds: 1,
+                },
+                42,
+                p,
+            )
+            .unwrap(),
+        None => key.clone(),
+    };
+    key.write_openssh_file(&path, LineEnding::LF).unwrap();
+    path
 }
 
 fn env() -> Env {
@@ -112,6 +116,8 @@ fn conn(server: &TestServer, auth: AuthMethod) -> Connection {
         auth,
         jump_via: None,
         forwards: vec![],
+        color: None,
+        icon: None,
     }
 }
 
@@ -171,6 +177,19 @@ fn prompts(sink: &CollectSink) -> Vec<PromptKind> {
         .iter()
         .filter_map(|e| match e {
             SessionEvent::SecretPrompt { kind, .. } => Some(kind.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `can_save` of every `SecretPrompt` so far.
+fn can_saves(sink: &CollectSink) -> Vec<bool> {
+    sink.events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            SessionEvent::SecretPrompt { can_save, .. } => Some(*can_save),
             _ => None,
         })
         .collect()
@@ -470,6 +489,26 @@ async fn missing_key_file_is_unreadable() {
 /// Serves an SSH agent holding `keys` on a fresh Unix socket; the dir owns the socket.
 #[cfg(unix)]
 async fn spawn_agent(keys: &[PrivateKey]) -> (TempDir, PathBuf) {
+    serve_agent(keys, ()).await
+}
+
+/// An agent that lists its keys but refuses every signature.
+#[cfg(unix)]
+#[derive(Clone)]
+struct RefusesToSign;
+
+#[cfg(unix)]
+impl russh::keys::agent::server::Agent for RefusesToSign {
+    async fn confirm_request(&self, msg: russh::keys::agent::server::MessageType) -> bool {
+        !matches!(msg, russh::keys::agent::server::MessageType::Sign)
+    }
+}
+
+#[cfg(unix)]
+async fn serve_agent<A>(keys: &[PrivateKey], agent: A) -> (TempDir, PathBuf)
+where
+    A: russh::keys::agent::server::Agent + Sync,
+{
     use russh::keys::agent::client::AgentClient;
     use tokio::net::UnixListener;
 
@@ -480,7 +519,7 @@ async fn spawn_agent(keys: &[PrivateKey]) -> (TempDir, PathBuf) {
         let next = l.accept().await.map(|(s, _)| s);
         Some((next, l))
     });
-    tokio::spawn(russh::keys::agent::server::serve(Box::pin(incoming), ()));
+    tokio::spawn(russh::keys::agent::server::serve(Box::pin(incoming), agent));
     let mut client = AgentClient::connect_uds(&sock).await.unwrap();
     for key in keys {
         client.add_identity(key, &[]).await.unwrap();
@@ -517,6 +556,19 @@ async fn agent_without_authorized_key_fails() {
     let error = closed_error(&sink).await;
     assert_eq!(error.code, "auth.all_failed");
     assert_eq!(error.params["tried"], "publickey");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_signing_failure_ends_auto_unavailable() {
+    let key = ed25519();
+    let server = key_and_pw_server(&key, None).await;
+    let (_agent, sock) = serve_agent(std::slice::from_ref(&key), RefusesToSign).await;
+    let env = auto_env(Some(sock), vec![]);
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    // auth.*, so auto-reconnect does not retry it; and no password prompt follows.
+    assert_eq!(closed_error(&sink).await.code, "auth.agent_unavailable");
+    assert!(prompts(&sink).is_empty());
 }
 
 #[tokio::test]
@@ -564,4 +616,144 @@ async fn keychain_failure_still_prompts() {
     assert_eq!(nth_prompt(&sink, 1).await, PromptKind::Password);
     env.mgr.answer(id, secret(PW, true)).unwrap();
     ready(&sink).await;
+}
+
+#[tokio::test]
+async fn saved_methods_still_offer_save() {
+    let server = pw_server().await;
+    let env = env();
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Password { save: true }));
+    nth_prompt(&sink, 1).await;
+    assert_eq!(can_saves(&sink), [true]);
+}
+
+/// `Auto` with `default_keys`, and the agent at `agent` (else none): never the developer's.
+fn auto_env(agent: Option<PathBuf>, default_keys: Vec<PathBuf>) -> Env {
+    let no_agent = || std::env::temp_dir().join(format!("no-agent-{}", Uuid::new_v4()));
+    Env::new(SessionOptions {
+        agent_path: Some(agent.unwrap_or_else(no_agent)),
+        default_keys,
+        ..Default::default()
+    })
+}
+
+async fn key_and_pw_server(key: &PrivateKey, max_auth_attempts: Option<usize>) -> TestServer {
+    TestServer::start(TestServerConfig {
+        password: Some(PW.into()),
+        authorized_key: Some(key.public_key().clone()),
+        max_auth_attempts,
+        ..Default::default()
+    })
+    .await
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn auto_uses_the_agent_first() {
+    let key = ed25519();
+    let server = key_server(&key).await;
+    let (_agent, sock) = spawn_agent(std::slice::from_ref(&key)).await;
+    let keys = TempDir::new().unwrap();
+    // Tried before the agent, it would ask for its passphrase.
+    let encrypted = write_key(keys.path(), &key, Some(PASSPHRASE));
+    let env = auto_env(Some(sock), vec![encrypted]);
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    ready(&sink).await;
+    assert!(prompts(&sink).is_empty());
+    assert_eq!(accepted(&server), ["publickey"]);
+}
+
+#[tokio::test]
+async fn auto_falls_back_to_a_default_key() {
+    let key = ed25519();
+    let server = key_server(&key).await;
+    let keys = TempDir::new().unwrap();
+    let env = auto_env(None, vec![write_key(keys.path(), &key, None)]);
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    ready(&sink).await;
+    assert!(prompts(&sink).is_empty());
+    assert_eq!(accepted(&server), ["publickey"]);
+}
+
+#[tokio::test]
+async fn auto_asks_the_passphrase_without_save() {
+    let key = ed25519();
+    let server = key_server(&key).await;
+    let keys = TempDir::new().unwrap();
+    let env = auto_env(None, vec![write_key(keys.path(), &key, Some(PASSPHRASE))]);
+    let c = conn(&server, AuthMethod::Auto);
+    let (id, sink) = env.open(&server, c.clone());
+    assert_eq!(
+        nth_prompt(&sink, 1).await,
+        PromptKind::Passphrase { attempt: 1 }
+    );
+    assert_eq!(can_saves(&sink), [false]);
+    env.mgr.answer(id, secret(PASSPHRASE, true)).unwrap();
+    ready(&sink).await;
+    assert_eq!(env.stored(&c, SecretKind::Passphrase), None);
+}
+
+#[tokio::test]
+async fn auto_ends_with_the_password_prompt() {
+    let server = key_and_pw_server(&ed25519(), None).await;
+    let keys = TempDir::new().unwrap();
+    let env = auto_env(None, vec![write_key(keys.path(), &ed25519(), None)]);
+    let c = conn(&server, AuthMethod::Auto);
+    let (id, sink) = env.open(&server, c.clone());
+    assert_eq!(nth_prompt(&sink, 1).await, PromptKind::Password);
+    assert_eq!(can_saves(&sink), [false]);
+    env.mgr.answer(id, secret(PW, true)).unwrap();
+    ready(&sink).await;
+    assert_eq!(accepted(&server), ["password"]);
+    assert_eq!(env.stored(&c, SecretKind::Password), None);
+    assert_eq!(env.stored(&c, SecretKind::Passphrase), None);
+}
+
+#[tokio::test]
+async fn auto_skips_missing_default_keys() {
+    let server = pw_server().await;
+    let keys = TempDir::new().unwrap();
+    let env = auto_env(None, vec![keys.path().join("id_ed25519")]);
+    let (id, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    assert_eq!(nth_prompt(&sink, 1).await, PromptKind::Password);
+    env.mgr.answer(id, secret(PW, false)).unwrap();
+    ready(&sink).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn auto_skips_default_keys_the_agent_offered() {
+    let (k1, k2) = (ed25519(), ed25519());
+    // The two agent keys use up the failures: a third would end the connection.
+    let server = key_and_pw_server(&ed25519(), Some(2)).await;
+    let (_agent, sock) = spawn_agent(&[k1.clone(), k2]).await;
+    let keys = TempDir::new().unwrap();
+    let path = write_key(keys.path(), &k1, None);
+    let mut pub_path = path.clone().into_os_string();
+    pub_path.push(".pub");
+    k1.public_key()
+        .write_openssh_file(Path::new(&pub_path))
+        .unwrap();
+    let env = auto_env(Some(sock), vec![path]);
+    let (id, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    assert_eq!(nth_prompt(&sink, 1).await, PromptKind::Password);
+    env.mgr.answer(id, secret(PW, false)).unwrap();
+    ready(&sink).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn auto_reports_every_method_tried() {
+    let server = key_and_pw_server(&ed25519(), None).await;
+    let (_agent, sock) = spawn_agent(&[ed25519()]).await;
+    let keys = TempDir::new().unwrap();
+    let env = auto_env(Some(sock), vec![write_key(keys.path(), &ed25519(), None)]);
+    let (id, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    for n in 1..=3 {
+        nth_prompt(&sink, n).await;
+        env.mgr.answer(id, secret("wrong", false)).unwrap();
+    }
+    let error = closed_error(&sink).await;
+    assert_eq!(error.code, "auth.all_failed");
+    assert_eq!(error.params["tried"], "publickey,password");
 }

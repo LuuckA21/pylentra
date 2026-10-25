@@ -1,4 +1,5 @@
 import type { CloseReason } from "./bindings/CloseReason";
+import type { Connection } from "./bindings/Connection";
 import type { ForwardRule } from "./bindings/ForwardRule";
 import type { ForwardState } from "./bindings/ForwardState";
 import type { SessionEvent } from "./bindings/SessionEvent";
@@ -6,17 +7,26 @@ import type { SessionEvent } from "./bindings/SessionEvent";
 export type TabState = {
   tabId: string;
   connectionId: string;
+  /** Set while the tab runs an unsaved connection (`connectionId` is its throwaway id). */
+  quick?: Connection;
   sessionId?: string;
   phase: "connecting" | "authenticating" | "ready" | "closed";
   prompt?: Extract<SessionEvent, { type: "HostKeyPrompt" | "SecretPrompt" }>;
   mismatch?: Extract<SessionEvent, { type: "HostKeyMismatch" }>;
   closed?: CloseReason;
+  /** Epoch ms of the first Ready; kept after the session closes. */
+  readyAt?: number;
   forwards: Record<number, { rule: ForwardRule; state: ForwardState }>;
 };
 
-export const initialTab = (tabId: string, connectionId: string): TabState => ({
+export const initialTab = (
+  tabId: string,
+  connectionId: string,
+  quick?: Connection,
+): TabState => ({
   tabId,
   connectionId,
+  ...(quick && { quick }),
   phase: "connecting",
   forwards: {},
 });
@@ -32,7 +42,12 @@ const PHASE = {
 export function reduce(s: TabState, e: SessionEvent): TabState {
   switch (e.type) {
     case "Status":
-      return { ...s, phase: PHASE[e.stage], prompt: undefined };
+      return {
+        ...s,
+        phase: PHASE[e.stage],
+        prompt: undefined,
+        readyAt: e.stage === "Ready" ? (s.readyAt ?? Date.now()) : s.readyAt,
+      };
     case "HostKeyPrompt":
     case "SecretPrompt":
       return { ...s, prompt: e };

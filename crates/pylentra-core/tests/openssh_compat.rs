@@ -53,6 +53,8 @@ fn hop(env: &Env, host: &str, port: u16, auth: AuthMethod) -> Connection {
         auth,
         jump_via: None,
         forwards: vec![],
+        color: None,
+        icon: None,
     };
     env.secrets
         .set(c.id, SecretKind::Password, &"tester".to_string().into())

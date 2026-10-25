@@ -29,6 +29,16 @@ pub enum HostKeyStatus {
     },
 }
 
+/// One host name of one line of Pylentra's known_hosts; `host: None` is a hashed entry.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export)]
+pub struct KnownHostEntry {
+    pub host: Option<String>,
+    pub port: u16,
+    pub algo: String,
+    pub fingerprint: String,
+}
+
 pub struct KnownHosts {
     pylentra: PathBuf,
     openssh: Option<PathBuf>,
@@ -90,6 +100,44 @@ impl KnownHosts {
     /// Records the key in the Pylentra file only.
     pub fn learn(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), CoreError> {
         learn_known_hosts_path(host, port, key, &self.pylentra).map_err(ssh_err)
+    }
+
+    /// Entries of the Pylentra file in file order, one per host name; a missing
+    /// file is empty and unreadable lines are skipped.
+    pub fn list(&self) -> Result<Vec<KnownHostEntry>, CoreError> {
+        let bytes = match std::fs::read(&self.pylentra) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut entries = Vec::new();
+        for (i, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
+            if line.trim().is_empty() || line.starts_with(['#', '@']) {
+                continue;
+            }
+            let mut fields = line.split_ascii_whitespace();
+            let (Some(hosts), Some(algo), Some(b64)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                log::warn!("skipping malformed line {} of known_hosts", i + 1);
+                continue;
+            };
+            let Ok(key) = parse_public_key_base64(b64) else {
+                log::warn!("skipping unusable key on line {} of known_hosts", i + 1);
+                continue;
+            };
+            let fingerprint = fingerprint(&key);
+            for name in hosts.split(',') {
+                let (host, port) = split_host_port(name);
+                entries.push(KnownHostEntry {
+                    host,
+                    port,
+                    algo: algo.to_owned(),
+                    fingerprint: fingerprint.clone(),
+                });
+            }
+        }
+        Ok(entries)
     }
 
     /// Removes every line of the Pylentra file matching `host:port`; returns how many.
@@ -173,6 +221,19 @@ fn scan_openssh(path: &Path, host: &str, port: u16, key: &PublicKey) -> Result<S
         }
     }
     Ok(if found { Scan::Found } else { Scan::Absent })
+}
+
+/// `[h]:p` -> (h, p), `h` -> (h, 22); a hashed name hides both (port 22 is a placeholder).
+fn split_host_port(name: &str) -> (Option<String>, u16) {
+    if name.starts_with("|1|") {
+        return (None, 22);
+    }
+    if let Some((h, p)) = name.strip_prefix('[').and_then(|r| r.split_once("]:"))
+        && let Ok(port) = p.parse()
+    {
+        return (Some(h.to_owned()), port);
+    }
+    (Some(name.to_owned()), 22)
 }
 
 /// Plain pattern or hashed `|1|salt|hash` (HMAC-SHA1 of the host string).
@@ -432,6 +493,90 @@ mod tests {
                 source: KeySource::OpenSsh,
                 expected_fp: fingerprint(&k1)
             }
+        );
+    }
+
+    #[test]
+    fn list_shows_learned_hosts() {
+        let (_d, kh) = setup();
+        let (k1, k2) = (key(), key());
+        kh.learn("a", 22, &k1).unwrap();
+        kh.learn("b", 2222, &k2).unwrap();
+        assert_eq!(
+            kh.list().unwrap(),
+            vec![
+                KnownHostEntry {
+                    host: Some("a".into()),
+                    port: 22,
+                    algo: "ssh-ed25519".into(),
+                    fingerprint: fingerprint(&k1)
+                },
+                KnownHostEntry {
+                    host: Some("b".into()),
+                    port: 2222,
+                    algo: "ssh-ed25519".into(),
+                    fingerprint: fingerprint(&k2)
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn list_marks_hashed_lines() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("known_hosts"),
+            format!(
+                "|1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak= {}\n",
+                k.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        let list = kh.list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].host, None);
+        assert_eq!(list[0].fingerprint, fingerprint(&k));
+    }
+
+    #[test]
+    fn list_missing_file_is_empty() {
+        let (_d, kh) = setup();
+        assert!(kh.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_after_forget() {
+        let (_d, kh) = setup();
+        kh.learn("a", 22, &key()).unwrap();
+        kh.learn("b", 2222, &key()).unwrap();
+        kh.forget("a", 22).unwrap();
+        let list = kh.list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!((list[0].host.as_deref(), list[0].port), (Some("b"), 2222));
+    }
+
+    #[test]
+    fn list_skips_noise_splits_names_and_parses_ipv6() {
+        let (d, kh) = setup();
+        let k = key();
+        let pk = k.to_openssh().unwrap();
+        fs::write(
+            d.path().join("known_hosts"),
+            format!(
+                "# c\n\n@revoked r {pk}\n@cert-authority *.x {pk}\nbroken ssh-ed25519 !!!\nshort\nx,[y]:2200 {pk}\n[::1]:2222 {pk}\n"
+            ),
+        )
+        .unwrap();
+        let got: Vec<_> = kh
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.host.unwrap(), e.port))
+            .collect();
+        assert_eq!(
+            got,
+            [("x".into(), 22), ("y".into(), 2200), ("::1".into(), 2222)]
         );
     }
 }

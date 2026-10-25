@@ -2,8 +2,11 @@
   import { api } from "../lib/api";
   import type { Connection } from "../lib/bindings/Connection";
   import type { Group } from "../lib/bindings/Group";
+  import type { TagColor } from "../lib/bindings/TagColor";
+  import { colorOf } from "../lib/appearance";
   import { t } from "../lib/i18n";
   import { modal } from "../lib/modal";
+  import { getPref, setPref } from "../lib/prefs";
   import { matches } from "../lib/search";
   import { fromOtherModal, shortcutFor } from "../lib/shortcuts";
   import {
@@ -14,18 +17,25 @@
     saveGroup,
   } from "../lib/stores/library.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
+  import Avatar from "./ui/Avatar.svelte";
+  import ColorPicker from "./ui/ColorPicker.svelte";
+  import Icon from "./ui/Icon.svelte";
+  import Pill from "./ui/Pill.svelte";
+  import TextField from "./ui/TextField.svelte";
 
   let {
     openConnectionIds,
     onopen,
     onedit,
     onsettings,
+    onimport,
   }: {
     openConnectionIds: Set<string>;
     onopen: (connectionId: string) => void;
     /** Called with the connection to edit, or undefined for a new one. */
     onedit: (connection?: Connection) => void;
     onsettings: () => void;
+    onimport: () => void;
   } = $props();
 
   type Menu = {
@@ -37,24 +47,62 @@
   };
 
   let query = $state("");
-  let collapsed = $state<Record<string, boolean>>({});
+  // "all", "none" (no group) or a group id.
+  let filter = $state("all");
+  const GROUPS_KEY = "pylentra.sidebar.groups";
+  const COLLAPSED_KEY = "pylentra.sidebar.collapsed";
+  // Ids of the groups folded shut ("" is the no-group section).
+  const savedShut = getPref<unknown>(GROUPS_KEY, []);
+  let shutGroups = $state<string[]>(
+    Array.isArray(savedShut)
+      ? savedShut.filter((x): x is string => typeof x === "string")
+      : [],
+  );
+  // Wide windows fold to an avatar rail by preference; narrow ones always do and
+  // open the full panel over the sessions on demand.
+  let railPref = $state(getPref<unknown>(COLLAPSED_KEY, false) === true);
+  let expanded = $state(false);
+  const narrowQuery =
+    typeof matchMedia === "function" ? matchMedia("(max-width: 900px)") : null;
+  let narrow = $state(narrowQuery?.matches ?? false);
+  $effect(() => {
+    if (!narrowQuery) return;
+    const update = () => (narrow = narrowQuery.matches);
+    narrowQuery.addEventListener("change", update);
+    return () => narrowQuery.removeEventListener("change", update);
+  });
+  const rail = $derived(narrow || railPref);
+  const full = $derived(narrow ? expanded : !railPref);
   let current = $state<string | null>(null);
   let menu = $state<Menu | null>(null);
   let confirm = $state<{ conn: Connection; names: string[] } | null>(null);
   let confirmGroup = $state<Group | null>(null);
   // `id` is set when renaming; a new group gets its id on save.
-  let groupDialog = $state<{ id?: string; name: string; error: string } | null>(
-    null,
-  );
+  let groupDialog = $state<{
+    id?: string;
+    name: string;
+    color: TagColor | null;
+    error: string;
+  } | null>(null);
   let listEl: HTMLElement | undefined = $state();
   let menuEl: HTMLElement | undefined = $state();
-  let searchEl: HTMLInputElement | undefined = $state();
+  let searchEl = $state<HTMLInputElement>();
   let lastRow: HTMLElement | null = null;
 
   const byName = (a: { name: string }, b: { name: string }) =>
     a.name.localeCompare(b.name);
 
   // "No group" comes last and also takes connections whose group no longer exists.
+  const view = $derived(
+    filter === "all" ||
+      filter === "none" ||
+      library.groups.some((g) => g.id === filter)
+      ? filter
+      : "all",
+  );
+  // A filter shows one flat list, without group headings.
+  const flat = $derived(view !== "all");
+
   const sections = $derived.by(() => {
     const known = new Set(library.groups.map((g) => g.id));
     const visible = library.connections.filter((c) => matches(c, query));
@@ -72,8 +120,34 @@
         conns: of((c) => !c.group_id || !known.has(c.group_id)),
       },
     ];
-    return all.filter((s) => s.conns.length || (!query.trim() && s.id !== ""));
+    const shown = flat
+      ? all.filter((s) => s.id === (view === "none" ? "" : view))
+      : all;
+    return shown.filter(
+      (s) => s.conns.length || (!query.trim() && s.id !== ""),
+    );
   });
+
+  function toggleGroup(id: string) {
+    shutGroups = shutGroups.includes(id)
+      ? shutGroups.filter((x) => x !== id)
+      : [...shutGroups, id];
+    setPref(GROUPS_KEY, shutGroups);
+  }
+
+  function toggleSidebar() {
+    if (narrow) {
+      expanded = !expanded;
+    } else {
+      railPref = !railPref;
+      setPref(COLLAPSED_KEY, railPref);
+    }
+  }
+
+  function open(id: string) {
+    expanded = false;
+    onopen(id);
+  }
 
   const rows = () => [
     ...(listEl?.querySelectorAll<HTMLElement>("[data-row]") ?? []),
@@ -89,7 +163,7 @@
     const row = e.currentTarget as HTMLElement;
     if (e.key === "Enter") {
       e.preventDefault();
-      onopen(conn.id);
+      open(conn.id);
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       moveFocus(row, e.key === "ArrowDown" ? 1 : -1);
@@ -197,8 +271,13 @@
 
   function startGroupDialog(group?: Group) {
     closeMenu(false);
-    if (!group) lastRow = null; // closing returns focus to the New group button
-    groupDialog = { id: group?.id, name: group?.name ?? "", error: "" };
+    groupDialog = {
+      id: group?.id,
+      name: group?.name ?? "",
+      // The menu only carries id and name; the color comes from the library.
+      color: library.groups.find((g) => g.id === group?.id)?.color ?? null,
+      error: "",
+    };
   }
 
   function closeGroupDialog() {
@@ -215,7 +294,12 @@
       return;
     }
     try {
-      await saveGroup({ id: groupDialog.id ?? crypto.randomUUID(), name });
+      const { color } = groupDialog;
+      await saveGroup({
+        id: groupDialog.id ?? crypto.randomUUID(),
+        name,
+        ...(color && { color }),
+      });
       closeGroupDialog();
     } catch (err) {
       toastError(err);
@@ -242,6 +326,15 @@
 
 <svelte:window
   onkeydown={(e) => {
+    // Escape closes the narrow overlay unless something above it took the key.
+    if (
+      e.key === "Escape" &&
+      narrow &&
+      expanded &&
+      !e.defaultPrevented &&
+      !fromOtherModal(e)
+    )
+      expanded = false;
     // Ctrl+Shift+F, also from the terminal (its key handler lets it bubble here),
     // but never from inside a dialog.
     if (shortcutFor(e) === "search" && !fromOtherModal(e)) {
@@ -255,100 +348,225 @@
   }}
 />
 
-<nav class="sidebar" aria-label={t("sidebar.title")}>
-  <div class="toolbar">
-    <input
-      type="search"
-      bind:this={searchEl}
-      aria-label={t("sidebar.search")}
-      placeholder={t("sidebar.search")}
-      bind:value={query}
-      onkeydown={(e) => {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          moveFocus(null, 1);
-        }
-      }}
-    />
-    <div class="buttons">
-      <button type="button" class="primary" onclick={() => onedit()}>
-        {t("sidebar.new")}
+<div class="shell" class:rail>
+  {#if rail}
+    <nav class="sidebar slim" aria-label={t("sidebar.title")} inert={full}>
+      <button
+        type="button"
+        class="icon-btn"
+        aria-label={t("sidebar.expand")}
+        title={t("sidebar.expand")}
+        onclick={toggleSidebar}
+      >
+        <Icon name="chevron" />
       </button>
-      <button type="button" onclick={() => startGroupDialog()}>
-        {t("sidebar.newGroup")}
+      <div class="slim-list">
+        {#each [...library.connections].sort(byName) as conn (conn.id)}
+          <button
+            type="button"
+            class="slim-item"
+            aria-label={conn.name +
+              (openConnectionIds.has(conn.id) ? ` (${t("sidebar.open")})` : "")}
+            title={conn.name}
+            onclick={() => open(conn.id)}
+          >
+            <Avatar
+              name={conn.name}
+              icon={conn.icon}
+              color={colorOf(conn, library.groups)}
+            />
+            {#if openConnectionIds.has(conn.id)}
+              <span class="live-dot" aria-hidden="true"></span>
+            {/if}
+          </button>
+        {/each}
+      </div>
+      <button
+        type="button"
+        class="icon-btn"
+        aria-label={t("settings.open")}
+        title={t("settings.open")}
+        onclick={onsettings}
+      >
+        <Icon name="settings" />
       </button>
-    </div>
-  </div>
+    </nav>
+  {/if}
 
-  <div class="list" bind:this={listEl}>
-    {#each sections as section (section.id)}
-      {@const shut = collapsed[section.id] && !query.trim()}
-      <section>
+  {#if full}
+    <nav class="sidebar" class:overlay={rail} aria-label={t("sidebar.title")}>
+      <header>
+        <h1>{t("app.title")}</h1>
         <button
           type="button"
-          class="group"
-          id="grp-{section.id || 'none'}"
-          aria-expanded={!shut}
-          onclick={() => (collapsed[section.id] = !collapsed[section.id])}
-          oncontextmenu={(e) => {
-            if (!section.id) return;
-            e.preventDefault();
-            openMenu(
-              { group: { id: section.id, name: section.title } },
-              e.currentTarget,
-              e.clientX,
-              e.clientY,
-            );
-          }}
-          onkeydown={(e) =>
-            section.id &&
-            onheaderkeydown(e, { id: section.id, name: section.title })}
+          class="icon-btn collapse"
+          aria-label={t("sidebar.collapse")}
+          title={t("sidebar.collapse")}
+          onclick={toggleSidebar}
         >
-          <span aria-hidden="true">{shut ? "▸" : "▾"}</span>
-          {section.title}
-          <span class="count">{section.conns.length}</span>
+          <Icon name="chevron" />
         </button>
-        {#if !shut}
-          <ul role="listbox" aria-labelledby="grp-{section.id || 'none'}">
-            {#each section.conns as conn (conn.id)}
-              <li
-                role="option"
-                aria-selected={current === conn.id}
-                tabindex="0"
-                data-row
-                class:selected={current === conn.id}
-                onfocus={() => (current = conn.id)}
-                ondblclick={() => onopen(conn.id)}
-                onkeydown={(e) => onrowkeydown(e, conn)}
-                oncontextmenu={(e) => {
-                  e.preventDefault();
-                  openMenu({ conn }, e.currentTarget, e.clientX, e.clientY);
-                }}
-              >
-                <span class="name">{conn.name}</span>
-                <span class="host">{conn.username}@{conn.host}</span>
-                {#if openConnectionIds.has(conn.id)}
-                  <span class="dot" role="img" aria-label={t("sidebar.open")}
-                    >●</span
-                  >
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </section>
-    {/each}
-    {#if !library.connections.length}
-      <p class="empty">{t("sidebar.empty")}</p>
-    {:else if !sections.length}
-      <p class="empty">{t("sidebar.noMatches")}</p>
-    {/if}
-  </div>
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label={t("settings.open")}
+          title={t("settings.open")}
+          onclick={onsettings}
+        >
+          <Icon name="settings" />
+        </button>
+      </header>
 
-  <div class="foot">
-    <button type="button" onclick={onsettings}>{t("settings.open")}</button>
-  </div>
-</nav>
+      <div>
+        <TextField
+          icon="search"
+          label={t("sidebar.search")}
+          placeholder={t("sidebar.search")}
+          bind:value={query}
+          bind:inputEl={searchEl}
+          onkeydown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              moveFocus(null, 1);
+            }
+          }}
+        />
+      </div>
+
+      <div class="filters" role="group" aria-label={t("sidebar.filters")}>
+        <Pill pressed={view === "all"} onclick={() => (filter = "all")}>
+          {t("sidebar.all")}
+        </Pill>
+        {#each [...library.groups].sort(byName) as g (g.id)}
+          <Pill
+            color={g.color ?? null}
+            pressed={view === g.id}
+            onclick={() => (filter = g.id)}
+          >
+            {g.name}
+          </Pill>
+        {/each}
+        <Pill pressed={view === "none"} onclick={() => (filter = "none")}>
+          {t("sidebar.noGroup")}
+        </Pill>
+      </div>
+
+      <div class="list" bind:this={listEl}>
+        {#each sections as section (section.id)}
+          {@const shut =
+            !flat && shutGroups.includes(section.id) && !query.trim()}
+          <section>
+            {#if !flat}
+              <button
+                type="button"
+                class="group"
+                id="grp-{section.id || 'none'}"
+                aria-expanded={!shut}
+                onclick={() => toggleGroup(section.id)}
+                oncontextmenu={(e) => {
+                  if (!section.id) return;
+                  e.preventDefault();
+                  openMenu(
+                    { group: { id: section.id, name: section.title } },
+                    e.currentTarget,
+                    e.clientX,
+                    e.clientY,
+                  );
+                }}
+                onkeydown={(e) =>
+                  section.id &&
+                  onheaderkeydown(e, { id: section.id, name: section.title })}
+              >
+                <span aria-hidden="true">{shut ? "▸" : "▾"}</span>
+                {section.title}
+                <span class="count">{section.conns.length}</span>
+              </button>
+            {/if}
+            {#if !shut}
+              <ul
+                role="listbox"
+                aria-label={flat ? section.title : undefined}
+                aria-labelledby={flat
+                  ? undefined
+                  : `grp-${section.id || "none"}`}
+              >
+                {#each section.conns as conn (conn.id)}
+                  <li
+                    role="option"
+                    aria-selected={current === conn.id}
+                    tabindex="0"
+                    data-row
+                    class:selected={current === conn.id}
+                    onfocus={() => (current = conn.id)}
+                    ondblclick={() => open(conn.id)}
+                    onkeydown={(e) => onrowkeydown(e, conn)}
+                    oncontextmenu={(e) => {
+                      e.preventDefault();
+                      openMenu({ conn }, e.currentTarget, e.clientX, e.clientY);
+                    }}
+                  >
+                    <span aria-hidden="true"
+                      ><Avatar
+                        name={conn.name}
+                        icon={conn.icon}
+                        color={colorOf(conn, library.groups)}
+                      /></span
+                    >
+                    <span class="name">{conn.name}</span>
+                    <span class="host">{conn.username}@{conn.host}</span>
+                    {#if openConnectionIds.has(conn.id)}
+                      <span class="live"
+                        ><span aria-hidden="true">●</span>
+                        {t("sidebar.open")}</span
+                      >
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
+        {/each}
+        {#if !library.connections.length}
+          <div class="empty">
+            <p>{t("sidebar.empty")}</p>
+            <div class="empty-actions">
+              <button type="button" class="primary" onclick={() => onedit()}>
+                {t("sidebar.new")}
+              </button>
+              <button type="button" onclick={onimport}>
+                {t("sidebar.import")}
+              </button>
+            </div>
+          </div>
+        {:else if !sections.length || (flat && !sections[0]?.conns.length)}
+          <p class="empty">{t("sidebar.noMatches")}</p>
+        {/if}
+      </div>
+
+      <div class="foot">
+        <button type="button" class="primary new" onclick={() => onedit()}>
+          <Icon name="plus" />
+          {t("sidebar.new")}
+        </button>
+        <button
+          type="button"
+          class="more"
+          aria-label={t("sidebar.more")}
+          title={t("sidebar.more")}
+          aria-haspopup="menu"
+          aria-expanded={!!menu && !menu.conn && !menu.group}
+          onclick={(e) => {
+            const el = e.currentTarget;
+            const r = el.getBoundingClientRect();
+            openMenu({}, el, r.left, Math.max(8, r.top - 88));
+          }}
+        >
+          <Icon name="more" />
+        </button>
+      </div>
+    </nav>
+  {/if}
+</div>
 
 {#if menu}
   {@const m = menu}
@@ -413,6 +631,20 @@
           {t("sidebar.noGroup")}
         </button>
       {/if}
+    {:else}
+      <button type="button" role="menuitem" onclick={() => startGroupDialog()}>
+        {t("sidebar.newGroup")}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => {
+          closeMenu(false);
+          onimport();
+        }}
+      >
+        {t("sidebar.import")}
+      </button>
     {/if}
   </div>
 {/if}
@@ -472,6 +704,14 @@
             <p class="error" id="grp-name-err">{groupDialog.error}</p>
           {/if}
         </div>
+        <div class="field">
+          <span>{t("group.color")}</span>
+          <ColorPicker
+            bind:value={groupDialog.color}
+            noneLabel={t("common.none")}
+            label={t("group.color")}
+          />
+        </div>
         <div class="actions">
           <button type="button" onclick={closeGroupDialog}
             >{t("common.cancel")}</button
@@ -513,25 +753,124 @@
 {/if}
 
 <style>
+  .shell {
+    position: relative;
+    flex: none;
+    width: 272px;
+    height: 100%;
+  }
+  .shell.rail {
+    width: 64px;
+  }
   .sidebar {
     display: flex;
     flex-direction: column;
+    gap: var(--space-3);
     height: 100%;
-    background: var(--bg-alt);
-    border-right: 1px solid var(--border);
+    padding: var(--space-4);
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
   }
-  .toolbar {
+  .sidebar.overlay {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 272px;
+    z-index: 30;
+    box-shadow: var(--shadow);
+  }
+  .slim {
+    align-items: center;
+    padding: var(--space-3) var(--space-2);
+  }
+  .slim-list {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 8px;
+    gap: var(--space-2);
+    overflow-y: auto;
+    min-height: 0;
   }
-  .buttons {
+  .slim-item {
+    position: relative;
     display: flex;
-    gap: 6px;
+    padding: var(--space-1);
+    background: none;
+    border-color: transparent;
   }
-  .buttons button {
+  .live-dot {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ok);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  h1 {
     flex: 1;
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: var(--radius-md);
+    border: 0;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+  }
+  .icon-btn:hover {
+    background: var(--surface-3);
+    color: var(--fg);
+  }
+  /* The chevron points right (expand); turn it to collapse. */
+  .collapse :global(svg) {
+    transform: rotate(180deg);
+  }
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    max-height: 96px;
+    overflow-y: auto;
+  }
+  .filters :global(button.pill[aria-pressed="true"]) {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .foot {
+    display: flex;
+    gap: var(--space-2);
+  }
+  .foot button {
+    height: 44px;
+    border-radius: var(--radius-md);
+  }
+  .new {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    font-weight: 600;
+  }
+  .more {
+    width: 44px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .field {
     display: flex;
@@ -544,14 +883,10 @@
     color: var(--danger);
     font-size: 12px;
   }
-  .foot {
-    padding: 8px;
-    border-top: 1px solid var(--border);
-  }
   .list {
     flex: 1;
     overflow-y: auto;
-    padding: 0 4px 8px;
+    min-height: 0;
   }
   .group {
     display: flex;
@@ -560,8 +895,10 @@
     border: 0;
     background: none;
     text-align: left;
+    font-size: 12px;
     font-weight: 600;
-    padding: 4px;
+    color: var(--fg-muted);
+    padding: var(--space-1);
   }
   .count {
     margin-left: auto;
@@ -575,35 +912,53 @@
   }
   li {
     display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 8px;
-    padding: 4px 8px 4px 20px;
-    border-radius: 4px;
+    grid-template-columns: auto 1fr auto;
+    column-gap: var(--space-3);
+    align-items: center;
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
     cursor: default;
   }
-  li:hover {
-    background: var(--bg-hover);
+  li :global(.avatar) {
+    grid-row: 1 / span 2;
   }
+  li:hover {
+    background: var(--surface-2);
+  }
+  /* Same surface as hover, so the accent bar is what marks the selection. */
   li.selected {
-    background: var(--bg-selected);
+    background: var(--surface-2);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .name {
+    grid-column: 2;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .host {
-    grid-column: 1;
+    grid-column: 2;
     color: var(--fg-muted);
     font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .dot {
-    grid-column: 2;
+  .live {
+    grid-column: 3;
     grid-row: 1 / span 2;
-    align-self: center;
     color: var(--ok);
+    font-size: 12px;
   }
   .empty {
     color: var(--fg-muted);
-    padding: 8px;
+    padding: var(--space-2);
+  }
+  .empty-actions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
   .menu {
     position: fixed;
@@ -612,9 +967,9 @@
     flex-direction: column;
     min-width: 180px;
     padding: 4px;
-    background: var(--bg);
+    background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     box-shadow: var(--shadow);
   }
   .menu button {
@@ -624,7 +979,7 @@
   }
   .menu button:hover,
   .menu button:focus-visible {
-    background: var(--bg-hover);
+    background: var(--surface-3);
   }
   .backdrop {
     position: fixed;
@@ -636,10 +991,10 @@
   }
   .dialog {
     max-width: min(440px, calc(100vw - 32px));
-    padding: 16px;
-    background: var(--bg);
+    padding: var(--space-6);
+    background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow);
   }
   h2 {
@@ -650,5 +1005,6 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
+    margin-top: 20px;
   }
 </style>

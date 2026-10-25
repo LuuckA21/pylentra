@@ -1,6 +1,9 @@
 import { api } from "../api";
 import type { PromptAnswer } from "../bindings/PromptAnswer";
 import type { SessionEvent } from "../bindings/SessionEvent";
+import type { Connection } from "../bindings/Connection";
+import type { QuickTarget } from "../quickTarget";
+import { recordRecent } from "../recent";
 import { initialTab, reduce, type TabState } from "../sessionReducer";
 import { isApiError, toastError } from "./toasts.svelte";
 
@@ -25,6 +28,35 @@ export function openTab(connectionId: string): string {
   return tabId;
 }
 
+export function openQuickTab({ user, host, port }: QuickTarget): string {
+  const quick: Connection = {
+    id: crypto.randomUUID(),
+    name: `${user}@${host}`,
+    host,
+    port,
+    username: user,
+    auth: { type: "Auto" },
+    group_id: null,
+    jump_via: null,
+    forwards: [],
+  };
+  const tabId = crypto.randomUUID();
+  sessions.tabs.push(initialTab(tabId, quick.id, quick));
+  sessions.active = tabId;
+  return tabId;
+}
+
+// The open session keeps running; only the tab's identity changes.
+export function linkQuickTab(tabId: string, saved: Connection): void {
+  const i = indexOf(tabId);
+  if (i < 0) return;
+  sessions.tabs[i] = {
+    ...sessions.tabs[i],
+    connectionId: saved.id,
+    quick: undefined,
+  };
+}
+
 // Starts (or restarts, in the same tab) the session. Events of a tab that was
 // closed meanwhile are dropped.
 export function connect(
@@ -43,16 +75,17 @@ export function connect(
   const event = (e: SessionEvent) => {
     if (indexOf(tabId) < 0) return;
     update((t) => reduce(t, e));
+    const tab = sessions.tabs[indexOf(tabId)];
+    if (e.type === "Status" && e.stage === "Ready" && !tab.quick)
+      recordRecent(tab.connectionId);
     onEvent(e);
   };
-  sessions.tabs[i] = initialTab(tabId, sessions.tabs[i].connectionId);
-  const id = api.sessionOpen(
-    sessions.tabs[i].connectionId,
-    cols,
-    rows,
-    (bytes) => indexOf(tabId) >= 0 && onData(bytes),
-    event,
-  );
+  const { connectionId, quick } = sessions.tabs[i];
+  sessions.tabs[i] = initialTab(tabId, connectionId, quick);
+  const onBytes = (bytes: Uint8Array) => indexOf(tabId) >= 0 && onData(bytes);
+  const id = quick
+    ? api.sessionOpenQuick(quick, cols, rows, onBytes, event)
+    : api.sessionOpen(connectionId, cols, rows, onBytes, event);
   sessionIds.set(tabId, id);
   id.then(
     (sessionId) => update((t) => ({ ...t, sessionId })),

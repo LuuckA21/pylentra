@@ -3,9 +3,11 @@ import type { ApiError } from "./bindings/ApiError";
 import type { Connection } from "./bindings/Connection";
 import type { ForwardRule } from "./bindings/ForwardRule";
 import type { Group } from "./bindings/Group";
+import type { KnownHostEntry } from "./bindings/KnownHostEntry";
 import type { Library } from "./bindings/Library";
 import type { PromptAnswer } from "./bindings/PromptAnswer";
 import type { SessionEvent } from "./bindings/SessionEvent";
+import type { ScanResult } from "./bindings/ScanResult";
 import type { Settings } from "./bindings/Settings";
 import type { Warning } from "./bindings/Warning";
 
@@ -26,6 +28,11 @@ export const connectionDelete = (id: string) =>
 export const groupSave = (group: Group) =>
   invoke<void>("group_save", { group });
 export const groupDelete = (id: string) => invoke<void>("group_delete", { id });
+export const sshConfigScan = () => invoke<ScanResult>("ssh_config_scan");
+export const connectionsImport = (
+  connections: Connection[],
+  groupId: string | null,
+) => invoke<number>("connections_import", { connections, groupId });
 export const settingsGet = () => invoke<Settings>("settings_get");
 export const settingsSave = (settings: Settings) =>
   invoke<void>("settings_save", { settings });
@@ -35,10 +42,9 @@ export const settingsSave = (settings: Settings) =>
 const toBytes = (m: ArrayBuffer | ArrayLike<number>): Uint8Array =>
   m instanceof ArrayBuffer ? new Uint8Array(m) : Uint8Array.from(m);
 
-export function sessionOpen(
-  connectionId: string,
-  cols: number,
-  rows: number,
+function openWithChannels(
+  command: string,
+  args: Record<string, unknown>,
   onData: (bytes: Uint8Array) => void,
   onEvent: (e: SessionEvent) => void,
 ): Promise<string> {
@@ -46,14 +52,37 @@ export function sessionOpen(
   data.onmessage = (m) => onData(toBytes(m));
   const events = new Channel<SessionEvent>();
   events.onmessage = onEvent;
-  return invoke<string>("session_open", {
-    connectionId,
-    cols,
-    rows,
-    data,
-    events,
-  });
+  return invoke<string>(command, { ...args, data, events });
 }
+
+export const sessionOpen = (
+  connectionId: string,
+  cols: number,
+  rows: number,
+  onData: (bytes: Uint8Array) => void,
+  onEvent: (e: SessionEvent) => void,
+) =>
+  openWithChannels(
+    "session_open",
+    { connectionId, cols, rows },
+    onData,
+    onEvent,
+  );
+
+// Opens a session for a connection that is not saved in the library.
+export const sessionOpenQuick = (
+  connection: Connection,
+  cols: number,
+  rows: number,
+  onData: (bytes: Uint8Array) => void,
+  onEvent: (e: SessionEvent) => void,
+) =>
+  openWithChannels(
+    "session_open_quick",
+    { connection, cols, rows },
+    onData,
+    onEvent,
+  );
 
 export function sessionWrite(
   id: string,
@@ -76,6 +105,8 @@ export const forwardStop = (sessionId: string, forwardId: number) =>
   invoke<void>("forward_stop", { sessionId, forwardId });
 export const knownHostForget = (host: string, port: number) =>
   invoke<number>("known_host_forget", { host, port });
+export const knownHostsList = () =>
+  invoke<KnownHostEntry[]>("known_hosts_list");
 export const logDir = () => invoke<string>("log_dir");
 
 export const api = {
@@ -86,9 +117,12 @@ export const api = {
   connectionDelete,
   groupSave,
   groupDelete,
+  sshConfigScan,
+  connectionsImport,
   settingsGet,
   settingsSave,
   sessionOpen,
+  sessionOpenQuick,
   sessionWrite,
   sessionResize,
   sessionAnswer,
@@ -96,5 +130,6 @@ export const api = {
   forwardStart,
   forwardStop,
   knownHostForget,
+  knownHostsList,
   logDir,
 };

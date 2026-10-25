@@ -18,7 +18,7 @@ use super::handler::ClientHandler;
 use super::{PromptBroker, SessionId, SessionOptions, SessionSink};
 use crate::error::CoreError;
 use crate::known_hosts::KnownHosts;
-use crate::model::Connection;
+use crate::model::{AuthMethod, Connection};
 use crate::secrets::SecretStore;
 
 pub(crate) struct ChainCtx<'a> {
@@ -51,7 +51,7 @@ pub(crate) async fn connect_chain(
         });
     };
     let config = Arc::new(client::Config {
-        keepalive_interval: Some(ctx.opts.keepalive_interval),
+        keepalive_interval: ctx.opts.keepalive_interval,
         keepalive_max: ctx.opts.keepalive_max,
         ..Default::default()
     });
@@ -89,6 +89,7 @@ async fn open_hop(
         opts: ctx.opts,
         host: &conn.host.to_lowercase(),
         port: conn.port,
+        can_save: !matches!(conn.auth, AuthMethod::Auto),
     };
     authenticate(&mut handle, conn, &auth).await?;
     Ok(handle)

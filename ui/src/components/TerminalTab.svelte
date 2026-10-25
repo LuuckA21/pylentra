@@ -1,67 +1,111 @@
 <script lang="ts">
   import { FitAddon } from "@xterm/addon-fit";
-  import { Terminal, type ITheme } from "@xterm/xterm";
+  import { Terminal } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
   import { onMount, untrack } from "svelte";
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import { t } from "../lib/i18n";
+  import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
   import type { TabState } from "../lib/sessionReducer";
+  import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
   import { fromOtherModal, shortcutFor, type Action } from "../lib/shortcuts";
   import {
     answer,
-    closeTab,
     connect,
     cycleTab,
     resize,
     write,
   } from "../lib/stores/sessions.svelte";
+  import { library } from "../lib/stores/library.svelte";
   import { settings } from "../lib/stores/settings.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
   import ForwardPanel from "./ForwardPanel.svelte";
   import ErrorOverlay from "./ErrorOverlay.svelte";
   import HostKeyDialog from "./HostKeyDialog.svelte";
+  import ReconnectOverlay from "./ReconnectOverlay.svelte";
   import SecretPrompt from "./SecretPrompt.svelte";
+  import StatusBar from "./StatusBar.svelte";
 
   let {
     tab,
     active,
     onedit,
+    onsave,
+    onclose,
   }: {
     tab: TabState;
     active: boolean;
     onedit: (connectionId: string) => void;
+    onsave: (tabId: string) => void;
+    // The parent decides whether closing needs confirmation.
+    onclose: (tabId: string) => void;
   } = $props();
 
   let el: HTMLDivElement;
   let root: HTMLDivElement;
+  let forwardsOpen = $state(false);
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
 
-  // Colors come from the app's CSS tokens, so the terminal follows data-theme.
-  function theme(): ITheme {
-    const css = getComputedStyle(document.documentElement);
-    const v = (name: string) => css.getPropertyValue(name).trim();
-    return {
-      background: v("--bg"),
-      foreground: v("--fg"),
-      cursor: v("--fg"),
-      selectionBackground: v("--bg-selected"),
-    };
-  }
+  const theme = () => terminalTheme(settings.terminal_theme, appTerminalTheme);
 
-  function start() {
+  // Automatic reconnection: retries launched in the current chain (0 = none),
+  // and whether the next one is being waited for (the overlay shows then).
+  let retries = $state(0);
+  let waiting = $state(false);
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function launch() {
     const tm = term;
     if (!tm) return;
+    // Per session: tab.readyAt is not read here because connect resets it.
+    let wasReady = false;
     connect(
       tab.tabId,
       tm.cols,
       tm.rows,
       (bytes) => tm.write(bytes),
       (e) => {
-        if (e.type === "Closed" && e.reason.type !== "Error")
-          tm.write(`\r\n${t("session.ended")}\r\n`);
+        if (e.type === "Status" && e.stage === "Ready") {
+          wasReady = true;
+          retries = 0;
+        } else if (e.type === "Closed") {
+          if (e.reason.type !== "Error")
+            tm.write(`\r\n${t("session.ended")}\r\n`);
+          // A retry that fails is still part of a chain that started from a ready session.
+          else if (
+            retries < RECONNECT_DELAYS.length &&
+            shouldReconnect(
+              e.reason,
+              wasReady || retries > 0,
+              settings.auto_reconnect,
+            )
+          ) {
+            waiting = true;
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(() => {
+              // The setting may have been turned off during the wait.
+              if (!settings.auto_reconnect) return cancelRetry();
+              waiting = false;
+              retries++;
+              launch();
+            }, RECONNECT_DELAYS[retries]);
+          }
+        }
       },
     );
+  }
+
+  function cancelRetry() {
+    clearTimeout(retryTimer);
+    waiting = false;
+    retries = 0;
+  }
+
+  // User-initiated (re)connection starts a new chain.
+  function start() {
+    cancelRetry();
+    launch();
   }
 
   const onanswer = (a: PromptAnswer) => answer(tab.tabId, a);
@@ -71,6 +115,9 @@
       fontFamily: settings.font_family,
       fontSize: settings.font_size,
       theme: theme(),
+      cursorStyle: settings.cursor_style,
+      cursorBlink: settings.cursor_blink,
+      scrollback: settings.scrollback,
     });
     const fa = new FitAddon();
     tm.loadAddon(fa);
@@ -94,6 +141,11 @@
       ),
     );
     tm.onResize(({ cols, rows }) => resize(tab, cols, rows));
+    tm.onSelectionChange(() => {
+      const text = settings.copy_on_select ? tm.getSelection() : "";
+      // A clipboard error here would only be noise.
+      if (text) navigator.clipboard?.writeText(text).catch(() => {});
+    });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
@@ -111,6 +163,7 @@
     start();
     return () => {
       clearTimeout(timer);
+      clearTimeout(retryTimer);
       ro.disconnect();
       mo.disconnect();
       dark.removeEventListener("change", retheme);
@@ -120,12 +173,18 @@
     };
   });
 
-  // Open terminals follow font changes from the settings dialog.
+  // Open terminals follow the terminal settings.
   $effect(() => {
-    const { font_family, font_size } = settings;
+    const o = {
+      fontFamily: settings.font_family,
+      fontSize: settings.font_size,
+      theme: theme(),
+      cursorStyle: settings.cursor_style,
+      cursorBlink: settings.cursor_blink,
+      scrollback: settings.scrollback,
+    };
     if (!term) return;
-    term.options.fontFamily = font_family;
-    term.options.fontSize = font_size;
+    Object.assign(term.options, o);
     fit?.fit();
   });
 
@@ -138,9 +197,13 @@
   function run(a: Action, e: KeyboardEvent) {
     // Copy and paste act on the terminal only when it has focus; elsewhere the
     // native behavior stays.
-    // Search focuses the sidebar's search box, which handles it.
+    // Search and quick connect focus their own fields, which handle them.
     const inTerminal = el.contains(e.target as Node);
-    if (a === "search" || ((a === "copy" || a === "paste") && !inTerminal))
+    if (
+      a === "search" ||
+      a === "quickConnect" ||
+      ((a === "copy" || a === "paste") && !inTerminal)
+    )
       return;
     e.preventDefault();
     if (a === "copy") {
@@ -151,7 +214,7 @@
         .readText()
         .then((text) => term?.paste(text))
         .catch(toastError);
-    } else if (a === "closeTab") closeTab(tab.tabId);
+    } else if (a === "closeTab") onclose(tab.tabId);
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
   }
@@ -166,8 +229,23 @@
 <svelte:window onkeydown={onwindowkey} />
 
 <div class="tab" class:active bind:this={root}>
-  <div class="terminal" bind:this={el}></div>
-  {#if tab.phase === "ready"}<ForwardPanel {tab} />{/if}
+  <div class="inset"><div class="terminal" bind:this={el}></div></div>
+  <div class="anchor">
+    {#if tab.phase === "ready"}
+      <ForwardPanel
+        {tab}
+        bind:open={forwardsOpen}
+        onclose={() => (forwardsOpen = false)}
+      />
+    {/if}
+    <StatusBar
+      {tab}
+      connection={library.connections.find((c) => c.id === tab.connectionId)}
+      groups={library.groups}
+      onforwards={() => (forwardsOpen = !forwardsOpen)}
+      onsave={tab.quick ? () => onsave(tab.tabId) : undefined}
+    />
+  </div>
 
   {#if tab.phase === "connecting" || tab.phase === "authenticating"}
     <p class="status" role="status">
@@ -191,7 +269,13 @@
     {/if}
   {/key}
 
-  {#if tab.closed?.type === "Error"}
+  {#if waiting}
+    <ReconnectOverlay
+      attempt={retries + 1}
+      max={RECONNECT_DELAYS.length}
+      oncancel={cancelRetry}
+    />
+  {:else if tab.closed?.type === "Error"}
     <ErrorOverlay
       error={tab.closed.error}
       mismatch={tab.mismatch}
@@ -207,23 +291,33 @@
     inset: 0;
     display: none;
     flex-direction: column;
+    overflow: hidden;
+    background: var(--surface-1);
+    border-radius: var(--radius-lg);
   }
   .tab.active {
     display: flex;
   }
-  .terminal {
+  /* The fit addon measures its parent, so the padding sits one level above. */
+  .inset {
     flex: 1;
     min-height: 0;
-    background: var(--bg);
+    padding: var(--space-4) var(--space-5);
+  }
+  .terminal {
+    height: 100%;
+  }
+  .anchor {
+    position: relative;
   }
   .status {
     position: absolute;
-    top: 8px;
-    right: 12px;
+    top: var(--space-3);
+    right: var(--space-4);
     margin: 0;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background: var(--bg-alt);
+    padding: 2px var(--space-3);
+    border-radius: 999px;
+    background: var(--surface-2);
     color: var(--fg-muted);
   }
 </style>

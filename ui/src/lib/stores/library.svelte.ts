@@ -10,6 +10,9 @@ export const library = $state<{
   warnings: ApiError[];
 }>({ groups: [], connections: [], warnings: [] });
 
+export const isReadOnly = (): boolean =>
+  library.warnings.some((w) => w.code === "config.read_only");
+
 export async function refresh(): Promise<void> {
   const [lib, warnings] = await Promise.all([
     api.libraryGet(),

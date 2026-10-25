@@ -1,7 +1,11 @@
 import type { ApiError } from "../bindings/ApiError";
 import { errorMessage } from "../i18n";
 
-export type Toast = { id: number; kind: "error" | "warning"; message: string };
+export type Toast = {
+  id: number;
+  kind: "error" | "warning" | "success";
+  message: string;
+};
 
 export const toasts = $state<Toast[]>([]);
 

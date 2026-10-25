@@ -1,20 +1,29 @@
 <script lang="ts">
   import type { AuthMethod } from "../lib/bindings/AuthMethod";
   import type { Connection } from "../lib/bindings/Connection";
+  import type { ConnIcon } from "../lib/bindings/ConnIcon";
+  import type { TagColor } from "../lib/bindings/TagColor";
   import type { ForwardRule } from "../lib/bindings/ForwardRule";
+  import { colorOf } from "../lib/appearance";
   import { errorMessage, t, type MessageKey } from "../lib/i18n";
   import { modal } from "../lib/modal";
   import { library, saveConnection } from "../lib/stores/library.svelte";
   import { isApiError, toast, toastError } from "../lib/stores/toasts.svelte";
   import { validate } from "../lib/validate";
+  import Avatar from "./ui/Avatar.svelte";
+  import ColorPicker from "./ui/ColorPicker.svelte";
+  import IconPicker from "./ui/IconPicker.svelte";
 
   let {
     connection,
+    isNew = false,
     onsaved,
     oncancel,
   }: {
     connection?: Connection;
-    onsaved: () => void;
+    /** `connection` only pre-fills the form (e.g. a quick tab); saving creates it. */
+    isNew?: boolean;
+    onsaved: (saved: Connection) => void;
     oncancel: () => void;
   } = $props();
 
@@ -35,6 +44,8 @@
 
   let name = $state(initial?.name ?? "");
   let groupId = $state(initial?.group_id ?? "");
+  let color = $state<TagColor | null>(initial?.color ?? null);
+  let icon = $state<ConnIcon | null>(initial?.icon ?? null);
   let host = $state(initial?.host ?? "");
   let port = $state<number | null>(initial?.port ?? 22);
   let username = $state(initial?.username ?? "");
@@ -57,6 +68,9 @@
 
   const groups = $derived(
     [...library.groups].sort((a, b) => a.name.localeCompare(b.name)),
+  );
+  const previewColor = $derived(
+    colorOf({ color: color ?? undefined, group_id: groupId || null }, groups),
   );
   const jumpHosts = $derived(
     library.connections
@@ -84,7 +98,8 @@
     ).find((el) => el.dataset.field === field);
 
   function build(): Connection {
-    let method: AuthMethod = { type: "Agent" };
+    let method: AuthMethod =
+      authType === "Auto" ? { type: "Auto" } : { type: "Agent" };
     if (authType === "Password")
       method = { type: "Password", save: savePassword };
     if (authType === "Key")
@@ -102,6 +117,8 @@
       username: username.trim(),
       auth: method,
       jump_via: jumpVia || null,
+      ...(color && { color }),
+      ...(icon && { icon }),
       forwards: forwards.map((r): ForwardRule => {
         const common = {
           bind_port: r.bind_port!,
@@ -135,14 +152,15 @@
       authType === "Key" && savePassphrase && passphrase ? passphrase : null;
     saving = true;
     try {
+      const saved = build();
       const warnings = await saveConnection(
-        build(),
+        saved,
         pw ?? undefined,
         pp ?? undefined,
       );
       for (const w of warnings)
         toast(t("warning.keyFileMissing", { path: w.path }), "warning");
-      onsaved();
+      onsaved(saved);
     } catch (err) {
       const field =
         isApiError(err) && err.code === "config.invalid"
@@ -210,7 +228,7 @@
     use:modal={oncancel}
   >
     <h2 id="form-title">
-      {connection ? t("form.titleEdit") : t("form.titleNew")}
+      {connection && !isNew ? t("form.titleEdit") : t("form.titleNew")}
     </h2>
     <form bind:this={formEl} onsubmit={submit} novalidate>
       <fieldset>
@@ -238,11 +256,35 @@
       </fieldset>
 
       <fieldset>
+        <legend>{t("form.appearance")}</legend>
+        <div class="preview">
+          <Avatar
+            name={name.trim()}
+            icon={icon ?? undefined}
+            color={previewColor}
+            size={44}
+          />
+        </div>
+        <div class="field">
+          <span>{t("form.icon")}</span>
+          <IconPicker bind:value={icon} label={t("form.icon")} />
+        </div>
+        <div class="field">
+          <span>{t("form.color")}</span>
+          <ColorPicker
+            bind:value={color}
+            noneLabel={t("form.color.fromGroup")}
+            label={t("form.color")}
+          />
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend>{t("form.auth")}</legend>
         <div class="field">
           <label for="f-auth">{t("form.authMethod")}</label>
           <select id="f-auth" bind:value={authType}>
-            {#each ["Password", "Key", "Agent"] as const as m (m)}
+            {#each ["Password", "Key", "Agent", "Auto"] as const as m (m)}
               <option value={m}>{t(`form.auth.${m}`)}</option>
             {/each}
           </select>
@@ -405,10 +447,10 @@
     width: min(560px, calc(100vw - 32px));
     max-height: calc(100vh - 32px);
     overflow-y: auto;
-    padding: 16px;
-    background: var(--bg);
+    padding: var(--space-6);
+    background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow);
   }
   h2 {
@@ -417,14 +459,17 @@
   }
   fieldset {
     margin: 0 0 12px;
-    padding: 8px 12px 12px;
+    padding: var(--space-2) var(--space-3) var(--space-3);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
   }
   .field {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    margin-bottom: 8px;
+  }
+  .preview {
     margin-bottom: 8px;
   }
   .check {

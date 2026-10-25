@@ -54,6 +54,8 @@ fn conn(host: &str, port: u16) -> Connection {
         auth: AuthMethod::Password { save: false },
         jump_via: None,
         forwards: vec![],
+        color: None,
+        icon: None,
     }
 }
 
@@ -307,7 +309,7 @@ async fn missing_password_prompts() {
 
     sink.wait_event(
         |e| {
-            matches!(e, SessionEvent::SecretPrompt { host, port, kind: PromptKind::Password }
+            matches!(e, SessionEvent::SecretPrompt { host, port, kind: PromptKind::Password, .. }
                 if host == "127.0.0.1" && *port == server.addr.port())
         },
         T,

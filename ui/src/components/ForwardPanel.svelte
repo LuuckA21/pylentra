@@ -7,8 +7,14 @@
   import { library } from "../lib/stores/library.svelte";
   import { isApiError, toastError } from "../lib/stores/toasts.svelte";
   import { validate } from "../lib/validate";
+  import Icon from "./ui/Icon.svelte";
 
-  let { tab }: { tab: TabState } = $props();
+  // Anchored above the status bar by the parent; closes itself on a failed start.
+  let {
+    tab,
+    open = $bindable(false),
+    onclose,
+  }: { tab: TabState; open?: boolean; onclose: () => void } = $props();
 
   type Row = { rule: ForwardRule; id?: number; state: ForwardState };
   const STOPPED: ForwardState = { type: "Stopped" };
@@ -47,8 +53,7 @@
 
   const usable = $derived(!!tab.sessionId && tab.phase === "ready");
 
-  // A failed (auto-)start must not hide in a collapsed panel.
-  let open = $state(false);
+  // A failed (auto-)start must not hide in a closed panel.
   $effect(() => {
     if (rows.some((r) => r.state.type === "Failed")) open = true;
   });
@@ -149,74 +154,111 @@
   </div>
 {/snippet}
 
-<details class="panel" bind:open>
-  <summary>{t("fwd.title")} ({rows.length})</summary>
-  {#if !rows.length}<p class="muted">{t("fwd.empty")}</p>{/if}
-  <ul>
-    {#each rows as row, i (i)}
-      <li>
-        <code>{label(row.rule)}</code>
-        <span
-          class="state"
-          class:ok={row.state.type === "Active"}
-          class:bad={row.state.type === "Failed"}
-        >
-          {#if row.state.type === "Active"}
-            {t("fwd.active", { port: row.state.bound_port })}
-          {:else if row.state.type === "Failed"}
-            {errorMessage(row.state.error)}
-          {:else}
-            {t("fwd.stopped")}
-          {/if}
-        </span>
-        <button type="button" disabled={!usable} onclick={() => toggle(row)}>
-          {t(row.state.type === "Active" ? "fwd.stop" : "fwd.start")}
-        </button>
-      </li>
-    {/each}
-  </ul>
+{#if open}
+  <div
+    class="panel"
+    role="dialog"
+    tabindex="-1"
+    aria-label={t("fwd.title")}
+    onkeydown={(e) => e.key === "Escape" && onclose()}
+  >
+    <header>
+      <h2>{t("fwd.title")} ({rows.length})</h2>
+      <button
+        type="button"
+        class="x"
+        aria-label={t("common.close")}
+        title={t("common.close")}
+        onclick={onclose}><Icon name="close" size={14} /></button
+      >
+    </header>
+    {#if !rows.length}<p class="muted">{t("fwd.empty")}</p>{/if}
+    <ul>
+      {#each rows as row, i (i)}
+        <li>
+          <code>{label(row.rule)}</code>
+          <span
+            class="state"
+            class:ok={row.state.type === "Active"}
+            class:bad={row.state.type === "Failed"}
+          >
+            {#if row.state.type === "Active"}
+              {t("fwd.active", { port: row.state.bound_port })}
+            {:else if row.state.type === "Failed"}
+              {errorMessage(row.state.error)}
+            {:else}
+              {t("fwd.stopped")}
+            {/if}
+          </span>
+          <button type="button" disabled={!usable} onclick={() => toggle(row)}>
+            {t(row.state.type === "Active" ? "fwd.stop" : "fwd.start")}
+          </button>
+        </li>
+      {/each}
+    </ul>
 
-  {#if adding}
-    <form onsubmit={submit} novalidate>
-      <div class="field">
-        <label for="{uid}-type">{t("fwd.type")}</label>
-        <select id="{uid}-type" bind:value={draft.type}>
-          <option value="Local">{t("fwd.local")}</option>
-          <option value="Remote">{t("fwd.remote")}</option>
-        </select>
-      </div>
-      {#if draft.type === "Local"}
-        {@render field("bind_host", "form.bindHost", false)}
-      {/if}
-      {@render field("bind_port", "form.bindPort", true)}
-      {@render field("dest_host", "form.destHost", false)}
-      {@render field("dest_port", "form.destPort", true)}
-      <p class="muted">{t("fwd.sessionOnly")}</p>
-      <div class="actions">
-        <button type="button" onclick={() => (adding = false)}
-          >{t("common.cancel")}</button
-        >
-        <button type="submit" class="primary" disabled={!usable}
-          >{t("fwd.create")}</button
-        >
-      </div>
-    </form>
-  {:else}
-    <button type="button" onclick={() => (adding = true)}>{t("fwd.add")}</button
-    >
-  {/if}
-</details>
+    {#if adding}
+      <form onsubmit={submit} novalidate>
+        <div class="field">
+          <label for="{uid}-type">{t("fwd.type")}</label>
+          <select id="{uid}-type" bind:value={draft.type}>
+            <option value="Local">{t("fwd.local")}</option>
+            <option value="Remote">{t("fwd.remote")}</option>
+          </select>
+        </div>
+        {#if draft.type === "Local"}
+          {@render field("bind_host", "form.bindHost", false)}
+        {/if}
+        {@render field("bind_port", "form.bindPort", true)}
+        {@render field("dest_host", "form.destHost", false)}
+        {@render field("dest_port", "form.destPort", true)}
+        <p class="muted">{t("fwd.sessionOnly")}</p>
+        <div class="actions">
+          <button type="button" onclick={() => (adding = false)}
+            >{t("common.cancel")}</button
+          >
+          <button type="submit" class="primary" disabled={!usable}
+            >{t("fwd.create")}</button
+          >
+        </div>
+      </form>
+    {:else}
+      <button type="button" onclick={() => (adding = true)}
+        >{t("fwd.add")}</button
+      >
+    {/if}
+  </div>
+{/if}
 
 <style>
   .panel {
-    padding: 4px 12px 8px;
-    background: var(--bg-alt);
-    border-top: 1px solid var(--border);
-    max-height: 40%;
+    position: absolute;
+    left: var(--space-3);
+    bottom: calc(100% + var(--space-2));
+    z-index: 5;
+    width: min(520px, calc(100% - 2 * var(--space-3)));
+    max-height: 60vh;
     overflow-y: auto;
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
   }
-  summary {
-    cursor: pointer;
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  h2 {
+    margin: 0;
+    font-size: 14px;
+  }
+  .x {
+    padding: var(--space-1);
+    border: none;
+    background: transparent;
+    line-height: 0;
   }
   ul {
     margin: 4px 0;

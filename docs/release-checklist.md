@@ -80,6 +80,70 @@ cover it.
    and the app does not crash.
 4. Delete the connection: the keychain entry is removed.
 
+## Quick connect
+
+1. Type `tester@127.0.0.1:2201` in the Quick connect field and press Enter: the
+   session opens without saving a connection (Auto authentication: agent, then
+   default keys, then the password prompt).
+2. Optional (Docker Desktop on Windows may not listen on `::1`): repeat with an
+   IPv6 target such as `tester@[::1]:2201`, and without a port as
+   `tester@::1`: it parses and connects.
+3. Click "Save connection" on the tab: the connection appears in the sidebar
+   and the tab now belongs to it.
+
+## Import from ~/.ssh/config
+
+1. With a `~/.ssh/config` (Windows: `%USERPROFILE%\.ssh\config`) that has a
+   few hosts, one of them with `ProxyJump`, open Import (the sidebar "⋯" menu,
+   or the button in an empty library): the preview lists every host and flags
+   the ones it cannot fully import.
+2. Import: the hosts land in the chosen destination group, "No group" by
+   default; to test the group, choose `New group "ssh config"`. The jump host
+   chain works when opened.
+3. Run the import again: hosts already in the library are skipped.
+
+## Colors and icons
+
+1. Set an icon and a color on a connection and a color on a group: the sidebar
+   and the tab show them in both light and dark themes.
+2. Connections without a color or icon (imported, quick connect) still look
+   right.
+
+## Automatic reconnection
+
+1. Settings, Connections: turn on automatic reconnection and open a session.
+2. Drop the network (disable it, or stop the server): the tab shows
+   "Reconnecting... attempt N of M"; restore the network and the session comes
+   back by itself.
+3. Drop it again and click Cancel: no further attempt is made, and Enter
+   reconnects by hand.
+
+## Closing live sessions
+
+1. With the confirmation setting on, close a tab with a live session: a
+   dialog asks first. Closing the window with live sessions asks as well.
+2. Turn the setting off: neither asks.
+
+## Settings
+
+1. Walk through every category in Settings (appearance, terminal, connection,
+   security, updates): changes apply right away and survive a restart.
+2. Terminal themes Dracula, Nord and Solarized change the open terminals.
+3. Updates: "Check now" reports an available version or "up to date"; with
+   the update check off, nothing is checked at startup.
+
+## Downgrade to 0.1.x
+
+1. Get a 0.1.x build from GitHub Releases (v0.1.1). Use a 0.2 library that
+   includes an Automatic connection (a saved quick connect, or an imported
+   host without `IdentityFile`), and back up `connections.toml` first: Linux
+   `~/.config/me.luucka.pylentra/`, Windows `%APPDATA%\me.luucka.pylentra\`.
+2. Open it in 0.1.x: it opens read-only ("The configuration was written by a
+   newer version and is read-only") and, since 0.1.x cannot read the Automatic
+   connection, the library shows empty; edits are refused.
+3. Go back to 0.2: every connection is there again, and `connections.toml` is
+   identical to the backup.
+
 ## Language
 
 1. Fresh profile with the system language set to Italian: the UI starts in

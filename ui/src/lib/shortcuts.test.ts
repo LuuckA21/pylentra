@@ -17,6 +17,10 @@ test("shortcuts", () => {
   expect(shortcutFor(key("V", { ctrl: true, shift: true }))).toBe("paste");
   expect(shortcutFor(key("W", { ctrl: true, shift: true }))).toBe("closeTab");
   expect(shortcutFor(key("F", { ctrl: true, shift: true }))).toBe("search");
+  expect(shortcutFor(key("K", { ctrl: true, shift: true }))).toBe(
+    "quickConnect",
+  );
+  expect(shortcutFor(key("k", { ctrl: true }))).toBeNull(); // Ctrl+K stays with the shell
   expect(shortcutFor(key("c", { ctrl: true }))).toBeNull(); // SIGINT stays with the shell
   expect(shortcutFor(key("Tab", { ctrl: true }))).toBe("nextTab");
   expect(shortcutFor(key("Tab", { ctrl: true, shift: true }))).toBe("prevTab");

@@ -79,9 +79,9 @@
   }
   pre {
     margin: 0;
-    padding: 8px;
-    background: var(--bg-alt);
-    border-radius: 4px;
+    padding: var(--space-3);
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
     white-space: pre-wrap;
     user-select: all;
   }

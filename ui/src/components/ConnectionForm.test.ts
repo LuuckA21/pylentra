@@ -9,6 +9,7 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
+import type { Connection } from "../lib/bindings/Connection";
 import { api } from "../lib/api";
 import { library } from "../lib/stores/library.svelte";
 import ConnectionForm from "./ConnectionForm.svelte";
@@ -157,4 +158,100 @@ test("key passphrase: empty is null, typed is passed through", async () => {
     null,
     "hunter2",
   ]);
+});
+
+const radio = (name: string) => screen.getByRole("radio", { name });
+
+test("chosen icon and color are saved", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.click(radio("Database"));
+  await fireEvent.click(radio("Red"));
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  expect(vi.mocked(api.connectionSave).mock.calls[0][0]).toMatchObject({
+    icon: "database",
+    color: "red",
+  });
+});
+
+test("From group saves no color", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.click(radio("Red"));
+  await fireEvent.click(radio("From group"));
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  const [c] = vi.mocked(api.connectionSave).mock.calls[0];
+  expect(c.color).toBeUndefined();
+  expect(c.icon).toBeUndefined();
+});
+
+test("avatar preview follows the choices", async () => {
+  library.groups = [{ id: "g", name: "Servers", color: "teal" }];
+  const { container } = render(ConnectionForm, {
+    onsaved: vi.fn(),
+    oncancel: vi.fn(),
+  });
+  await type("Name", "prod-db");
+  const avatar = () => container.querySelector(".avatar")!;
+  expect(avatar().textContent?.trim()).toBe("PD");
+  expect(avatar().classList.contains("tag-none")).toBe(true);
+  await fireEvent.change(screen.getByLabelText("Group"), {
+    target: { value: "g" },
+  });
+  expect(avatar().classList.contains("tag-teal")).toBe(true);
+  await fireEvent.click(radio("Red"));
+  expect(avatar().classList.contains("tag-red")).toBe(true);
+  await fireEvent.click(radio("Server"));
+  expect(avatar().querySelector("svg")).not.toBeNull();
+});
+
+test("the Automatic method saves an Auto connection", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.change(screen.getByLabelText("Method"), {
+    target: { value: "Auto" },
+  });
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  const [c] = vi.mocked(api.connectionSave).mock.calls[0];
+  expect(c.auth).toEqual({ type: "Auto" });
+  expect(screen.getByRole("option", { name: "Automatic" })).toBeTruthy();
+});
+
+test("a pre-filled new connection (quick tab) is created and handed to onsaved", async () => {
+  vi.mocked(api.connectionSave).mockResolvedValue([]);
+  vi.mocked(api.libraryGet).mockResolvedValue({
+    version: 1,
+    groups: [],
+    connections: [],
+  });
+  vi.mocked(api.startupWarnings).mockResolvedValue([]);
+  const onsaved = vi.fn();
+  const quick = {
+    id: "q",
+    name: "example.com",
+    host: "example.com",
+    port: 22,
+    username: "luca",
+    auth: { type: "Auto" },
+    group_id: null,
+    jump_via: null,
+    forwards: [],
+  } satisfies Connection;
+  render(ConnectionForm, {
+    connection: quick,
+    isNew: true,
+    onsaved,
+    oncancel: vi.fn(),
+  });
+  expect(screen.getByRole("heading").textContent).toBe("New connection");
+  await save();
+  await waitFor(() => expect(onsaved).toHaveBeenCalled());
+  expect(onsaved.mock.calls[0][0]).toMatchObject({
+    id: "q",
+    name: "example.com",
+    auth: { type: "Auto" },
+  });
 });
