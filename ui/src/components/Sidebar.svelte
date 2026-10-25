@@ -601,8 +601,9 @@
           type="button"
           role="menuitem"
           onclick={() => {
-            closeMenu(false);
+            // `c` derives from `menu`: read it before closing the menu nulls it.
             onedit(c);
+            closeMenu(false);
           }}
         >
           {t("menu.edit")}
