@@ -12,6 +12,7 @@ use pylentra_core::secrets::KeyringStore;
 use tauri::webview::PageLoadEvent;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
+use tauri_plugin_window_state::StateFlags;
 
 use crate::state::AppState;
 
@@ -27,6 +28,11 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+                .build(),
+        )
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([Target::new(TargetKind::LogDir { file_name: None })])

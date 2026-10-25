@@ -132,6 +132,14 @@ cover it.
 3. Updates: "Check now" reports an available version or "up to date"; with
    the update check off, nothing is checked at startup.
 
+## Window
+
+1. Maximize the window, close the app and open it again: it reopens maximized.
+2. Resize and move the window, close the app and open it again: same size and
+   position.
+3. With the window on a second monitor, close the app, unplug that monitor and
+   open the app again: the window is visible on the main monitor.
+
 ## Downgrade to 0.1.x
 
 1. Get a 0.1.x build from GitHub Releases (v0.1.1). Use a 0.2 library that
