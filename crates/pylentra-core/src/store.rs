@@ -644,6 +644,25 @@ mod tests {
     }
 
     #[test]
+    fn non_text_color_and_icon_read_as_none() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let (id, gid) = (Uuid::new_v4(), Uuid::new_v4());
+        fs::write(
+            &path,
+            format!(
+                "version = 2\n\n[[groups]]\nid = \"{gid}\"\nname = \"g\"\ncolor = 5\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\ncolor = {{ r = 1 }}\nicon = [\"x\"]\nauth = {{ type = \"Agent\" }}\n"
+            ),
+        )
+        .unwrap();
+        let (s, outcome) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.library().groups[0].color, None);
+        let c = s.get(id).unwrap();
+        assert_eq!((c.color, c.icon), (None, None));
+    }
+
+    #[test]
     fn empty_appearance_fields_not_written() {
         let (d, mut s) = store();
         s.upsert_connection(conn("a")).unwrap();

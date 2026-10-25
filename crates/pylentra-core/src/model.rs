@@ -18,7 +18,17 @@ fn default_port() -> u16 {
 pub(crate) fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(
     d: D,
 ) -> Result<Option<T>, D::Error> {
-    let text = Option::<String>::deserialize(d)?;
+    // Any other TOML type (number, table, array) is accepted and dropped.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Text(String),
+        Other(serde::de::IgnoredAny),
+    }
+    let text = match Option::<Raw>::deserialize(d)? {
+        Some(Raw::Text(s)) => Some(s),
+        Some(Raw::Other(_)) | None => None,
+    };
     Ok(text.and_then(|s| {
         T::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(s)).ok()
     }))
