@@ -255,6 +255,8 @@ export const en = {
   "import.exists": "already present",
   "import.requiredBy": "needed for {names}",
   "import.jumpDropped": "Jump host not imported: it will connect directly.",
+  "import.jumpLoop":
+    "Jump host removed because it forms a loop or a chain of more than 5 hops: it will connect directly.",
   "import.user": "User for hosts without User",
   "import.userRequired": "Required: some selected hosts have no User.",
   "import.group": "Destination group",

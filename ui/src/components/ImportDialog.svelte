@@ -7,6 +7,7 @@
   import { t, type MessageKey } from "../lib/i18n";
   import {
     prepare,
+    brokenJumps,
     requiredBy,
     selectable,
     toggle,
@@ -49,6 +50,7 @@
     return t(`import.note.${type}` as MessageKey, params);
   };
   // A selected host whose candidate jump host is not selected loses its jump.
+  const broken = $derived(brokenJumps(candidates, selected));
   const jumpDropped = (c: Candidate) => {
     const via = c.connection.jump_via;
     return (
@@ -131,6 +133,7 @@
               ...c.notes.map((_, i) => `n-${id}-${i}`),
               ...(selected.has(id) && needed.length ? [`n-${id}-req`] : []),
               ...(dropped ? [`n-${id}-drop`] : []),
+              ...(broken.has(id) ? [`n-${id}-loop`] : []),
             ]}
             <li>
               <label class="row">
@@ -169,6 +172,9 @@
               {/if}
               {#if dropped}
                 <p class="note" id="n-{id}-drop">{t("import.jumpDropped")}</p>
+              {/if}
+              {#if broken.has(id)}
+                <p class="note" id="n-{id}-loop">{t("import.jumpLoop")}</p>
               {/if}
             </li>
           {/each}

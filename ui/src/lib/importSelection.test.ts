@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Candidate } from "./bindings/Candidate";
-import { prepare, requiredBy, toggle } from "./importSelection";
+import { brokenJumps, prepare, requiredBy, toggle } from "./importSelection";
 
 const cand = (
   id: string,
@@ -90,4 +90,23 @@ test("a chain deeper than 5 hops is cut", () => {
   }
   expect(via.get("n7")).toBeNull();
   expect(out.some((c) => c.jump_via)).toBe(true);
+});
+
+test("brokenJumps names exactly the hosts whose jump prepare clears", () => {
+  const cs = [cand("a", "b"), cand("b", "a"), cand("c", "d"), cand("d")];
+  const sel = new Set(["a", "b", "c", "d"]);
+  const cleared = prepare(cs, sel, "")
+    .filter(
+      (c) =>
+        c.jump_via === null &&
+        cs.find((x) => x.connection.id === c.id)?.connection.jump_via,
+    )
+    .map((c) => c.id);
+  expect([...brokenJumps(cs, sel)]).toEqual(cleared);
+  expect(cleared.length).toBe(1);
+});
+
+test("brokenJumps ignores jump hosts that are simply not imported", () => {
+  const cs = [cand("a", "b"), cand("b")];
+  expect(brokenJumps(cs, new Set(["a"])).size).toBe(0);
 });
