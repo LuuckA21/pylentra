@@ -64,7 +64,7 @@ pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError>
 
 /// Moves an unreadable file to `<name>.corrupt-<unix_secs>` (never onto an
 /// existing file) and returns the new path.
-fn quarantine(path: &Path) -> Result<PathBuf, CoreError> {
+pub(crate) fn quarantine(path: &Path) -> Result<PathBuf, CoreError> {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -80,13 +80,13 @@ fn quarantine(path: &Path) -> Result<PathBuf, CoreError> {
     Ok(backup)
 }
 
-fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     toml::from_str(std::str::from_utf8(bytes).ok()?).ok()
 }
 
 #[derive(Deserialize)]
-struct VersionOnly {
-    version: u32,
+pub(crate) struct VersionOnly {
+    pub(crate) version: u32,
 }
 
 pub struct ConnectionStore {

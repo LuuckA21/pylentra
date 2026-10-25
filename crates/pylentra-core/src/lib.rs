@@ -7,6 +7,7 @@ pub mod error;
 pub mod known_hosts;
 pub mod model;
 pub mod secrets;
+pub mod snippets;
 pub mod ssh;
 pub mod ssh_config;
 pub mod store;
