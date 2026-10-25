@@ -100,7 +100,11 @@ pub struct Connection {
     )]
     #[ts(optional)]
     pub icon: Option<ConnIcon>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
     #[ts(optional)]
     pub notes: Option<String>,
 }

@@ -526,6 +526,23 @@ mod tests {
     }
 
     #[test]
+    fn non_text_notes_read_as_none() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let id = Uuid::new_v4();
+        fs::write(
+            &path,
+            format!(
+                "version = 2\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nnotes = 5\nauth = {{ type = \"Agent\" }}\n"
+            ),
+        )
+        .unwrap();
+        let (s, outcome) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.get(id).unwrap().notes, None);
+    }
+
+    #[test]
     fn upsert_replaces_existing_id() {
         let (_d, mut s) = store();
         let mut a = conn("a");
