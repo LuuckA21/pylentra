@@ -44,9 +44,10 @@
     terminal: ["M3 5h18v14H3z", "M7 10l3 2-3 2", "M13 15h4"],
     search: ["M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z", "M20 20l-4-4"],
     bolt: ["M13 3L5 13h6l-1 8 8-10h-6z"],
+    // Sliders, as in the mockup: a sun-like gear read as the theme toggle.
     settings: [
-      "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
-      "M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1",
+      "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3",
+      "M1 14h6M9 8h6M17 16h6",
     ],
     plus: ["M12 5v14M5 12h14"],
     more: ["M5 12h.01M12 12h.01M19 12h.01"],

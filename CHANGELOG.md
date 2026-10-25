@@ -4,6 +4,21 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-10-25
+
+The first published 0.2 release: 0.2.0 was never released. Everything new in
+0.2 (quick connect, import from `~/.ssh/config`, colors and icons, settings by
+category, the new look) is listed under
+[0.2.0](https://github.com/LuuckA21/pylentra/blob/main/CHANGELOG.md#020---2026-10-24).
+
+### Fixed
+
+- "Edit" in a connection's menu did nothing; it opens the connection form
+  again.
+- The settings button showed a sun-like icon that looked like a theme toggle;
+  it now shows sliders.
+- The "New connection" button no longer wraps onto two lines.
+
 ## [0.2.0] - 2026-10-24
 
 ### Added

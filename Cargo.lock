@@ -3744,7 +3744,7 @@ dependencies = [
 
 [[package]]
 name = "pylentra"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dirs 6.0.0",
  "log",
@@ -3764,7 +3764,7 @@ dependencies = [
 
 [[package]]
 name = "pylentra-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "data-encoding",
  "futures",

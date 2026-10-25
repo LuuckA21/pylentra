@@ -601,8 +601,9 @@
           type="button"
           role="menuitem"
           onclick={() => {
-            closeMenu(false);
+            // `c` derives from `menu`: read it before closing the menu nulls it.
             onedit(c);
+            closeMenu(false);
           }}
         >
           {t("menu.edit")}
@@ -864,6 +865,7 @@
     justify-content: center;
     gap: var(--space-2);
     font-weight: 600;
+    white-space: nowrap;
   }
   .more {
     width: 44px;

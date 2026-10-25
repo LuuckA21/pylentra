@@ -177,6 +177,14 @@ test("a connection whose group was deleted lands under No group", () => {
   expect(screen.getAllByRole("option")).toHaveLength(1);
 });
 
+test("Edit in the context menu emits edit with the connection", async () => {
+  const { onedit } = setup();
+  await fireEvent.contextMenu(screen.getByRole("option", { name: /web/ }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: "Edit" }));
+  expect(onedit).toHaveBeenCalledWith(web);
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
 test("keyboard: Move to group submenu keeps focus and moves the connection", async () => {
   library.groups = groups = [{ id: "g", name: "Servers" }];
   setup();
