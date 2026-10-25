@@ -402,11 +402,11 @@ test("snippets search filters", async () => {
 
 test("delete asks first", async () => {
   await snippetsSection([snip("1", "Zed")]);
-  await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Delete Zed" }));
   expect(screen.getByText('"Zed" will be deleted.')).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(api.snippetDelete).not.toHaveBeenCalled();
-  await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Delete Zed" }));
   await fireEvent.click(
     within(screen.getByRole("alertdialog")).getByRole("button", {
       name: "Delete",
@@ -425,7 +425,7 @@ test("read-only disables editing", async () => {
       "Snippets were written by a newer version and are read-only.",
     ),
   ).toBeTruthy();
-  for (const name of ["New snippet", "Edit", "Delete"])
+  for (const name of ["New snippet", "Edit Zed", "Delete Zed"])
     expect(
       (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
     ).toBe(true);

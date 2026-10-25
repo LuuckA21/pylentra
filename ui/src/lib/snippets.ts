@@ -21,6 +21,7 @@ export function groupSnippets(
   list: Snippet[],
   query: string,
   connectionId: string | null,
+  known: Set<string>,
 ): { own: Snippet[]; global: Snippet[] } {
   const q = fold(query.trim());
   const hit = (s: Snippet) =>
@@ -34,6 +35,9 @@ export function groupSnippets(
         ? []
         : found.filter((s) => s.connection_id === connectionId),
     ),
-    global: sorted(found.filter((s) => !s.connection_id)),
+    // A snippet whose connection is gone stays reachable as a global one.
+    global: sorted(
+      found.filter((s) => !s.connection_id || !known.has(s.connection_id)),
+    ),
   };
 }

@@ -32,7 +32,11 @@
   let name = $state(start.name ?? "");
   let text = $state(start.text ?? "");
   let run = $state(start.run ?? false);
-  let scope = $state(start.connection_id ?? start.connectionId ?? "");
+  // An orphan (its connection was deleted) turns global when saved.
+  const wanted = start.connection_id ?? start.connectionId ?? "";
+  let scope = $state(
+    library.connections.some((c) => c.id === wanted) ? wanted : "",
+  );
   let errors = $state<Record<string, string>>({});
   let saving = $state(false);
   let formEl: HTMLFormElement | undefined = $state();

@@ -32,14 +32,21 @@ test("groupSnippets filters accent-insensitively, splits own/global, sorts", () 
     s("Ångström", "echo x"),
     s("Zeta", "y"),
   ];
-  expect(groupSnippets(list, "angst", "A").global.map((x) => x.name)).toEqual([
-    "Ångström",
-  ]);
-  expect(groupSnippets(list, "echo", "A").global.map((x) => x.name)).toEqual([
-    "Ångström",
-  ]);
-  const g = groupSnippets(list, "", "A");
+  const known = new Set(["A", "B"]);
+  expect(
+    groupSnippets(list, "angst", "A", known).global.map((x) => x.name),
+  ).toEqual(["Ångström"]);
+  expect(
+    groupSnippets(list, "echo", "A", known).global.map((x) => x.name),
+  ).toEqual(["Ångström"]);
+  const g = groupSnippets(list, "", "A", known);
   expect(g.own.map((x) => x.name)).toEqual(["Riavvia"]);
   expect(g.global.map((x) => x.name)).toEqual(["Ångström", "Zeta"]);
-  expect(groupSnippets(list, "", null).own).toEqual([]);
+  expect(groupSnippets(list, "", null, known).own).toEqual([]);
+});
+
+test("groupSnippets shows a snippet of a deleted connection as global", () => {
+  const g = groupSnippets([s("Ghost", "x", "gone")], "", "A", new Set(["A"]));
+  expect(g.own).toEqual([]);
+  expect(g.global.map((x) => x.name)).toEqual(["Ghost"]);
 });

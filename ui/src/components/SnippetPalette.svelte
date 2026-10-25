@@ -3,6 +3,7 @@
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
   import { body, firstLine, groupSnippets } from "../lib/snippets";
+  import { isSnippetsReadOnly, library } from "../lib/stores/library.svelte";
   import { snippets } from "../lib/stores/snippets.svelte";
   import Pill from "./ui/Pill.svelte";
   import TextField from "./ui/TextField.svelte";
@@ -32,7 +33,14 @@
   let inputEl = $state<HTMLInputElement>();
   let active = $state(0);
 
-  const groups = $derived(groupSnippets(snippets.list, query, connectionId));
+  const groups = $derived(
+    groupSnippets(
+      snippets.list,
+      query,
+      connectionId,
+      new Set(library.connections.map((c) => c.id)),
+    ),
+  );
   const flat = $derived([...groups.own, ...groups.global]);
   const sections = $derived([
     { label: connectionName, items: groups.own, offset: 0 },
@@ -126,10 +134,16 @@
     {/if}
   </div>
   <footer>
-    <button type="button" onclick={() => onnew("")}>{t("snippet.new")}</button>
+    <button
+      type="button"
+      disabled={isSnippetsReadOnly()}
+      onclick={() => onnew("")}>{t("snippet.new")}</button
+    >
     {#if selection.trim()}
-      <button type="button" onclick={() => onnew(selection)}
-        >{t("snippet.saveSelection")}</button
+      <button
+        type="button"
+        disabled={isSnippetsReadOnly()}
+        onclick={() => onnew(selection)}>{t("snippet.saveSelection")}</button
       >
     {/if}
   </footer>

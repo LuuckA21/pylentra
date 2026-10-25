@@ -104,12 +104,14 @@
             {#if s.run}<Pill>{t("snippet.runs")}</Pill>{/if}
             <button
               type="button"
+              aria-label="{t('menu.edit')} {s.name}"
               disabled={readOnly}
               onclick={() => (editing = s)}>{t("menu.edit")}</button
             >
             <button
               type="button"
               class="danger"
+              aria-label="{t('common.delete')} {s.name}"
               disabled={readOnly}
               onclick={() => (deleting = s)}>{t("common.delete")}</button
             >

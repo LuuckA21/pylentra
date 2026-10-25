@@ -1,6 +1,8 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
+import type { Connection } from "../lib/bindings/Connection";
 import type { Snippet } from "../lib/bindings/Snippet";
+import { library } from "../lib/stores/library.svelte";
 import { snippets } from "../lib/stores/snippets.svelte";
 import SnippetPalette from "./SnippetPalette.svelte";
 
@@ -12,6 +14,8 @@ const snip = (
 ) => ({ id, name, text, run: false, ...o }) as Snippet;
 
 beforeEach(() => {
+  library.warnings = [];
+  library.connections = ["A", "B"].map((id) => ({ id }) as Connection);
   snippets.list = [
     snip("1", "Zeta", "echo z", { connection_id: "A", run: true }),
     snip("2", "Alpha", "ls -l", { connection_id: "A" }),
@@ -103,4 +107,22 @@ test("save selection shows only with a selection", async () => {
   expect(onnew).toHaveBeenCalledWith("ls");
   await fireEvent.click(screen.getByText("New snippet"));
   expect(onnew).toHaveBeenLastCalledWith("");
+});
+
+test("a snippet of a deleted connection shows under Global", () => {
+  snippets.list = [snip("5", "Ghost", "echo", { connection_id: "gone" })];
+  setup();
+  expect(names()).toEqual(["Ghost"]);
+  expect(screen.getAllByRole("group")).toHaveLength(1);
+});
+
+test("a read-only snippets file disables both new buttons", () => {
+  library.warnings = [
+    { code: "config.read_only", params: { file: "snippets.toml" } },
+  ];
+  setup({ selection: "ls" });
+  for (const name of ["New snippet", "Save selection as snippet"])
+    expect(
+      (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
+    ).toBe(true);
 });

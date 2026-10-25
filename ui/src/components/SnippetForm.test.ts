@@ -128,3 +128,21 @@ test("editing keeps the id and prefills", async () => {
     connection_id: "b",
   });
 });
+
+test("a snippet of a deleted connection becomes global on save", async () => {
+  setup({
+    initial: {
+      id: "s1",
+      name: "Ghost",
+      text: "ls",
+      run: false,
+      connection_id: "gone",
+    },
+  });
+  expect(
+    (screen.getByLabelText("Available in") as HTMLSelectElement).value,
+  ).toBe("");
+  await save();
+  await waitFor(() => expect(api.snippetSave).toHaveBeenCalled());
+  expect(saved()).not.toHaveProperty("connection_id");
+});
