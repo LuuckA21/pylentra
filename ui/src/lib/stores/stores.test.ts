@@ -5,6 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...a: unknown[]) => invoke(...a),
   Channel: class {},
 }));
+vi.mock("@tauri-apps/plugin-log", () => ({ warn: vi.fn() }));
 
 import {
   deleteConnection,
@@ -72,6 +73,14 @@ test("deleteConnection reloads the snippets too", async () => {
   await deleteConnection("c");
   expect(calls[0]).toBe("connection_delete");
   expect(calls).toContain("snippets_get");
+});
+
+test("a failed snippet reload does not fail a delete that went through", async () => {
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === "snippets_get") throw { code: "io", params: {} };
+    return cmd === "library_get" ? lib : [];
+  });
+  await expect(deleteConnection("c")).resolves.toEqual([]);
 });
 
 test("settings apply data-theme on <html> and the language", async () => {
