@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # Dev tool. Requires: pip install cairosvg pillow
-# Run after `pnpm tauri icon src-tauri/icons/source/icon.svg`, from the repo root.
+# Run after `pnpm tauri icon src-tauri/icons/source/icon.svg`.
 import io
 from pathlib import Path
 
 import cairosvg
 from PIL import Image
 
-icons = Path("src-tauri/icons")
+icons = Path(__file__).resolve().parent.parent / "src-tauri" / "icons"
 
 
 def render(svg, size):

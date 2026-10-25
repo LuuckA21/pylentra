@@ -171,6 +171,9 @@ cover it.
 
 1. The new app icon shows in the taskbar (or dock), the application menu, the
    window title bar and, on Windows, in the installer.
+2. On Windows, after updating over a version with another icon, a pinned
+   taskbar icon may stay old until a restart (icon cache): that is expected,
+   see "Known limitations" in the README.
 
 ## Downgrade to 0.1.x
 
