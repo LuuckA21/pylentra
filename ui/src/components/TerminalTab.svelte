@@ -216,6 +216,10 @@
 
   // The two panels share a spot; the forwards one can also open by itself.
   $effect(() => {
+    if (!active) snippetsOpen = false;
+  });
+
+  $effect(() => {
     if (forwardsOpen) snippetsOpen = false;
   });
 

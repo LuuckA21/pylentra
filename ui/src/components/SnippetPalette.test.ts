@@ -1,3 +1,4 @@
+import { tick } from "svelte";
 import { beforeEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import type { Connection } from "../lib/bindings/Connection";
@@ -50,6 +51,18 @@ test("the connection group comes before Global, each sorted", () => {
   ]);
   expect(names()).toEqual(["Alpha", "Zeta", "Global one"]);
   expect(within(groups[0]).getAllByRole("option")).toHaveLength(2);
+});
+
+test("the highlighted item stays valid when the list shrinks", async () => {
+  const { onpick } = setup();
+  await fireEvent.keyDown(input(), { key: "ArrowDown" });
+  await fireEvent.keyDown(input(), { key: "ArrowDown" });
+  snippets.list = [snippets.list[1]];
+  await tick();
+  const id = input().getAttribute("aria-activedescendant");
+  expect(id && document.getElementById(id)).toBeTruthy();
+  await fireEvent.keyDown(input(), { key: "Enter" });
+  expect(onpick).toHaveBeenCalledWith(expect.objectContaining({ id: "2" }));
 });
 
 test("a quick tab only sees global snippets", () => {

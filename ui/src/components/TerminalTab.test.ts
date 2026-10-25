@@ -399,6 +399,23 @@ test("the palette closes when the session drops, and nothing is sent", async () 
   expect(term.input).not.toHaveBeenCalled();
 });
 
+test("a pending multi-line confirm goes away when the session drops", async () => {
+  const term = setup2();
+  await pick("a\nb", false);
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  await view.rerender({ tab: { ...readyTab, phase: "closed" } });
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(term.paste).not.toHaveBeenCalled();
+});
+
+test("switching to another tab closes the palette", async () => {
+  setup2();
+  await shortcut();
+  expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
+  await view.rerender({ active: false });
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+});
+
 test("Esc in the palette gives the focus back to the terminal", async () => {
   const term = setup2();
   await shortcut();
