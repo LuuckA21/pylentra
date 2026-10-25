@@ -264,6 +264,7 @@
       <SecretPrompt
         prompt={tab.prompt}
         connectionId={tab.connectionId}
+        quick={tab.quick}
         {onanswer}
       />
     {/if}

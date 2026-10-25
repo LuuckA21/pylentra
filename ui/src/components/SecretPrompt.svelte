@@ -9,10 +9,13 @@
   let {
     prompt,
     connectionId,
+    quick,
     onanswer,
   }: {
     prompt: Extract<SessionEvent, { type: "SecretPrompt" }>;
     connectionId: string;
+    /** A quick tab's connection, which is not in the library. */
+    quick?: Connection;
     onanswer: (a: PromptAnswer) => void;
   } = $props();
 
@@ -26,7 +29,7 @@
   // The prompt belongs to one hop of the jump chain: find its connection by host
   // and port. The core lowercases the prompt's host.
   function hop(): Connection | undefined {
-    let c = library.connections.find((x) => x.id === connectionId);
+    let c = quick ?? library.connections.find((x) => x.id === connectionId);
     for (let depth = 0; c && depth <= 5; depth++) {
       if (c.host.toLowerCase() === host && c.port === port) return c;
       const via = c.jump_via;
