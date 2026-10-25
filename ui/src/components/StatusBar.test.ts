@@ -60,3 +60,23 @@ test("short sessions read '< 1 min' and minutes count up", () => {
   });
   expect(screen.getByText("5 min")).toBeTruthy();
 });
+
+test("the Forward button and pills report whether the panel is open", () => {
+  render(StatusBar, {
+    tab: tab(Date.now()),
+    connection,
+    groups,
+    onforwards: vi.fn(),
+    forwardsOpen: true,
+  });
+  expect(
+    screen
+      .getByRole("button", { name: "Forward" })
+      .getAttribute("aria-expanded"),
+  ).toBe("true");
+  expect(
+    screen
+      .getByRole("button", { name: "⇄ 5432 → localhost:5432" })
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
+});

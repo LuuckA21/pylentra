@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { api } from "../lib/api";
   import type { Connection } from "../lib/bindings/Connection";
   import type { Group } from "../lib/bindings/Group";
@@ -67,7 +68,11 @@
   let narrow = $state(narrowQuery?.matches ?? false);
   $effect(() => {
     if (!narrowQuery) return;
-    const update = () => (narrow = narrowQuery.matches);
+    const update = () => {
+      narrow = narrowQuery.matches;
+      // An overlay left open on a wide window must not reappear when it narrows again.
+      if (!narrow) expanded = false;
+    };
     narrowQuery.addEventListener("change", update);
     return () => narrowQuery.removeEventListener("change", update);
   });
@@ -135,9 +140,13 @@
     setPref(GROUPS_KEY, shutGroups);
   }
 
+  let expandBtn = $state<HTMLButtonElement>();
+
   function toggleSidebar() {
     if (narrow) {
       expanded = !expanded;
+      // The rail turns inert under the overlay: move focus into it.
+      if (expanded) tick().then(() => searchEl?.focus());
     } else {
       railPref = !railPref;
       setPref(COLLAPSED_KEY, railPref);
@@ -333,8 +342,10 @@
       expanded &&
       !e.defaultPrevented &&
       !fromOtherModal(e)
-    )
+    ) {
       expanded = false;
+      tick().then(() => expandBtn?.focus());
+    }
     // Ctrl+Shift+F, also from the terminal (its key handler lets it bubble here),
     // but never from inside a dialog.
     if (shortcutFor(e) === "search" && !fromOtherModal(e)) {
@@ -356,6 +367,7 @@
         class="icon-btn"
         aria-label={t("sidebar.expand")}
         title={t("sidebar.expand")}
+        bind:this={expandBtn}
         onclick={toggleSidebar}
       >
         <Icon name="chevron" />

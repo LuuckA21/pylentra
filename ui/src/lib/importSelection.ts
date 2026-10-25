@@ -74,3 +74,19 @@ export function prepare(
   }
   return out;
 }
+
+/** Selected hosts whose jump `prepare` clears because it loops or is too deep. */
+export function brokenJumps(
+  candidates: Candidate[],
+  selected: Set<string>,
+): Set<string> {
+  const all = byId(candidates);
+  return new Set(
+    prepare(candidates, selected, "")
+      .filter((c) => {
+        const was = all.get(c.id)?.connection.jump_via;
+        return was && selected.has(was) && c.jump_via === null;
+      })
+      .map((c) => c.id),
+  );
+}

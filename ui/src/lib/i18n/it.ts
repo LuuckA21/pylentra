@@ -260,6 +260,8 @@ export const it: Record<MessageKey, string> = {
   "import.exists": "già presente",
   "import.requiredBy": "necessario per {names}",
   "import.jumpDropped": "Jump host non importato: si collegherà direttamente.",
+  "import.jumpLoop":
+    "Jump host rimosso perché forma un giro o una catena di oltre 5 salti: si collegherà direttamente.",
   "import.user": "Utente per gli host senza User",
   "import.userRequired":
     "Obbligatorio: alcuni host selezionati non hanno User.",

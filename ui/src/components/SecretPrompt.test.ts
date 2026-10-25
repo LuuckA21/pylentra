@@ -117,3 +117,28 @@ test("a prompt that cannot save hides the option and answers save false", async 
     save: false,
   });
 });
+
+test("a quick tab's prompt names its user", () => {
+  library.connections = [];
+  render(SecretPrompt, {
+    prompt: {
+      type: "SecretPrompt",
+      host: "10.0.0.5",
+      port: 2200,
+      kind: { type: "Password" },
+      can_save: false,
+    },
+    connectionId: "q1",
+    quick: conn({
+      id: "q1",
+      host: "10.0.0.5",
+      port: 2200,
+      username: "root",
+      auth: { type: "Auto" },
+    }),
+    onanswer: vi.fn(),
+  });
+  expect(screen.getByRole("heading").textContent).toContain(
+    "root@10.0.0.5:2200",
+  );
+});

@@ -209,3 +209,18 @@ test("a retry after a failed import reuses the new group", async () => {
     id,
   ]);
 });
+
+test("a jump loop is announced on the host that loses its jump", async () => {
+  const a = cand("alpha");
+  const b = cand("beta");
+  a.connection.jump_via = "beta";
+  b.connection.jump_via = "alpha";
+  scan([a, b]);
+  await open();
+  const notes = await screen.findAllByText(/forms a loop/);
+  expect(notes.length).toBe(1);
+  const described = [box("alpha"), box("beta")].map(
+    (el) => el.getAttribute("aria-describedby") ?? "",
+  );
+  expect(described.some((ids) => ids.includes(notes[0]!.id))).toBe(true);
+});

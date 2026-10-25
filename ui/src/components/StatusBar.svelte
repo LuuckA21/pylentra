@@ -10,12 +10,14 @@
     connection,
     groups,
     onforwards,
+    forwardsOpen = false,
     onsave,
   }: {
     tab: TabState;
     connection: Connection | undefined;
     groups: Group[];
     onforwards: () => void;
+    forwardsOpen?: boolean;
     /** Only for quick (unsaved) tabs. */
     onsave?: () => void;
   } = $props();
@@ -46,7 +48,7 @@
   {#if group}<Pill color={group.color ?? null}>{group.name}</Pill>{/if}
   {#each active as [id, f] (id)}
     {#if f.state.type === "Active"}
-      <Pill color="teal" onclick={onforwards}
+      <Pill color="teal" pressed={forwardsOpen} onclick={onforwards}
         >⇄ {f.state.bound_port} → {f.rule.dest_host}:{f.rule.dest_port}</Pill
       >
     {/if}
@@ -55,6 +57,7 @@
     type="button"
     class="fwd"
     disabled={tab.phase !== "ready"}
+    aria-expanded={forwardsOpen}
     onclick={onforwards}>{t("status.forward")}</button
   >
   {#if onsave}

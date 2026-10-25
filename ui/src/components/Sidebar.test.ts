@@ -431,6 +431,48 @@ test("the collapse button folds the sidebar to avatars and remembers it", async 
   expect(screen.getByRole("textbox", { name: "Search" })).toBeTruthy();
 });
 
+test("narrow overlay: focus goes to search on open and back to Expand on Escape", async () => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+  setup();
+  const expand = screen.getByRole("button", { name: "Expand sidebar" });
+  expand.focus();
+  await fireEvent.click(expand);
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("textbox", { name: "Search" }),
+    ),
+  );
+  await fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() =>
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    ),
+  );
+});
+
+test("widening the window closes the narrow overlay", async () => {
+  let listener: (() => void) | undefined;
+  const mq = {
+    matches: true,
+    addEventListener: (_: string, f: () => void) => (listener = f),
+    removeEventListener: () => {},
+  };
+  vi.stubGlobal("matchMedia", () => mq);
+  setup();
+  await fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+  mq.matches = false;
+  listener?.();
+  mq.matches = true;
+  listener?.();
+  await waitFor(() =>
+    expect(screen.queryByRole("textbox", { name: "Search" })).toBeNull(),
+  );
+});
+
 test("on a narrow window the sidebar opens over the sessions and closes on Escape or open", async () => {
   vi.stubGlobal("matchMedia", () => ({
     matches: true,

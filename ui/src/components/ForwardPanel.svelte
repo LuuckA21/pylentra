@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { ForwardRule } from "../lib/bindings/ForwardRule";
   import type { ForwardState } from "../lib/bindings/ForwardState";
   import { errorMessage, t, type MessageKey } from "../lib/i18n";
@@ -53,9 +54,44 @@
 
   const usable = $derived(!!tab.sessionId && tab.phase === "ready");
 
-  // A failed (auto-)start must not hide in a closed panel.
+  // Opened by the user: focus moves in, and back to the opener on close. Opened by
+  // a failing forward: focus stays where the user is typing.
+  let panel = $state<HTMLElement>();
+  let autoOpened = false;
+  let returnTo: HTMLElement | null = null;
   $effect(() => {
-    if (rows.some((r) => r.state.type === "Failed")) open = true;
+    if (!open || !panel) return;
+    if (!autoOpened && document.activeElement instanceof HTMLElement) {
+      returnTo = document.activeElement;
+      panel.focus();
+    }
+    autoOpened = false;
+  });
+  function close() {
+    onclose();
+    if (returnTo?.isConnected) returnTo.focus();
+    returnTo = null;
+  }
+
+  // A forward that newly fails opens the panel once; closing it stays closed.
+  // Plain Set on purpose: a reactive one would re-run the effect that fills it.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const seenFailed = new Set<number>();
+  $effect(() => {
+    let fresh = false;
+    for (const r of rows)
+      if (
+        r.state.type === "Failed" &&
+        r.id !== undefined &&
+        !seenFailed.has(r.id)
+      ) {
+        seenFailed.add(r.id);
+        fresh = true;
+      }
+    if (fresh && !untrack(() => open)) {
+      autoOpened = true;
+      open = true;
+    }
   });
 
   // A failed start is already shown on its row (the core sends a Forward event).
@@ -160,7 +196,8 @@
     role="dialog"
     tabindex="-1"
     aria-label={t("fwd.title")}
-    onkeydown={(e) => e.key === "Escape" && onclose()}
+    bind:this={panel}
+    onkeydown={(e) => e.key === "Escape" && close()}
   >
     <header>
       <h2>{t("fwd.title")} ({rows.length})</h2>
@@ -169,7 +206,7 @@
         class="x"
         aria-label={t("common.close")}
         title={t("common.close")}
-        onclick={onclose}><Icon name="close" size={14} /></button
+        onclick={close}><Icon name="close" size={14} /></button
       >
     </header>
     {#if !rows.length}<p class="muted">{t("fwd.empty")}</p>{/if}
