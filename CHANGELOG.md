@@ -4,6 +4,25 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-10-25
+
+### Fixed
+
+- Importing from `~/.ssh/config` now says when a jump host is removed because
+  the jump hosts form a loop or a chain of more than 5 hops (the host then
+  connects directly). Before, the jump was dropped silently.
+- The password prompt of a quick connect tab names the user
+  (`user@host:port`), like saved connections do.
+- A hand-edited `connections.toml` or `settings.toml` with a non-text color,
+  icon or theme (for example `color = 5`) no longer makes the whole file
+  unreadable: that value is ignored.
+- Keyboard focus: the forward panel takes focus when you open it and gives it
+  back when you close it, and the Forward button reports whether it is open.
+  A panel opened by a failing forward no longer takes focus, and opens only
+  once per failure, so closing it sticks. On narrow windows, opening the
+  sidebar moves focus to search and Escape returns it to the Expand button;
+  widening the window closes the overlay.
+
 ## [0.2.1] - 2026-10-25
 
 The first published 0.2 release: 0.2.0 was never released. Everything new in
