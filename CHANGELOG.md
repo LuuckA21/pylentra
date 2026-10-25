@@ -37,6 +37,12 @@ All notable changes to Pylentra are documented here. The format follows
   0.1.x cannot read it and shows an empty read-only library: nothing is lost,
   and 0.2 shows everything again.
 
+### Security
+
+- Updated the `crypto-bigint` crypto dependency (via `russh`) to 0.7.8 for
+  [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387)
+  (timing variability in operations meant to be constant-time).
+
 ## [0.1.1] - 2026-10-23
 
 ### Changed
