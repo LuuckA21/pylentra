@@ -274,6 +274,7 @@ export const en = {
     "IdentityFile uses % tokens: using automatic authentication.",
   "import.note.MultiHopJump":
     "Multiple ProxyJump hops are not supported: no jump host.",
+  "import.note.ChainedJump": "Jump host set by the chain of {target}.",
   "import.note.JumpNotAlias":
     "ProxyJump {value} is not a host alias: no jump host.",
   "import.note.UnknownJump": "Jump host {alias} not found: no jump host.",
