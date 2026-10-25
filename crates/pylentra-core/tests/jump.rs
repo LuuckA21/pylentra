@@ -62,6 +62,7 @@ fn conn(port: u16) -> Connection {
         forwards: vec![],
         color: None,
         icon: None,
+        notes: None,
     }
 }
 

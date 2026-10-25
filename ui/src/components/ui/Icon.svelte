@@ -14,7 +14,9 @@
     | "palette"
     | "chevron"
     | "terminal-ui"
-    | "update";
+    | "update"
+    | "snippet"
+    | "note";
 
   // 24x24 stroke paths drawn for this app.
   const PATHS: Record<ConnIcon | UiIcon, string[]> = {
@@ -44,6 +46,10 @@
     terminal: ["M3 5h18v14H3z", "M7 10l3 2-3 2", "M13 15h4"],
     search: ["M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z", "M20 20l-4-4"],
     bolt: ["M13 3L5 13h6l-1 8 8-10h-6z"],
+    snippet: [
+      "M8 4c-2 0-3 1-3 3v2c0 1.5-1 2.5-2 3 1 .5 2 1.5 2 3v2c0 2 1 3 3 3",
+      "M16 4c2 0 3 1 3 3v2c0 1.5 1 2.5 2 3-1 .5-2 1.5-2 3v2c0 2-1 3-3 3",
+    ],
     // Sliders, as in the mockup: a sun-like gear read as the theme toggle.
     settings: [
       "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3",
@@ -66,6 +72,7 @@
     ],
     chevron: ["M9 6l6 6-6 6"],
     "terminal-ui": ["M5 8l4 4-4 4", "M12 17h7"],
+    note: ["M6 3h9l3 3v15H6z", "M9 10h6M9 14h6M9 18h4"],
     update: ["M12 4v12", "M7 11l5 5 5-5", "M5 20h14"],
   };
 </script>

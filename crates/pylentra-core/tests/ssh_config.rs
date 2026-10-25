@@ -44,6 +44,7 @@ fn saved(name: &str) -> Connection {
         forwards: vec![],
         color: None,
         icon: None,
+        notes: None,
     }
 }
 
@@ -156,7 +157,13 @@ fn proxyjump_multi_hop_user_host_and_unknown() {
         let c = get(&r, alias);
         assert_eq!((c.connection.jump_via, &c.notes), (None, &notes), "{alias}");
     };
-    check("multi", vec![ImportNote::MultiHopJump]);
+    check(
+        "multi",
+        vec![
+            ImportNote::UnknownJump { alias: "a".into() },
+            ImportNote::UnknownJump { alias: "b".into() },
+        ],
+    );
     check(
         "userhost",
         vec![ImportNote::JumpNotAlias {
@@ -356,5 +363,195 @@ fn garbage_input_does_not_break_the_import() {
             conn.username = "u".into();
         }
         assert!(conn.validate().is_ok(), "{conn:?}");
+    }
+}
+
+fn jump(r: &ScanResult, alias: &str) -> Option<Uuid> {
+    get(r, alias).connection.jump_via
+}
+
+fn id(r: &ScanResult, alias: &str) -> Option<Uuid> {
+    Some(get(r, alias).connection.id)
+}
+
+fn chained(target: &str) -> ImportNote {
+    ImportNote::ChainedJump {
+        target: target.into(),
+    }
+}
+
+#[test]
+fn multi_hop_builds_chain() {
+    let r = parse("Host a\nHost b\nHost t\n    ProxyJump a,b\n", &[]);
+    assert_eq!(jump(&r, "t"), id(&r, "b"));
+    assert_eq!(jump(&r, "b"), id(&r, "a"));
+    assert_eq!(jump(&r, "a"), None);
+    assert_eq!(get(&r, "b").notes, [chained("t")]);
+    assert!(get(&r, "t").notes.is_empty() && get(&r, "a").notes.is_empty());
+}
+
+#[test]
+fn three_hops() {
+    let r = parse("Host a\nHost b\nHost c\nHost t\n    ProxyJump a,b,c\n", &[]);
+    assert_eq!(jump(&r, "t"), id(&r, "c"));
+    assert_eq!(jump(&r, "c"), id(&r, "b"));
+    assert_eq!(jump(&r, "b"), id(&r, "a"));
+    assert_eq!(jump(&r, "a"), None);
+    assert_eq!(get(&r, "c").notes, [chained("t")]);
+    assert_eq!(get(&r, "b").notes, [chained("t")]);
+}
+
+#[test]
+fn spaces_and_trailing_comma() {
+    for value in ["a, b,", "\"a, b,\"", "a ,b"] {
+        let r = parse(
+            &format!("Host a\nHost b\nHost t\n    ProxyJump {value}\n"),
+            &[],
+        );
+        assert_eq!(jump(&r, "t"), id(&r, "b"), "{value}");
+        assert_eq!(jump(&r, "b"), id(&r, "a"), "{value}");
+        assert!(get(&r, "t").notes.is_empty(), "{value}");
+    }
+    // The first block's ProxyJump still wins over a later one.
+    let r = parse(
+        "Host a\nHost b\nHost t\n    ProxyJump a, b\nHost t\n    ProxyJump b, a\n",
+        &[],
+    );
+    assert_eq!(jump(&r, "t"), id(&r, "b"));
+    // One hop left after dropping the empty ones is a plain single jump.
+    let r = parse("Host a\nHost t\n    ProxyJump ,a,\n", &[]);
+    assert_eq!(jump(&r, "t"), id(&r, "a"));
+    assert!(get(&r, "t").notes.is_empty() && get(&r, "a").notes.is_empty());
+}
+
+#[test]
+fn hop_with_other_jump_conflicts() {
+    let r = parse(
+        "Host a\nHost x\nHost b\n    ProxyJump x\nHost t\n    ProxyJump a,b\n",
+        &[],
+    );
+    assert_eq!(jump(&r, "t"), None);
+    assert_eq!(get(&r, "t").notes, [ImportNote::MultiHopJump]);
+    assert_eq!(jump(&r, "b"), id(&r, "x"));
+    assert!(get(&r, "b").notes.is_empty());
+}
+
+#[test]
+fn hop_with_same_jump_is_fine() {
+    let r = parse(
+        "Host a\nHost b\n    ProxyJump a\nHost t\n    ProxyJump a,b\n",
+        &[],
+    );
+    assert_eq!(jump(&r, "t"), id(&r, "b"));
+    assert_eq!(jump(&r, "b"), id(&r, "a"));
+    assert!(get(&r, "b").notes.is_empty() && get(&r, "t").notes.is_empty());
+}
+
+#[test]
+fn hop_with_its_own_chain_or_bad_jump_is_blocked() {
+    for b in ["ProxyJump x,a", "ProxyJump u@h", "ProxyJump zz"] {
+        let text = format!("Host a\nHost x\nHost b\n    {b}\nHost t\n    ProxyJump a,b\n");
+        let r = parse(&text, &[]);
+        assert_eq!(jump(&r, "t"), None, "{b}");
+        assert_eq!(get(&r, "t").notes, [ImportNote::MultiHopJump], "{b}");
+    }
+}
+
+#[test]
+fn self_named_or_none_hop_counts_as_free() {
+    // `Host *` gives every host `ProxyJump b`; b itself connects directly, so the chain may set its jump.
+    let r = parse(
+        "Host a\nHost b\nHost t\n    ProxyJump a,b\nHost *\n    ProxyJump b\n",
+        &[],
+    );
+    assert_eq!(jump(&r, "t"), id(&r, "b"));
+    assert_eq!(jump(&r, "b"), id(&r, "a"));
+    let r = parse(
+        "Host a\nHost b\n    ProxyJump none\nHost t\n    ProxyJump a,b\n",
+        &[],
+    );
+    assert_eq!(jump(&r, "b"), id(&r, "a"));
+}
+
+#[test]
+fn repeated_hop_is_not_a_chain() {
+    for hops in ["a,a", "a,t", "t,a", "a,b,a"] {
+        let text = format!("Host a\nHost b\nHost t\n    ProxyJump {hops}\n");
+        let r = parse(&text, &[]);
+        assert_eq!(get(&r, "t").notes, [ImportNote::MultiHopJump], "{hops}");
+        for alias in ["a", "b", "t"] {
+            assert_eq!(jump(&r, alias), None, "{hops} {alias}");
+        }
+    }
+}
+
+#[test]
+fn saved_hop_never_changed() {
+    let b = saved("b");
+    let r = parse(
+        "Host a\nHost t\n    ProxyJump a,b\n",
+        std::slice::from_ref(&b),
+    );
+    assert_eq!(jump(&r, "t"), None);
+    assert_eq!(get(&r, "t").notes, [ImportNote::MultiHopJump]);
+
+    let a = saved("a");
+    let b = Connection {
+        jump_via: Some(a.id),
+        ..saved("b")
+    };
+    let r = parse("Host t\n    ProxyJump a,b\n", &[a, b.clone()]);
+    assert_eq!(jump(&r, "t"), Some(b.id));
+    assert!(get(&r, "t").notes.is_empty());
+}
+
+#[test]
+fn unknown_hop_notes() {
+    let r = parse("Host a\nHost t\n    ProxyJump a,zz\n", &[]);
+    assert_eq!(jump(&r, "t"), None);
+    assert_eq!(
+        get(&r, "t").notes,
+        [ImportNote::UnknownJump { alias: "zz".into() }]
+    );
+    assert_eq!(jump(&r, "a"), None);
+    let r = parse("Host a\nHost t\n    ProxyJump u@h,a,zz\n", &[]);
+    assert_eq!(
+        get(&r, "t").notes,
+        [
+            ImportNote::JumpNotAlias {
+                value: "u@h".into()
+            },
+            ImportNote::UnknownJump { alias: "zz".into() }
+        ]
+    );
+}
+
+#[test]
+fn shared_hops_compatible() {
+    let r = parse(
+        "Host a\nHost b\nHost t1\n    ProxyJump a,b\nHost t2\n    ProxyJump a,b\n",
+        &[],
+    );
+    assert_eq!(jump(&r, "t1"), id(&r, "b"));
+    assert_eq!(jump(&r, "t2"), id(&r, "b"));
+    assert_eq!(jump(&r, "b"), id(&r, "a"));
+    assert_eq!(get(&r, "b").notes, [chained("t1"), chained("t2")]);
+}
+
+#[test]
+fn shared_hops_conflicting() {
+    let t1 = "Host t1\n    ProxyJump a,b\n";
+    let t2 = "Host t2\n    ProxyJump c,b\n";
+    for text in [
+        format!("Host a\nHost b\nHost c\n{t1}{t2}"),
+        format!("Host a\nHost b\nHost c\n{t2}{t1}"),
+    ] {
+        let r = parse(&text, &[]);
+        for t in ["t1", "t2"] {
+            assert_eq!(jump(&r, t), None);
+            assert_eq!(get(&r, t).notes, [ImportNote::MultiHopJump]);
+        }
+        assert_eq!(jump(&r, "b"), None);
+        assert!(get(&r, "b").notes.is_empty());
     }
 }

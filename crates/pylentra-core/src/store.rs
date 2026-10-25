@@ -64,7 +64,7 @@ pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError>
 
 /// Moves an unreadable file to `<name>.corrupt-<unix_secs>` (never onto an
 /// existing file) and returns the new path.
-fn quarantine(path: &Path) -> Result<PathBuf, CoreError> {
+pub(crate) fn quarantine(path: &Path) -> Result<PathBuf, CoreError> {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -80,13 +80,13 @@ fn quarantine(path: &Path) -> Result<PathBuf, CoreError> {
     Ok(backup)
 }
 
-fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     toml::from_str(std::str::from_utf8(bytes).ok()?).ok()
 }
 
 #[derive(Deserialize)]
-struct VersionOnly {
-    version: u32,
+pub(crate) struct VersionOnly {
+    pub(crate) version: u32,
 }
 
 pub struct ConnectionStore {
@@ -180,8 +180,11 @@ impl ConnectionStore {
     }
 
     /// The library with `c` inserted or replaced, once it passes every check.
-    fn candidate_with(&self, c: Connection) -> Result<(Library, Vec<Warning>), CoreError> {
+    fn candidate_with(&self, mut c: Connection) -> Result<(Library, Vec<Warning>), CoreError> {
         self.writable()?;
+        if c.notes.as_deref().is_some_and(|n| n.trim().is_empty()) {
+            c.notes = None;
+        }
         let warnings = c.validate()?;
         let mut candidate = self.library.clone();
         let id = c.id;
@@ -432,6 +435,7 @@ mod tests {
             forwards: vec![],
             color: None,
             icon: None,
+            notes: None,
         }
     }
 
@@ -480,6 +484,62 @@ mod tests {
         assert!(matches!(outcome, LoadOutcome::Ok));
         assert_eq!(again.library(), s.library());
         assert_eq!(again.library().connections.len(), 2);
+    }
+
+    #[test]
+    fn notes_roundtrip() {
+        let (d, mut s) = store();
+        let mut a = conn("a");
+        a.notes = Some("line one\nline two\n".into());
+        s.upsert_connection(a.clone()).unwrap();
+        assert_eq!(s.get(a.id).unwrap().notes, a.notes);
+        let (again, _) = ConnectionStore::load(d.path().join("connections.toml")).unwrap();
+        assert_eq!(again.get(a.id).unwrap().notes, a.notes);
+    }
+
+    #[test]
+    fn blank_notes_saved_as_none() {
+        let (d, mut s) = store();
+        let mut a = conn("a");
+        a.notes = Some("  \n".into());
+        s.upsert_connection(a.clone()).unwrap();
+        assert_eq!(s.get(a.id).unwrap().notes, None);
+        let text = fs::read_to_string(d.path().join("connections.toml")).unwrap();
+        assert!(!text.contains("notes"), "{text}");
+    }
+
+    #[test]
+    fn file_without_notes_loads() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let id = Uuid::new_v4();
+        fs::write(
+            &path,
+            format!(
+                "version = 2\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n"
+            ),
+        )
+        .unwrap();
+        let (s, outcome) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.get(id).unwrap().notes, None);
+    }
+
+    #[test]
+    fn non_text_notes_read_as_none() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let id = Uuid::new_v4();
+        fs::write(
+            &path,
+            format!(
+                "version = 2\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nnotes = 5\nauth = {{ type = \"Agent\" }}\n"
+            ),
+        )
+        .unwrap();
+        let (s, outcome) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.get(id).unwrap().notes, None);
     }
 
     #[test]

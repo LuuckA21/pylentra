@@ -514,3 +514,28 @@ test("the More button reports expanded while its menu is open", async () => {
   await fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
   expect(more.getAttribute("aria-expanded")).toBe("false");
 });
+
+test("a connection with notes shows the icon and describes the row", () => {
+  const notes = "n".repeat(250);
+  library.connections = [{ ...web, notes }, db];
+  setup();
+  const row = screen.getByRole("option", { name: /web/ });
+  expect(row.getAttribute("aria-description")).toBe(notes.slice(0, 200));
+  const icon = row.querySelector(".note");
+  expect(icon?.getAttribute("title")).toBe(notes);
+  expect(icon?.getAttribute("aria-hidden")).toBe("true");
+  const plain = screen.getByRole("option", { name: /db/ });
+  expect(plain.querySelector(".note")).toBeNull();
+  expect(plain.hasAttribute("aria-description")).toBe(false);
+});
+
+test("search also looks in notes", async () => {
+  library.connections = [{ ...web, notes: "Sala server, Rack 3" }, db];
+  setup();
+  await fireEvent.input(screen.getByRole("textbox", { name: "Search" }), {
+    target: { value: "rack" },
+  });
+  const rows = screen.getAllByRole("option");
+  expect(rows).toHaveLength(1);
+  expect(rows[0].textContent).toContain("web");
+});

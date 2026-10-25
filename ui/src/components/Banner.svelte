@@ -6,7 +6,11 @@
 {#if library.warnings.length}
   <div class="banner" role="region" aria-label={t("banner.title")}>
     {#each library.warnings as w, i (i)}
-      <p>{errorMessage(w)}</p>
+      <p>
+        {w.params.file
+          ? `${w.params.file}: ${errorMessage(w)}`
+          : errorMessage(w)}
+      </p>
     {/each}
   </div>
 {/if}

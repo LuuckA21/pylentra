@@ -3,6 +3,7 @@ import type { ApiError } from "../bindings/ApiError";
 import type { Connection } from "../bindings/Connection";
 import type { Group } from "../bindings/Group";
 import type { Warning } from "../bindings/Warning";
+import { loadSnippets } from "./snippets.svelte";
 
 export const library = $state<{
   groups: Group[];
@@ -10,8 +11,16 @@ export const library = $state<{
   warnings: ApiError[];
 }>({ groups: [], connections: [], warnings: [] });
 
+const SNIPPETS_FILE = "snippets.toml";
+
 export const isReadOnly = (): boolean =>
-  library.warnings.some((w) => w.code === "config.read_only");
+  library.warnings.some(
+    (w) => w.code === "config.read_only" && w.params.file !== SNIPPETS_FILE,
+  );
+export const isSnippetsReadOnly = (): boolean =>
+  library.warnings.some(
+    (w) => w.code === "config.read_only" && w.params.file === SNIPPETS_FILE,
+  );
 
 export async function refresh(): Promise<void> {
   const [lib, warnings] = await Promise.all([
@@ -36,6 +45,11 @@ export const saveConnection = (
   passphrase?: string,
 ): Promise<Warning[]> =>
   then(api.connectionSave(c, password ?? null, passphrase ?? null));
-export const deleteConnection = (id: string) => then(api.connectionDelete(id));
+// Deleting a connection also drops its snippets on the Rust side.
+export const deleteConnection = (id: string) =>
+  then(api.connectionDelete(id)).then(async (r) => {
+    await loadSnippets();
+    return r;
+  });
 export const saveGroup = (g: Group) => then(api.groupSave(g));
 export const deleteGroup = (id: string) => then(api.groupDelete(id));

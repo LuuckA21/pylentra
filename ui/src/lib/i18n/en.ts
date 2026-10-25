@@ -34,6 +34,8 @@ export const en = {
   "form.appearance": "Appearance",
   "form.color": "Color",
   "form.color.fromGroup": "From group",
+  "form.notes": "Notes",
+  "form.notesTooLong": "Notes too long (at most 4 KB).",
   "form.icon": "Icon",
   "form.icon.initials": "Initials",
   "group.color": "Color",
@@ -174,6 +176,7 @@ export const en = {
   "settings.section.appearance": "Appearance",
   "settings.section.terminal": "Terminal",
   "settings.section.connections": "Connections",
+  "settings.section.snippets": "Snippets",
   "settings.section.security": "Security",
   "settings.section.updates": "Updates",
   "settings.version": "Pylentra {version}",
@@ -270,7 +273,8 @@ export const en = {
   "import.note.IdentityTokens":
     "IdentityFile uses % tokens: using automatic authentication.",
   "import.note.MultiHopJump":
-    "Multiple ProxyJump hops are not supported: no jump host.",
+    "The ProxyJump hops conflict with other jump hosts: no jump host.",
+  "import.note.ChainedJump": "Jump host set by the chain of {target}.",
   "import.note.JumpNotAlias":
     "ProxyJump {value} is not a host alias: no jump host.",
   "import.note.UnknownJump": "Jump host {alias} not found: no jump host.",
@@ -286,6 +290,33 @@ export const en = {
   "quick.error.format": "Use user@host:port",
   "quick.error.port": "Port must be between 1 and 65535",
   "quick.error.user": "Add user@",
+  "snippet.new": "New snippet",
+  "snippet.edit": "Edit snippet",
+  "snippet.name": "Name",
+  "snippet.text": "Text",
+  "snippet.run": "Run immediately",
+  "snippet.runHint": "Also sends Enter after the text",
+  "snippet.scope": "Available in",
+  "snippet.scopeAll": "All connections",
+  "snippet.global": "Global",
+  "snippet.runs": "runs",
+  "snippet.search": "Search snippets",
+  "snippet.empty": "No snippets yet.",
+  "snippet.noMatches": "No matches.",
+  "snippet.deleteTitle": "Delete snippet?",
+  "snippet.deleteBody": '"{name}" will be deleted.',
+  "snippet.readOnly":
+    "Snippets were written by a newer version and are read-only.",
+  "snippet.tooLong": "At most {max} characters.",
+  "snippet.textTooLong": "Text too long (at most 64 KB).",
+  "snippet.required": "Required.",
+  "snippet.button": "Snippets",
+  "snippet.palette": "Snippets",
+  "snippet.saveSelection": "Save selection as snippet",
+  "snippet.confirmTitle": "Paste several lines?",
+  "snippet.confirmBody":
+    "This shell will run each line as soon as it is pasted. Continue?",
+  "snippet.confirmOk": "Paste",
 } as const;
 
 export type MessageKey = keyof typeof en;

@@ -6,7 +6,14 @@ vi.mock("@tauri-apps/api/core", () => ({
   Channel: class {},
 }));
 
-import { library, refresh, saveConnection } from "./library.svelte";
+import {
+  deleteConnection,
+  isReadOnly,
+  isSnippetsReadOnly,
+  library,
+  refresh,
+  saveConnection,
+} from "./library.svelte";
 import { settings, loadSettings, saveSettings } from "./settings.svelte";
 import { t } from "../i18n";
 
@@ -33,6 +40,26 @@ test("saveConnection saves then refreshes and returns warnings", async () => {
   const warnings = await saveConnection({} as never, "pw");
   expect(warnings).toEqual([]);
   expect(calls.slice(0, 2)).toEqual(["connection_save", "library_get"]);
+});
+
+test("snippets.toml warnings only affect isSnippetsReadOnly", () => {
+  library.warnings = [
+    { code: "config.read_only", params: { found: "2", file: "snippets.toml" } },
+  ];
+  expect(isReadOnly()).toBe(false);
+  expect(isSnippetsReadOnly()).toBe(true);
+  library.warnings = [];
+});
+
+test("deleteConnection reloads the snippets too", async () => {
+  const calls: string[] = [];
+  invoke.mockImplementation(async (cmd: string) => {
+    calls.push(cmd);
+    return cmd === "library_get" ? lib : [];
+  });
+  await deleteConnection("c");
+  expect(calls[0]).toBe("connection_delete");
+  expect(calls).toContain("snippets_get");
 });
 
 test("settings apply data-theme on <html> and the language", async () => {

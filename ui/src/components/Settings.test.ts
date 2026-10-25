@@ -1,5 +1,11 @@
 import { beforeEach, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/svelte";
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -7,6 +13,8 @@ vi.mock("../lib/api", () => ({
     logDir: vi.fn(),
     knownHostsList: vi.fn(),
     knownHostForget: vi.fn(),
+    snippetsGet: vi.fn(),
+    snippetDelete: vi.fn(),
   },
 }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn() }));
@@ -18,6 +26,10 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { check } from "@tauri-apps/plugin-updater";
 import { api } from "../lib/api";
 import { setLang, t } from "../lib/i18n";
+import type { ApiError } from "../lib/bindings/ApiError";
+import type { Snippet } from "../lib/bindings/Snippet";
+import { library } from "../lib/stores/library.svelte";
+import { snippets } from "../lib/stores/snippets.svelte";
 import { settings } from "../lib/stores/settings.svelte";
 import { toasts } from "../lib/stores/toasts.svelte";
 import { updates } from "../lib/stores/updates.svelte";
@@ -322,4 +334,99 @@ test("Check now is disabled while checking", async () => {
       true,
     ),
   );
+});
+
+const snip = (id: string, name: string, connection_id?: string): Snippet => ({
+  id,
+  name,
+  text: `echo ${name}\nmore`,
+  run: false,
+  ...(connection_id && { connection_id }),
+});
+
+async function snippetsSection(
+  list: Snippet[] = [],
+  warnings: ApiError[] = [],
+) {
+  library.warnings = warnings;
+  library.connections = [
+    {
+      id: "a",
+      name: "Alpha",
+      group_id: null,
+      host: "h",
+      port: 22,
+      username: "u",
+      auth: { type: "Agent" },
+      jump_via: null,
+      forwards: [],
+    },
+  ];
+  vi.mocked(api.snippetsGet).mockResolvedValue(list);
+  vi.mocked(api.snippetDelete).mockResolvedValue();
+  snippets.list = list;
+  setup();
+  await goTo("Snippets");
+}
+
+test("snippets section groups", async () => {
+  await snippetsSection([
+    snip("1", "Zed"),
+    snip("2", "Beta", "a"),
+    snip("3", "Ghost", "gone"),
+    snip("4", "Able"),
+  ]);
+  const global = screen.getByRole("region", { name: "Global" });
+  expect(
+    within(global)
+      .getAllByRole("listitem")
+      .map((li) => li.querySelector(".name")?.textContent),
+  ).toEqual(["Able", "Ghost", "Zed"]);
+  const own = screen.getByRole("region", { name: "Alpha" });
+  expect(within(own).getByText("Beta")).toBeTruthy();
+  expect(within(own).queryByText("Zed")).toBeNull();
+});
+
+test("snippets search filters", async () => {
+  await snippetsSection([snip("1", "Zed"), snip("2", "Beta", "a")]);
+  await fireEvent.input(screen.getByLabelText("Search snippets"), {
+    target: { value: "zed" },
+  });
+  expect(screen.queryByText("Beta")).toBeNull();
+  expect(screen.getByText("Zed")).toBeTruthy();
+  await fireEvent.input(screen.getByLabelText("Search snippets"), {
+    target: { value: "qqq" },
+  });
+  expect(screen.getByText("No matches.")).toBeTruthy();
+});
+
+test("delete asks first", async () => {
+  await snippetsSection([snip("1", "Zed")]);
+  await fireEvent.click(screen.getByRole("button", { name: "Delete Zed" }));
+  expect(screen.getByText('"Zed" will be deleted.')).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(api.snippetDelete).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Delete Zed" }));
+  await fireEvent.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Delete",
+    }),
+  );
+  await waitFor(() => expect(api.snippetDelete).toHaveBeenCalledWith("1"));
+});
+
+test("read-only disables editing", async () => {
+  await snippetsSection(
+    [snip("1", "Zed")],
+    [{ code: "config.read_only", params: { file: "snippets.toml" } }],
+  );
+  expect(
+    screen.getByText(
+      "Snippets were written by a newer version and are read-only.",
+    ),
+  ).toBeTruthy();
+  for (const name of ["New snippet", "Edit Zed", "Delete Zed"])
+    expect(
+      (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
+    ).toBe(true);
 });

@@ -11,6 +11,8 @@
     groups,
     onforwards,
     forwardsOpen = false,
+    onsnippets,
+    snippetsOpen = false,
     onsave,
   }: {
     tab: TabState;
@@ -18,6 +20,8 @@
     groups: Group[];
     onforwards: () => void;
     forwardsOpen?: boolean;
+    onsnippets?: () => void;
+    snippetsOpen?: boolean;
     /** Only for quick (unsaved) tabs. */
     onsave?: () => void;
   } = $props();
@@ -60,6 +64,15 @@
     aria-expanded={forwardsOpen}
     onclick={onforwards}>{t("status.forward")}</button
   >
+  {#if onsnippets}
+    <button
+      type="button"
+      class="fwd"
+      disabled={tab.phase !== "ready"}
+      aria-expanded={snippetsOpen}
+      onclick={onsnippets}>{t("snippet.button")}</button
+    >
+  {/if}
   {#if onsave}
     <button type="button" class="fwd" onclick={onsave}>{t("quick.save")}</button
     >

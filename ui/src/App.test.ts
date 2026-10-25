@@ -6,6 +6,7 @@ vi.mock("./lib/api", () => ({
     libraryGet: vi.fn().mockResolvedValue({ groups: [], connections: [] }),
     startupWarnings: vi.fn().mockResolvedValue([]),
     settingsGet: vi.fn().mockResolvedValue({}),
+    snippetsGet: vi.fn().mockResolvedValue([]),
   },
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({

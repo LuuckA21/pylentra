@@ -255,3 +255,59 @@ test("a pre-filled new connection (quick tab) is created and handed to onsaved",
     auth: { type: "Auto" },
   });
 });
+
+test("notes are saved; blank notes leave the key out", async () => {
+  setup();
+  await fillBasics();
+  await type("Notes", "Rack 3");
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(api.connectionSave).mock.calls[0][0].notes).toBe("Rack 3");
+
+  await type("Notes", "  \n ");
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.connectionSave).mock.calls[1][0]).not.toHaveProperty(
+    "notes",
+  );
+});
+
+test("notes of exactly 4096 bytes are saved", async () => {
+  setup();
+  await fillBasics();
+  await type("Notes", "è".repeat(2048));
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalledTimes(1));
+});
+
+test("notes over 4096 bytes are refused under the field", async () => {
+  setup();
+  await fillBasics();
+  // 4097 bytes: 2048 two-byte characters plus one more byte.
+  await type("Notes", "è".repeat(2048) + "x");
+  await save();
+  const field = screen.getByLabelText("Notes");
+  expect(field.getAttribute("aria-invalid")).toBe("true");
+  expect(
+    document.getElementById(field.getAttribute("aria-describedby")!)
+      ?.textContent,
+  ).toBe("Notes too long (at most 4 KB).");
+  expect(api.connectionSave).not.toHaveBeenCalled();
+});
+
+test("a server-side notes error lands under the field", async () => {
+  vi.mocked(api.connectionSave).mockRejectedValue({
+    code: "config.invalid",
+    params: { field: "notes", reason: "too long" },
+  });
+  setup();
+  await fillBasics();
+  await type("Notes", "x");
+  await save();
+  const field = screen.getByLabelText("Notes");
+  await waitFor(() => expect(field.getAttribute("aria-invalid")).toBe("true"));
+  expect(
+    document.getElementById(field.getAttribute("aria-describedby")!)
+      ?.textContent,
+  ).toContain("too long");
+});

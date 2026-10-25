@@ -9,6 +9,7 @@ use pylentra_core::error::{ApiError, CoreError};
 use pylentra_core::known_hosts::KnownHostEntry;
 use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
 use pylentra_core::secrets::SecretKind;
+use pylentra_core::snippets::Snippet;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
 use pylentra_core::ssh::{SessionId, SessionSink};
 use pylentra_core::ssh_config::{ScanResult, parse};
@@ -127,9 +128,52 @@ pub fn connection_delete(state: State<'_, AppState>, id: Uuid) -> Result<(), Api
 }
 
 pub fn do_connection_delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
-    Ok(state
-        .store()
-        .delete_connection(id, state.secrets.as_ref())?)
+    let mut store = state.store();
+    store.delete_connection(id, state.secrets.as_ref())?;
+    // The connection is already gone: a snippet file we cannot write (newer
+    // version, disk error) must not fail the delete.
+    if let Err(e) = state.snippets().remove_for_connection(id) {
+        log::warn!("could not remove the snippets of connection {id}: {e}");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn snippets_get(state: State<'_, AppState>) -> Result<Vec<Snippet>, ApiError> {
+    Ok(do_snippets_get(&state))
+}
+
+pub fn do_snippets_get(state: &AppState) -> Vec<Snippet> {
+    state.snippets().list().to_vec()
+}
+
+#[tauri::command]
+pub fn snippet_save(state: State<'_, AppState>, snippet: Snippet) -> Result<(), ApiError> {
+    do_snippet_save(&state, snippet)
+}
+
+pub fn do_snippet_save(state: &AppState, snippet: Snippet) -> Result<(), ApiError> {
+    // The store stays locked, so the connection cannot vanish before the write.
+    let store = state.store();
+    if let Some(id) = snippet.connection_id
+        && store.get(id).is_err()
+    {
+        return Err(CoreError::InvalidInput {
+            field: "connection_id".into(),
+            reason: "unknown connection".into(),
+        }
+        .into());
+    }
+    Ok(state.snippets().upsert(snippet)?)
+}
+
+#[tauri::command]
+pub fn snippet_delete(state: State<'_, AppState>, id: Uuid) -> Result<(), ApiError> {
+    do_snippet_delete(&state, id)
+}
+
+pub fn do_snippet_delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
+    Ok(state.snippets().delete(id)?)
 }
 
 #[tauri::command]
@@ -508,6 +552,7 @@ mod tests {
             forwards: vec![],
             color: None,
             icon: None,
+            notes: None,
         }
     }
 
@@ -640,6 +685,85 @@ mod tests {
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.recovered_corrupt");
+        let backup = std::path::Path::new(&warnings[0].params["backup"]);
+        assert!(backup.exists(), "backup {backup:?} should exist");
+    }
+
+    fn snippet(name: &str, connection_id: Option<Uuid>) -> Snippet {
+        Snippet {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            text: "ls".into(),
+            run: false,
+            connection_id,
+        }
+    }
+
+    #[test]
+    fn snippet_save_and_get() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let c = conn("a");
+        do_connection_save(&state, c.clone(), None, None).unwrap();
+        let (global, scoped) = (snippet("g", None), snippet("s", Some(c.id)));
+        do_snippet_save(&state, global.clone()).unwrap();
+        do_snippet_save(&state, scoped.clone()).unwrap();
+        assert_eq!(do_snippets_get(&state), vec![global, scoped]);
+    }
+
+    #[test]
+    fn snippet_save_rejects_unknown_connection() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = do_snippet_save(&state, snippet("s", Some(Uuid::new_v4()))).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "connection_id");
+        assert!(do_snippets_get(&state).is_empty());
+    }
+
+    #[test]
+    fn connection_delete_removes_its_snippets() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let a = conn("a");
+        do_connection_save(&state, a.clone(), None, None).unwrap();
+        let global = snippet("g", None);
+        do_snippet_save(&state, snippet("s", Some(a.id))).unwrap();
+        do_snippet_save(&state, global.clone()).unwrap();
+        do_connection_delete(&state, a.id).unwrap();
+        assert_eq!(do_snippets_get(&state), vec![global]);
+    }
+
+    #[test]
+    fn connection_delete_survives_read_only_snippets() {
+        let dir = TempDir::new().unwrap();
+        let a = conn("a");
+        let secrets = Arc::new(MemorySecretStore::default());
+        let state = AppState::load(dir.path(), None, secrets.clone()).unwrap();
+        do_connection_save(&state, a.clone(), None, None).unwrap();
+        drop(state);
+        std::fs::write(
+            dir.path().join("snippets.toml"),
+            format!(
+                "version = 9\n[[snippets]]\nid = \"{}\"\nname = \"s\"\ntext = \"ls\"\nconnection_id = \"{}\"\n",
+                Uuid::new_v4(),
+                a.id
+            ),
+        )
+        .unwrap();
+        let state = AppState::load(dir.path(), None, secrets).unwrap();
+        do_connection_delete(&state, a.id).unwrap();
+        assert!(do_library_get(&state).connections.is_empty());
+        assert_eq!(do_snippets_get(&state).len(), 1);
+    }
+
+    #[test]
+    fn startup_warnings_reports_corrupt_snippets() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("snippets.toml"), "not = [valid").unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let warnings = do_startup_warnings(&state);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "config.recovered_corrupt");
+        assert_eq!(warnings[0].params["file"], "snippets.toml");
         let backup = std::path::Path::new(&warnings[0].params["backup"]);
         assert!(backup.exists(), "backup {backup:?} should exist");
     }

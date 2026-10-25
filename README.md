@@ -73,6 +73,19 @@ Checks: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings`,
 `cargo test --workspace`, `pnpm --dir ui lint|check|test`.
 
+### Icons
+
+The sources are `src-tauri/icons/source/icon.svg` (full size) and `icon-small.svg`
+(hand-tuned for 16 to 32 px). After editing them, from the repo root run, in this order:
+
+```sh
+pnpm tauri icon src-tauri/icons/source/icon.svg   # regenerates src-tauri/icons/
+python3 scripts/icons-small.py                    # small-size PNG and icon.ico (pip install cairosvg pillow)
+```
+
+`tauri icon` also writes Square*Logo.png, StoreLogo.png, android/, ios/ and 64x64.png,
+which the app does not use; delete them before committing.
+
 ## Releasing
 
 One-time setup of the updater signing key:

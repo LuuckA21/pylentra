@@ -8,6 +8,10 @@ const made = vi.hoisted(() => ({
     options: Record<string, unknown>;
     selection: string;
     onSelect?: () => void;
+    paste: ReturnType<typeof vi.fn>;
+    input: ReturnType<typeof vi.fn>;
+    focus: ReturnType<typeof vi.fn>;
+    modes: { bracketedPasteMode: boolean };
   }[],
 }));
 vi.mock("@xterm/xterm", () => ({
@@ -17,6 +21,10 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     selection = "";
     onSelect?: () => void;
+    paste = vi.fn();
+    input = vi.fn();
+    focus = vi.fn();
+    modes = { bracketedPasteMode: false };
     constructor(options: Record<string, unknown>) {
       this.options = options;
       made.terms.push(this);
@@ -33,7 +41,6 @@ vi.mock("@xterm/xterm", () => ({
     getSelection() {
       return this.selection;
     }
-    focus() {}
     dispose() {}
   },
 }));
@@ -53,8 +60,9 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
 import { initialTab, type TabState } from "../lib/sessionReducer";
-import { connect } from "../lib/stores/sessions.svelte";
+import { connect, cycleTab } from "../lib/stores/sessions.svelte";
 import { settings } from "../lib/stores/settings.svelte";
+import { snippets } from "../lib/stores/snippets.svelte";
 import TerminalTab from "./TerminalTab.svelte";
 
 beforeEach(() => {
@@ -317,3 +325,116 @@ test("Ctrl+Shift+W asks the parent to close the tab", async () => {
   });
   expect(onclose).toHaveBeenCalledWith("t1");
 });
+
+// Snippet palette.
+const readyTab = { ...initialTab("t1", "c1"), phase: "ready" } as TabState;
+const props = (tab: TabState) => ({
+  tab,
+  active: true,
+  onedit: vi.fn(),
+  onsave: vi.fn(),
+  onclose: vi.fn(),
+});
+const shortcut = () =>
+  fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
+const pick = async (text: string, run: boolean) => {
+  snippets.list = [{ id: "s1", name: "S", text, run }];
+  await shortcut();
+  await fireEvent.click(screen.getByRole("option"));
+};
+
+test("Ctrl+Shift+P opens the palette on a ready tab only", async () => {
+  const { rerender } = render(TerminalTab, props(initialTab("t1", "c1")));
+  await shortcut();
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  await rerender(props(readyTab));
+  await shortcut();
+  expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
+});
+
+test("a snippet is pasted without its trailing newline and not run", async () => {
+  const term = setup2();
+  await pick("ls\n", false);
+  expect(term.paste).toHaveBeenCalledWith("ls");
+  expect(term.input).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  expect(term.focus).toHaveBeenCalled();
+});
+
+test("a snippet that runs sends Enter after the paste", async () => {
+  const term = setup2();
+  await pick("ls", true);
+  expect(term.paste).toHaveBeenCalledWith("ls");
+  expect(term.input).toHaveBeenCalledWith("\r");
+});
+
+test("several lines without bracketed paste ask first", async () => {
+  const term = setup2();
+  await pick("a\nb", false);
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(term.paste).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  await pick("a\nb", false);
+  await fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+  expect(term.paste).toHaveBeenCalledWith("a\nb");
+});
+
+test("several lines with bracketed paste go straight through", async () => {
+  const term = setup2();
+  term.modes.bracketedPasteMode = true;
+  await pick("a\nb", false);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(term.paste).toHaveBeenCalledWith("a\nb");
+});
+
+test("the palette closes when the session drops, and nothing is sent", async () => {
+  const term = setup2();
+  const { rerender } = view;
+  snippets.list = [{ id: "s1", name: "S", text: "ls", run: true }];
+  await shortcut();
+  await rerender({ tab: { ...readyTab, phase: "closed" } });
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  expect(term.paste).not.toHaveBeenCalled();
+  expect(term.input).not.toHaveBeenCalled();
+});
+
+test("Esc in the palette gives the focus back to the terminal", async () => {
+  const term = setup2();
+  await shortcut();
+  term.focus.mockClear();
+  await fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  expect(term.focus).toHaveBeenCalled();
+});
+
+test("tab shortcuts do not act behind the new-snippet form", async () => {
+  const p = props(readyTab);
+  render(TerminalTab, p);
+  await shortcut();
+  await fireEvent.click(screen.getByText("New snippet"));
+  expect(screen.getByRole("dialog", { name: "New snippet" })).toBeTruthy();
+  await fireEvent.keyDown(document.body, { key: "Tab", ctrlKey: true });
+  await fireEvent.keyDown(document.body, {
+    key: "W",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  expect(cycleTab).not.toHaveBeenCalled();
+  expect(p.onclose).not.toHaveBeenCalled();
+});
+
+test("opening the forwards panel closes the palette", async () => {
+  setup2();
+  await shortcut();
+  expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  expect(screen.getByRole("dialog", { name: "Port forwarding" })).toBeTruthy();
+});
+
+let view: ReturnType<typeof render>;
+function setup2() {
+  view = render(TerminalTab, props(readyTab));
+  return made.terms[0];
+}
