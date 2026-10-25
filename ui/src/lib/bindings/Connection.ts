@@ -4,4 +4,4 @@ import type { ConnIcon } from "./ConnIcon";
 import type { ForwardRule } from "./ForwardRule";
 import type { TagColor } from "./TagColor";
 
-export type Connection = { id: string, name: string, group_id: string | null, host: string, port: number, username: string, auth: AuthMethod, jump_via: string | null, forwards: Array<ForwardRule>, color?: TagColor, icon?: ConnIcon, };
+export type Connection = { id: string, name: string, group_id: string | null, host: string, port: number, username: string, auth: AuthMethod, jump_via: string | null, forwards: Array<ForwardRule>, color?: TagColor, icon?: ConnIcon, notes?: string, };

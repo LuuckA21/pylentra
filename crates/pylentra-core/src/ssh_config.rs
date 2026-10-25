@@ -339,6 +339,7 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                     forwards,
                     color: None,
                     icon: None,
+                    notes: None,
                 },
             }
         })

@@ -552,6 +552,7 @@ mod tests {
             forwards: vec![],
             color: None,
             icon: None,
+            notes: None,
         }
     }
 

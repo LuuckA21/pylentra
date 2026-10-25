@@ -44,6 +44,7 @@ fn saved(name: &str) -> Connection {
         forwards: vec![],
         color: None,
         icon: None,
+        notes: None,
     }
 }
 

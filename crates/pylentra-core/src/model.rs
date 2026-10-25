@@ -8,6 +8,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 pub const MAX_JUMP_DEPTH: usize = 5;
+pub const MAX_NOTES_BYTES: usize = 4_096;
 
 fn default_port() -> u16 {
     22
@@ -99,6 +100,9 @@ pub struct Connection {
     )]
     #[ts(optional)]
     pub icon: Option<ConnIcon>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub notes: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -342,6 +346,13 @@ impl Connection {
             }
         }
         require_nonzero(self.port, "port".into())?;
+        if self
+            .notes
+            .as_deref()
+            .is_some_and(|n| n.len() > MAX_NOTES_BYTES)
+        {
+            return Err(invalid("notes", "too long"));
+        }
 
         for (i, rule) in self.forwards.iter().enumerate() {
             rule.validate(&format!("forwards[{i}]"))?;
@@ -404,6 +415,7 @@ mod tests {
             forwards: vec![],
             color: None,
             icon: None,
+            notes: None,
         }
     }
 
@@ -422,6 +434,15 @@ mod tests {
             Err(CoreError::InvalidInput { field, .. }) => field,
             other => format!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn notes_too_long_rejected() {
+        let mut c = conn();
+        c.notes = Some("a".repeat(MAX_NOTES_BYTES + 1));
+        assert_eq!(invalid_field(&c), "notes");
+        c.notes = Some("a".repeat(MAX_NOTES_BYTES));
+        assert!(c.validate().is_ok());
     }
 
     #[test]
