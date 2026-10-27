@@ -54,6 +54,14 @@
         ? `R ${r.bind_port} → ${r.dest_host}:${r.dest_port}`
         : t("fwd.dynamicRow", { bind: `${r.bind_host}:${r.bind_port}` });
 
+  // Where a client connects: a wildcard bind is reached through loopback.
+  const proxyHost = (h: string) =>
+    h === "0.0.0.0" || h === "::"
+      ? "127.0.0.1"
+      : h.includes(":")
+        ? `[${h}]`
+        : h;
+
   const usable = $derived(!!tab.sessionId && tab.phase === "ready");
 
   // Opened by the user: focus moves in, and back to the opener on close. Opened by
@@ -247,7 +255,10 @@
           </button>
           {#if row.rule.type === "Dynamic" && row.state.type === "Active"}
             <p class="muted hint">
-              {t("fwd.dynamicHint", { port: row.state.bound_port })}
+              {t("fwd.dynamicHint", {
+                host: proxyHost(row.rule.bind_host),
+                port: row.state.bound_port,
+              })}
             </p>
           {/if}
         </li>

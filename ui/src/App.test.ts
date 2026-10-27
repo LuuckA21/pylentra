@@ -15,7 +15,7 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 vi.mock("@tauri-apps/plugin-log", () => ({ warn: vi.fn() }));
 const win = vi.hoisted(() => ({
   closeRequested: undefined as
-    ((e: { preventDefault: () => void }) => void) | undefined,
+    ((e: { preventDefault: () => void }) => void | Promise<void>) | undefined,
   unlisten: vi.fn(),
   destroy: vi.fn().mockResolvedValue(undefined),
   isFullscreen: vi.fn().mockResolvedValue(false),
@@ -121,6 +121,28 @@ test("the window close is held back while a session is ready", async () => {
   expect(win.destroy).toHaveBeenCalled();
 });
 
+test("closing leaves fullscreen first, so the saved size is the normal one", async () => {
+  win.isFullscreen.mockResolvedValue(true);
+  openReady();
+  render(App);
+  await waitFor(() => expect(win.closeRequested).toBeDefined());
+  win.closeRequested?.({ preventDefault: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+  await waitFor(() => expect(win.destroy).toHaveBeenCalled());
+  expect(win.setFullscreen).toHaveBeenCalledWith(false);
+  expect(win.setFullscreen.mock.invocationCallOrder[0]).toBeLessThan(
+    win.destroy.mock.invocationCallOrder[0],
+  );
+});
+
+test("an unconfirmed close leaves fullscreen before it proceeds", async () => {
+  win.isFullscreen.mockResolvedValue(true);
+  render(App);
+  await waitFor(() => expect(win.closeRequested).toBeDefined());
+  await win.closeRequested?.({ preventDefault: vi.fn() });
+  expect(win.setFullscreen).toHaveBeenCalledWith(false);
+});
+
 test("a failed window destroy shows an error and dismisses the dialog", async () => {
   win.destroy.mockRejectedValueOnce(new Error("denied"));
   openReady();
@@ -190,6 +212,13 @@ test("F11 toggles fullscreen, but not behind a dialog", async () => {
   win.setFullscreen.mockClear();
   await closeX();
   await fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "F11" });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(win.setFullscreen).not.toHaveBeenCalled();
+});
+
+test("F11 key auto-repeat does not toggle fullscreen", async () => {
+  render(App);
+  await fireEvent.keyDown(document.body, { key: "F11", repeat: true });
   await new Promise((r) => setTimeout(r, 0));
   expect(win.setFullscreen).not.toHaveBeenCalled();
 });

@@ -196,6 +196,8 @@ cover it.
    open the app again: the window is visible on the main monitor.
 4. F11 enters and leaves fullscreen; after closing in fullscreen, the app
    reopens not in fullscreen.
+5. Close the app while in fullscreen, open it again and leave fullscreen: the
+   window has its previous normal size, not the monitor size.
 
 ## Icon
 

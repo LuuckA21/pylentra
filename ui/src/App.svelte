@@ -93,11 +93,23 @@
   async function onkeydown(e: KeyboardEvent) {
     if (fromOtherModal(e) || shortcutFor(e) !== "fullscreen") return;
     e.preventDefault();
+    if (e.repeat) return;
     try {
       const w = getCurrentWindow();
       await w.setFullscreen(!(await w.isFullscreen()));
     } catch (err) {
       toastError(err);
+    }
+  }
+
+  // The window-state plugin saves the size of a non-maximized window on close:
+  // in fullscreen that would be the monitor's.
+  async function leaveFullscreen() {
+    try {
+      const w = getCurrentWindow();
+      if (await w.isFullscreen()) await w.setFullscreen(false);
+    } catch (err) {
+      warn(`leaving fullscreen failed: ${err}`);
     }
   }
 
@@ -114,9 +126,9 @@
       loadSnippets(),
     ]).catch(toastError);
 
-    const unlisten = getCurrentWindow().onCloseRequested((e) => {
+    const unlisten = getCurrentWindow().onCloseRequested(async (e) => {
       const n = liveCount();
-      if (!settings.confirm_close_active || !n) return;
+      if (!settings.confirm_close_active || !n) return leaveFullscreen();
       e.preventDefault();
       confirming = {
         title: t("confirm.window.title"),
@@ -124,7 +136,10 @@
           n === 1
             ? t("confirm.window.bodyOne")
             : t("confirm.window.body", { n }),
-        action: () => void getCurrentWindow().destroy().catch(toastError),
+        action: () =>
+          void leaveFullscreen()
+            .then(() => getCurrentWindow().destroy())
+            .catch(toastError),
       };
     });
     return () => void unlisten.then((f) => f());

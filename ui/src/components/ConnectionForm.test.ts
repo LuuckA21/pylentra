@@ -358,7 +358,7 @@ test("a saved Dynamic rule opens as a SOCKS row without destination fields", () 
     onsaved: vi.fn(),
     oncancel: vi.fn(),
   });
-  expect(screen.getByText("SOCKS on 127.0.0.1:1081")).toBeTruthy();
+  expect(screen.getByText("SOCKS 1: 127.0.0.1:1081")).toBeTruthy();
   expect(screen.getByLabelText("Bind address")).toBeTruthy();
   expect(screen.queryByLabelText("Destination port")).toBeNull();
 });

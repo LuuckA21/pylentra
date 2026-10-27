@@ -402,6 +402,7 @@
             <legend
               >{r.type === "Dynamic"
                 ? t("form.dynamic", {
+                    n: i + 1,
                     bind: `${r.bind_host}:${r.bind_port ?? ""}`,
                   })
                 : t(r.type === "Local" ? "form.local" : "form.remote", {

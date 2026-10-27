@@ -257,3 +257,27 @@ test("an active SOCKS rule shows the proxy hint with the real port", () => {
     screen.getByText(/Use 127\.0\.0\.1:40000 as a SOCKS5 proxy/),
   ).toBeTruthy();
 });
+
+test.each([
+  ["::1", "[::1]:40000"],
+  ["0.0.0.0", "127.0.0.1:40000"],
+  ["::", "127.0.0.1:40000"],
+  ["192.168.1.5", "192.168.1.5:40000"],
+])("the SOCKS hint for a rule bound to %s uses %s", (bind_host, shown) => {
+  const rule: ForwardRule = { ...socks, bind_host };
+  library.connections = [
+    { id: "c1", name: "web", forwards: [rule] } as unknown as Connection,
+  ];
+  render(ForwardPanel, {
+    open: true,
+    onclose,
+    tab: tab({
+      1: { rule, state: { type: "Active", bound_port: 40000 } },
+    }),
+  });
+  expect(
+    screen.getByText(
+      new RegExp(`Use ${shown.replace(/[[\]]/g, "\\$&")} as a SOCKS5`),
+    ),
+  ).toBeTruthy();
+});

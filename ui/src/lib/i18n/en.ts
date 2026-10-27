@@ -89,7 +89,7 @@ export const en = {
   "form.jumpVia": "Connect through",
   "form.addLocal": "Add local forward",
   "form.addRemote": "Add remote forward",
-  "form.dynamic": "SOCKS on {bind}",
+  "form.dynamic": "SOCKS {n}: {bind}",
   "form.addDynamic": "+ SOCKS",
   "form.local": "Local forward {n}",
   "form.remote": "Remote forward {n}",
@@ -165,7 +165,7 @@ export const en = {
   "fwd.dynamicRow": "SOCKS {bind}",
   "fwd.dynamicPill": "SOCKS :{port}",
   "fwd.dynamicHint":
-    "Use 127.0.0.1:{port} as a SOCKS5 proxy in the browser or with curl --socks5-hostname.",
+    "Use {host}:{port} as a SOCKS5 proxy in the browser or with curl --socks5-hostname.",
   "fwd.create": "Start tunnel",
   "fwd.sessionOnly": "The tunnel lasts for this session only.",
 
