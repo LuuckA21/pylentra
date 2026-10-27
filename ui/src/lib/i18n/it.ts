@@ -332,4 +332,8 @@ export const it: Record<MessageKey, string> = {
   "snippet.confirmBody":
     "Questa shell eseguirà ogni riga appena incollata. Continuare?",
   "snippet.confirmOk": "Incolla",
+  "snippet.varsTitle": "Valori per {name}",
+  "snippet.varsSend": "Invia",
+  "snippet.asks": "chiede valori",
+  "snippet.varsHint": "Usa {{nome}} per chiedere un valore all'invio.",
 };

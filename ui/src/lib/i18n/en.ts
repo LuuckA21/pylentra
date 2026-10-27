@@ -325,6 +325,10 @@ export const en = {
   "snippet.confirmBody":
     "This shell will run each line as soon as it is pasted. Continue?",
   "snippet.confirmOk": "Paste",
+  "snippet.varsTitle": "Values for {name}",
+  "snippet.varsSend": "Send",
+  "snippet.asks": "asks for values",
+  "snippet.varsHint": "Use {{name}} to ask for a value when sending.",
 } as const;
 
 export type MessageKey = keyof typeof en;

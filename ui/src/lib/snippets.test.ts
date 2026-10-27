@@ -81,6 +81,14 @@ test("fillVars replaces in one pass and inserts values literally", () => {
   expect(fillVars("{{a}}{{b}}", { a: "{{b}}", b: "x" })).toBe("{{b}}x");
 });
 
+test("fillVars only reads own properties", () => {
+  expect(fillVars("{{x}}", {})).toBe("");
+  expect(fillVars("{{constructor}}", {})).toBe("");
+  expect(
+    fillVars("{{__proto__}}", Object.fromEntries([["__proto__", "v"]])),
+  ).toBe("v");
+});
+
 test("recallVar returns what rememberVars stored, per snippet", () => {
   rememberVars("s1", { x: "v" });
   expect(recallVar("s1", "x")).toBe("v");

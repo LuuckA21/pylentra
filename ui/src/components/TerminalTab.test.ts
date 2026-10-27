@@ -408,6 +408,90 @@ test("a pending multi-line confirm goes away when the session drops", async () =
   expect(term.paste).not.toHaveBeenCalled();
 });
 
+const dlg = () => screen.getByRole("dialog", { name: "Values for S" });
+const typeVar = (label: string, value: string) =>
+  fireEvent.input(screen.getByLabelText(label), { target: { value } });
+
+test("a snippet with a variable asks, then pastes the filled text", async () => {
+  const term = setup2();
+  await pick("tail {{s}}", false);
+  expect(dlg()).toBeTruthy();
+  expect(term.paste).not.toHaveBeenCalled();
+  await typeVar("s", "app");
+  await fireEvent.submit(dlg().querySelector("form")!);
+  expect(term.paste).toHaveBeenCalledWith("tail app");
+  expect(screen.queryByRole("dialog", { name: "Values for S" })).toBeNull();
+});
+
+test("a variable snippet that runs sends Enter after the filled paste", async () => {
+  const term = setup2();
+  await pick("tail {{s}}", true);
+  await typeVar("s", "app");
+  await fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(term.paste).toHaveBeenCalledWith("tail app");
+  expect(term.input).toHaveBeenCalledWith("\r");
+});
+
+test("cancelling the variables dialog sends nothing and focuses the terminal", async () => {
+  const term = setup2();
+  await pick("tail {{s}}", false);
+  term.focus.mockClear();
+  await fireEvent.keyDown(screen.getByLabelText("s"), { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Values for S" })).toBeNull();
+  expect(term.paste).not.toHaveBeenCalled();
+  expect(term.focus).toHaveBeenCalled();
+});
+
+test("the dialog proposes the last values", async () => {
+  setup2();
+  await pick("tail {{r}}", false);
+  await typeVar("r", "app");
+  await fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await shortcut();
+  await fireEvent.click(screen.getByRole("option"));
+  expect((screen.getByLabelText("r") as HTMLInputElement).value).toBe("app");
+});
+
+test("a snippet without variables skips the dialog", async () => {
+  const term = setup2();
+  await pick("tail x", false);
+  expect(screen.queryByRole("dialog", { name: "Values for S" })).toBeNull();
+  expect(term.paste).toHaveBeenCalledWith("tail x");
+});
+
+// An <input> strips newlines from values, so the lines come from the snippet.
+test("a filled multi-line snippet still asks for confirmation", async () => {
+  const term = setup2();
+  await pick("echo {{m}}\nls", false);
+  await typeVar("m", "x");
+  await fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByRole("alertdialog")).toBeTruthy();
+  expect(term.paste).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+  expect(term.paste).toHaveBeenCalledWith("echo x\nls");
+});
+
+test("the variables dialog goes away when the session drops", async () => {
+  const term = setup2();
+  await pick("tail {{s}}", false);
+  await view.rerender({ tab: { ...readyTab, phase: "closed" } });
+  expect(screen.queryByRole("dialog", { name: "Values for S" })).toBeNull();
+  expect(term.paste).not.toHaveBeenCalled();
+});
+
+test("tab shortcuts do not act behind the variables dialog", async () => {
+  const p = props(readyTab);
+  render(TerminalTab, p);
+  await pick("tail {{s}}", false);
+  await fireEvent.keyDown(document.body, {
+    key: "W",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  expect(dlg()).toBeTruthy();
+  expect(p.onclose).not.toHaveBeenCalled();
+});
+
 test("switching to another tab closes the palette", async () => {
   setup2();
   await shortcut();

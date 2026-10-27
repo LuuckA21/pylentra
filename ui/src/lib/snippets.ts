@@ -56,7 +56,9 @@ export const fillVars = (
   text: string,
   values: Record<string, string>,
 ): string =>
-  text.replace(VAR, (_, name?: string) => (name ? (values[name] ?? "") : "{{"));
+  text.replace(VAR, (_, name?: string) =>
+    name ? (Object.hasOwn(values, name) ? values[name] : "") : "{{",
+  );
 
 const remembered = new Map<string, string>();
 
