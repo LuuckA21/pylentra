@@ -4,6 +4,7 @@ mod forward;
 mod handler;
 mod jump;
 mod session;
+mod socks;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
