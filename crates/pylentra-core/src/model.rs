@@ -107,6 +107,9 @@ pub struct Connection {
     )]
     #[ts(optional)]
     pub notes: Option<String>,
+    #[serde(flatten)]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -156,6 +159,9 @@ pub struct Group {
     )]
     #[ts(optional)]
     pub color: Option<TagColor>,
+    #[serde(flatten)]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, TS)]
@@ -420,6 +426,7 @@ mod tests {
             color: None,
             icon: None,
             notes: None,
+            extra: Default::default(),
         }
     }
 

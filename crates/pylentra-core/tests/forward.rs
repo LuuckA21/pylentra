@@ -68,6 +68,7 @@ fn conn(env: &Env, forwards: Vec<ForwardRule>) -> Connection {
         color: None,
         icon: None,
         notes: None,
+        extra: Default::default(),
     }
 }
 

@@ -119,6 +119,7 @@ fn conn(server: &TestServer, auth: AuthMethod) -> Connection {
         color: None,
         icon: None,
         notes: None,
+        extra: Default::default(),
     }
 }
 

@@ -453,6 +453,7 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                     color: None,
                     icon: None,
                     notes: None,
+                    extra: Default::default(),
                 },
             }
         })

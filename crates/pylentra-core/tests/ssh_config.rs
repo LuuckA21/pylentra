@@ -45,6 +45,7 @@ fn saved(name: &str) -> Connection {
         color: None,
         icon: None,
         notes: None,
+        extra: Default::default(),
     }
 }
 

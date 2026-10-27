@@ -553,7 +553,25 @@ mod tests {
             color: None,
             icon: None,
             notes: None,
+            extra: Default::default(),
         }
+    }
+
+    #[test]
+    fn ui_json_with_nulls_still_deserializes() {
+        // `extra` is flattened, so serde buffers the whole object first.
+        let c: Connection = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(), "name": "n", "group_id": null, "host": "h",
+            "port": 22, "username": "u", "auth": { "type": "Agent" },
+            "jump_via": null, "forwards": [], "color": null,
+        }))
+        .unwrap();
+        assert_eq!((c.group_id, c.color), (None, None));
+        assert!(c.extra.is_empty());
+        let g: Group =
+            serde_json::from_value(serde_json::json!({ "id": Uuid::new_v4(), "name": "g" }))
+                .unwrap();
+        assert!(g.extra.is_empty());
     }
 
     fn secret(state: &AppState, id: Uuid, kind: SecretKind) -> Option<String> {
