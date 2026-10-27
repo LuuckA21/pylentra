@@ -8,6 +8,7 @@ const made = vi.hoisted(() => ({
     options: Record<string, unknown>;
     selection: string;
     onSelect?: () => void;
+    keyHandler?: (e: KeyboardEvent) => boolean;
     paste: ReturnType<typeof vi.fn>;
     input: ReturnType<typeof vi.fn>;
     focus: ReturnType<typeof vi.fn>;
@@ -31,7 +32,10 @@ vi.mock("@xterm/xterm", () => ({
     }
     loadAddon() {}
     open() {}
-    attachCustomKeyEventHandler() {}
+    keyHandler?: (e: KeyboardEvent) => boolean;
+    attachCustomKeyEventHandler(cb: (e: KeyboardEvent) => boolean) {
+      this.keyHandler = cb;
+    }
     onData() {}
     onBinary() {}
     onResize() {}
@@ -546,3 +550,13 @@ function setup2() {
   view = render(TerminalTab, props(readyTab));
   return made.terms[0];
 }
+
+test("xterm leaves F11 to the window", () => {
+  const term = setup();
+  expect(term.keyHandler?.(new KeyboardEvent("keydown", { key: "F11" }))).toBe(
+    false,
+  );
+  expect(term.keyHandler?.(new KeyboardEvent("keydown", { key: "a" }))).toBe(
+    true,
+  );
+});

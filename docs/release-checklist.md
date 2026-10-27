@@ -170,6 +170,8 @@ cover it.
    position.
 3. With the window on a second monitor, close the app, unplug that monitor and
    open the app again: the window is visible on the main monitor.
+4. F11 enters and leaves fullscreen; after closing in fullscreen, the app
+   reopens not in fullscreen.
 
 ## Icon
 

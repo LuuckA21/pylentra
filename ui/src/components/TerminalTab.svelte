@@ -273,11 +273,13 @@
   function run(a: Action, e: KeyboardEvent) {
     // Copy and paste act on the terminal only when it has focus; elsewhere the
     // native behavior stays.
-    // Search and quick connect focus their own fields, which handle them.
+    // Search and quick connect focus their own fields, which handle them;
+    // fullscreen belongs to App.
     const inTerminal = el.contains(e.target as Node);
     if (
       a === "search" ||
       a === "quickConnect" ||
+      a === "fullscreen" ||
       ((a === "copy" || a === "paste") && !inTerminal)
     )
       return;

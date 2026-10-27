@@ -14,6 +14,7 @@
   import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
   import Welcome from "./components/Welcome.svelte";
   import { colorOf } from "./lib/appearance";
+  import { fromOtherModal, shortcutFor } from "./lib/shortcuts";
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
   import { library, refresh } from "./lib/stores/library.svelte";
@@ -89,6 +90,17 @@
       };
   }
 
+  async function onkeydown(e: KeyboardEvent) {
+    if (fromOtherModal(e) || shortcutFor(e) !== "fullscreen") return;
+    e.preventDefault();
+    try {
+      const w = getCurrentWindow();
+      await w.setFullscreen(!(await w.isFullscreen()));
+    } catch (err) {
+      toastError(err);
+    }
+  }
+
   onMount(() => {
     // Updater failures (offline, endpoint down) are never shown at startup.
     Promise.all([
@@ -118,6 +130,8 @@
     return () => void unlisten.then((f) => f());
   });
 </script>
+
+<svelte:window {onkeydown} />
 
 <div class="app">
   <Banner />
