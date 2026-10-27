@@ -24,7 +24,7 @@
   const key = (r: ForwardRule) =>
     [
       r.type,
-      r.type === "Local" ? r.bind_host : "",
+      r.type !== "Remote" ? r.bind_host : "",
       r.bind_port,
       r.type === "Dynamic" ? "" : r.dest_host,
       r.type === "Dynamic" ? "" : r.dest_port,
@@ -52,7 +52,7 @@
       ? `L ${r.bind_host}:${r.bind_port} → ${r.dest_host}:${r.dest_port}`
       : r.type === "Remote"
         ? `R ${r.bind_port} → ${r.dest_host}:${r.dest_port}`
-        : `D ${r.bind_host}:${r.bind_port}`;
+        : t("fwd.dynamicRow", { bind: `${r.bind_host}:${r.bind_port}` });
 
   const usable = $derived(!!tab.sessionId && tab.phase === "ready");
 
@@ -114,7 +114,7 @@
   // The "Add tunnel" mini form. Tunnels live only in the session: the
   // connection is never saved from here.
   const blank = () => ({
-    type: "Local" as "Local" | "Remote",
+    type: "Local" as ForwardRule["type"],
     bind_host: "127.0.0.1",
     bind_port: null as number | null,
     dest_host: "localhost",
@@ -122,6 +122,11 @@
   });
   let adding = $state(false);
   let draft = $state(blank());
+  // Same defaults as the form's "+ SOCKS" row.
+  function setType(type: ForwardRule["type"]) {
+    draft.type = type;
+    if (type === "Dynamic" && draft.bind_port === null) draft.bind_port = 1080;
+  }
   let errors = $state<Record<string, string>>({});
   const num = (v: string) => (v === "" ? null : Number(v));
   const uid = $props.id();
@@ -140,7 +145,8 @@
       }),
     ))
       found[k.replace("forwards[0].", "")] = v;
-    if (!d.dest_host.trim()) found.dest_host = "form.error.required";
+    if (d.type !== "Dynamic" && !d.dest_host.trim())
+      found.dest_host = "form.error.required";
     errors = Object.fromEntries(
       Object.entries(found).map(([k, v]) => [k, t(v)]),
     );
@@ -155,9 +161,16 @@
     try {
       await api.forwardStart(
         tab.sessionId,
-        d.type === "Local"
-          ? { type: "Local", bind_host: d.bind_host.trim(), ...common }
-          : { type: "Remote", ...common },
+        d.type === "Dynamic"
+          ? {
+              type: "Dynamic",
+              bind_host: d.bind_host.trim(),
+              bind_port: d.bind_port!,
+              auto_start: false,
+            }
+          : d.type === "Local"
+            ? { type: "Local", bind_host: d.bind_host.trim(), ...common }
+            : { type: "Remote", ...common },
       );
       adding = false;
       draft = blank();
@@ -232,6 +245,11 @@
           <button type="button" disabled={!usable} onclick={() => toggle(row)}>
             {t(row.state.type === "Active" ? "fwd.stop" : "fwd.start")}
           </button>
+          {#if row.rule.type === "Dynamic" && row.state.type === "Active"}
+            <p class="muted hint">
+              {t("fwd.dynamicHint", { port: row.state.bound_port })}
+            </p>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -240,17 +258,25 @@
       <form onsubmit={submit} novalidate>
         <div class="field">
           <label for="{uid}-type">{t("fwd.type")}</label>
-          <select id="{uid}-type" bind:value={draft.type}>
+          <select
+            id="{uid}-type"
+            value={draft.type}
+            onchange={(e) =>
+              setType(e.currentTarget.value as ForwardRule["type"])}
+          >
             <option value="Local">{t("fwd.local")}</option>
             <option value="Remote">{t("fwd.remote")}</option>
+            <option value="Dynamic">{t("fwd.dynamic")}</option>
           </select>
         </div>
-        {#if draft.type === "Local"}
+        {#if draft.type !== "Remote"}
           {@render field("bind_host", "form.bindHost", false)}
         {/if}
         {@render field("bind_port", "form.bindPort", true)}
-        {@render field("dest_host", "form.destHost", false)}
-        {@render field("dest_port", "form.destPort", true)}
+        {#if draft.type !== "Dynamic"}
+          {@render field("dest_host", "form.destHost", false)}
+          {@render field("dest_port", "form.destPort", true)}
+        {/if}
         <p class="muted">{t("fwd.sessionOnly")}</p>
         <div class="actions">
           <button type="button" onclick={() => (adding = false)}
@@ -306,6 +332,7 @@
   }
   li {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 2px 0;
@@ -322,6 +349,11 @@
   .muted {
     margin: 4px 0;
     color: var(--fg-muted);
+  }
+  .hint {
+    flex-basis: 100%;
+    margin: 0 0 4px;
+    font-size: 12px;
   }
   .field {
     display: flex;

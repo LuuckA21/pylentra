@@ -87,8 +87,8 @@
   function addForward(type: Row["type"]) {
     forwards.push({
       type,
-      bind_host: type === "Local" ? "127.0.0.1" : "",
-      bind_port: null,
+      bind_host: type === "Remote" ? "" : "127.0.0.1",
+      bind_port: type === "Dynamic" ? 1080 : null,
       dest_host: "localhost",
       dest_port: null,
       auto_start: false,
@@ -400,11 +400,15 @@
           {@const p = `forwards[${i}]`}
           <fieldset class="forward">
             <legend
-              >{t(r.type === "Local" ? "form.local" : "form.remote", {
-                n: i + 1,
-              })}</legend
+              >{r.type === "Dynamic"
+                ? t("form.dynamic", {
+                    bind: `${r.bind_host}:${r.bind_port ?? ""}`,
+                  })
+                : t(r.type === "Local" ? "form.local" : "form.remote", {
+                    n: i + 1,
+                  })}</legend
             >
-            {#if r.type === "Local"}
+            {#if r.type !== "Remote"}
               {@render input(
                 t("form.bindHost"),
                 `${p}.bind_host`,
@@ -419,19 +423,21 @@
               (v) => (r.bind_port = num(v)),
               { type: "number" },
             )}
-            {@render input(
-              t("form.destHost"),
-              `${p}.dest_host`,
-              r.dest_host,
-              (v) => (r.dest_host = v),
-            )}
-            {@render input(
-              t("form.destPort"),
-              `${p}.dest_port`,
-              r.dest_port,
-              (v) => (r.dest_port = num(v)),
-              { type: "number" },
-            )}
+            {#if r.type !== "Dynamic"}
+              {@render input(
+                t("form.destHost"),
+                `${p}.dest_host`,
+                r.dest_host,
+                (v) => (r.dest_host = v),
+              )}
+              {@render input(
+                t("form.destPort"),
+                `${p}.dest_port`,
+                r.dest_port,
+                (v) => (r.dest_port = num(v)),
+                { type: "number" },
+              )}
+            {/if}
             {@render check(
               t("form.autoStart"),
               r.auto_start,
@@ -452,6 +458,9 @@
           >
           <button type="button" onclick={() => addForward("Remote")}
             >{t("form.addRemote")}</button
+          >
+          <button type="button" onclick={() => addForward("Dynamic")}
+            >{t("form.addDynamic")}</button
           >
         </div>
       </fieldset>

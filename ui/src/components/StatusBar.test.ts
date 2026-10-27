@@ -43,6 +43,27 @@ test("shows the group pill, one pill per active forward and the connected time",
   expect(screen.getByText("2 h")).toBeTruthy();
 });
 
+test("an active SOCKS forward shows a SOCKS pill", () => {
+  const socks = {
+    type: "Dynamic",
+    bind_host: "127.0.0.1",
+    bind_port: 1080,
+    auto_start: false,
+  } as const;
+  render(StatusBar, {
+    tab: {
+      ...tab(Date.now()),
+      forwards: {
+        1: { rule: socks, state: { type: "Active", bound_port: 1080 } },
+      },
+    },
+    connection,
+    groups,
+    onforwards: () => {},
+  });
+  expect(screen.getByText(/SOCKS :1080/)).toBeTruthy();
+});
+
 test("short sessions read '< 1 min' and minutes count up", () => {
   const { unmount } = render(StatusBar, {
     tab: tab(Date.now()),

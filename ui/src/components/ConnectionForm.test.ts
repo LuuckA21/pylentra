@@ -311,3 +311,54 @@ test("a server-side notes error lands under the field", async () => {
       ?.textContent,
   ).toContain("too long");
 });
+
+test("+ SOCKS adds a row with defaults and saves a Dynamic rule", async () => {
+  setup();
+  await fillBasics();
+  await fireEvent.click(screen.getByRole("button", { name: "+ SOCKS" }));
+  expect(
+    (screen.getByLabelText("Bind address") as HTMLInputElement).value,
+  ).toBe("127.0.0.1");
+  expect((screen.getByLabelText("Bind port") as HTMLInputElement).value).toBe(
+    "1080",
+  );
+  expect(screen.queryByLabelText("Destination host")).toBeNull();
+  await save();
+  await waitFor(() => expect(api.connectionSave).toHaveBeenCalled());
+  expect(vi.mocked(api.connectionSave).mock.calls[0][0].forwards).toEqual([
+    {
+      type: "Dynamic",
+      bind_host: "127.0.0.1",
+      bind_port: 1080,
+      auto_start: false,
+    },
+  ]);
+});
+
+test("a saved Dynamic rule opens as a SOCKS row without destination fields", () => {
+  render(ConnectionForm, {
+    connection: {
+      id: "c",
+      name: "w",
+      host: "h",
+      port: 22,
+      username: "u",
+      auth: { type: "Auto" },
+      group_id: null,
+      jump_via: null,
+      forwards: [
+        {
+          type: "Dynamic",
+          bind_host: "127.0.0.1",
+          bind_port: 1081,
+          auto_start: true,
+        },
+      ],
+    } satisfies Connection,
+    onsaved: vi.fn(),
+    oncancel: vi.fn(),
+  });
+  expect(screen.getByText("SOCKS on 127.0.0.1:1081")).toBeTruthy();
+  expect(screen.getByLabelText("Bind address")).toBeTruthy();
+  expect(screen.queryByLabelText("Destination port")).toBeNull();
+});

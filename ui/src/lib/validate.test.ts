@@ -38,3 +38,12 @@ test("local forwards need an IP, remote ones skip it", () => {
     Object.keys(validate({ ...ok, forwards: [local("::1", 0, null)] })),
   ).toEqual(["forwards[0].bind_port", "forwards[0].dest_port"]);
 });
+
+test("dynamic forwards need an IP and a port but no destination", () => {
+  const dyn = (bind_host: string, bind_port: number | null) =>
+    ({ type: "Dynamic", bind_host, bind_port, dest_port: null }) as const;
+  expect(validate({ ...ok, forwards: [dyn("127.0.0.1", 1080)] })).toEqual({});
+  expect(
+    Object.keys(validate({ ...ok, forwards: [dyn("localhost", null)] })),
+  ).toEqual(["forwards[0].bind_host", "forwards[0].bind_port"]);
+});

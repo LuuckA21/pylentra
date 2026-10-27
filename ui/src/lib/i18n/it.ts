@@ -92,6 +92,8 @@ export const it: Record<MessageKey, string> = {
   "form.jumpVia": "Connetti tramite",
   "form.addLocal": "Aggiungi inoltro locale",
   "form.addRemote": "Aggiungi inoltro remoto",
+  "form.dynamic": "SOCKS su {bind}",
+  "form.addDynamic": "+ SOCKS",
   "form.local": "Inoltro locale {n}",
   "form.remote": "Inoltro remoto {n}",
   "form.bindHost": "Indirizzo di ascolto",
@@ -162,6 +164,11 @@ export const it: Record<MessageKey, string> = {
   "fwd.type": "Tipo",
   "fwd.local": "Locale",
   "fwd.remote": "Remoto",
+  "fwd.dynamic": "SOCKS (dinamico)",
+  "fwd.dynamicRow": "SOCKS {bind}",
+  "fwd.dynamicPill": "SOCKS :{port}",
+  "fwd.dynamicHint":
+    "Usa 127.0.0.1:{port} come proxy SOCKS5 nel browser o con curl --socks5-hostname.",
   "fwd.create": "Avvia tunnel",
   "fwd.sessionOnly": "Il tunnel vale solo per questa sessione.",
 
