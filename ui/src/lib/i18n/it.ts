@@ -288,7 +288,6 @@ export const it: Record<MessageKey, string> = {
   "import.note.UnknownJump": "Jump host {alias} non trovato: nessun jump host.",
   "import.note.RemoteBindIgnored":
     "L'indirizzo di ascolto remoto viene ignorato.",
-  "import.note.DynamicForward": "DynamicForward non è supportato.",
   "import.note.ProxyCommand": "ProxyCommand non è supportato.",
   "import.note.InvalidPort": "Porta non valida: {value}.",
   "import.note.InvalidForward": "Forward non valido: {value}.",

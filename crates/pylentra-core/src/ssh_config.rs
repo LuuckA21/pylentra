@@ -49,7 +49,6 @@ pub enum ImportNote {
     JumpNotAlias { value: String },
     UnknownJump { alias: String },
     RemoteBindIgnored,
-    DynamicForward,
     ProxyCommand,
     InvalidPort { value: String },
     InvalidForward { value: String },
@@ -138,6 +137,34 @@ fn host_port(s: &str) -> Option<(Option<&str>, u16)> {
     Some((host, port))
 }
 
+/// Defaults and spellings from ssh(1): no address is loopback, empty or `*` is every interface.
+fn bind_address(bind: Option<&str>) -> Option<&str> {
+    match bind {
+        None | Some("localhost") => Some("127.0.0.1"),
+        Some("" | "*") => Some("0.0.0.0"),
+        Some(h) => h.parse::<IpAddr>().is_ok().then_some(h),
+    }
+}
+
+fn dynamic(args: &[String], notes: &mut Vec<ImportNote>) -> Option<ForwardRule> {
+    let rule = match args {
+        [listen] => host_port(listen).and_then(|(bind, bind_port)| {
+            bind_address(bind).map(|bind_host| ForwardRule::Dynamic {
+                bind_host: bind_host.into(),
+                bind_port,
+                auto_start: false,
+            })
+        }),
+        _ => None,
+    };
+    if rule.is_none() {
+        notes.push(ImportNote::InvalidForward {
+            value: args.join(" "),
+        });
+    }
+    rule
+}
+
 fn forward(key: &str, args: &[String], notes: &mut Vec<ImportNote>) -> Option<ForwardRule> {
     let parsed = match args {
         [listen, dest] => host_port(listen).zip(host_port(dest)),
@@ -157,13 +184,7 @@ fn forward(key: &str, args: &[String], notes: &mut Vec<ImportNote>) -> Option<Fo
                     auto_start: false,
                 })
             } else {
-                // Defaults and spellings from ssh(1): no address is loopback, empty or `*` is every interface.
-                let bind_host = match bind {
-                    None | Some("localhost") => Some("127.0.0.1"),
-                    Some("" | "*") => Some("0.0.0.0"),
-                    Some(h) => h.parse::<IpAddr>().is_ok().then_some(h),
-                };
-                bind_host.map(|bind_host| ForwardRule::Local {
+                bind_address(bind).map(|bind_host| ForwardRule::Local {
                     bind_host: bind_host.into(),
                     bind_port,
                     dest_host,
@@ -348,7 +369,10 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                 for (key, args) in &block.lines {
                     // Forwards add up over every matching block; everything else keeps its first
                     // non-blank value (`HostName ""` would otherwise give an unimportable empty host).
-                    if key == "localforward" || key == "remoteforward" {
+                    if matches!(
+                        key.as_str(),
+                        "localforward" | "remoteforward" | "dynamicforward"
+                    ) {
                         forwards.push((key.as_str(), args.as_slice()));
                     } else if let Some(value) = args.first().filter(|v| !v.trim().is_empty()) {
                         first.entry(key.as_str()).or_insert(value.as_str());
@@ -419,11 +443,11 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
             };
             let forwards = forwards
                 .into_iter()
-                .filter_map(|(key, args)| forward(key, args, &mut notes))
+                .filter_map(|(key, args)| match key {
+                    "dynamicforward" => dynamic(args, &mut notes),
+                    _ => forward(key, args, &mut notes),
+                })
                 .collect();
-            if first.contains_key("dynamicforward") {
-                notes.push(ImportNote::DynamicForward);
-            }
             if first
                 .get("proxycommand")
                 .is_some_and(|v| !v.eq_ignore_ascii_case("none"))

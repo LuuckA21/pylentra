@@ -281,7 +281,6 @@ export const en = {
     "ProxyJump {value} is not a host alias: no jump host.",
   "import.note.UnknownJump": "Jump host {alias} not found: no jump host.",
   "import.note.RemoteBindIgnored": "The remote listen address is ignored.",
-  "import.note.DynamicForward": "DynamicForward is not supported.",
   "import.note.ProxyCommand": "ProxyCommand is not supported.",
   "import.note.InvalidPort": "Invalid port: {value}.",
   "import.note.InvalidForward": "Invalid forward: {value}.",
