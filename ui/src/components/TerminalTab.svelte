@@ -260,7 +260,8 @@
   function pick(s: Snippet) {
     snippetsOpen = false;
     if (snippetVars(s.text).length) asking = s;
-    else send(s);
+    // Escapes like {{{{ apply with or without variables.
+    else send({ ...s, text: fillVars(s.text, {}) });
   }
 
   function send(s: Snippet) {

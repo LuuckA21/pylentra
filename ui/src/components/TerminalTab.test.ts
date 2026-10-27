@@ -459,6 +459,13 @@ test("a snippet without variables skips the dialog", async () => {
   expect(term.paste).toHaveBeenCalledWith("tail x");
 });
 
+test("the {{{{ escape applies to a snippet without variables", async () => {
+  const term = setup2();
+  await pick("echo {{{{x}}", false);
+  expect(screen.queryByRole("dialog", { name: "Values for S" })).toBeNull();
+  expect(term.paste).toHaveBeenCalledWith("echo {{x}}");
+});
+
 // An <input> strips newlines from values, so the lines come from the snippet.
 test("a filled multi-line snippet still asks for confirmation", async () => {
   const term = setup2();
