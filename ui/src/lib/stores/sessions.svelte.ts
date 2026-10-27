@@ -100,10 +100,23 @@ export function connect(
   );
 }
 
+// sessionId → its last write. Tauri runs each call on its own task, so two
+// calls in flight can reach the session swapped: each write waits for the one
+// before it. Not reactive on purpose: nothing renders from it.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const writes = new Map<string, Promise<void>>();
+
 // Write and resize errors are not reported: a dead session sends Closed.
 export function write(tab: TabState, data: string | Uint8Array): void {
-  if (tab.sessionId && tab.phase === "ready")
-    api.sessionWrite(tab.sessionId, data).catch(() => {});
+  const id = tab.sessionId;
+  if (!id || tab.phase !== "ready") return;
+  const last = (writes.get(id) ?? Promise.resolve())
+    .then(() => api.sessionWrite(id, data))
+    .catch(() => {})
+    .finally(() => {
+      if (writes.get(id) === last) writes.delete(id);
+    });
+  writes.set(id, last);
 }
 
 export function resize(tab: TabState, cols: number, rows: number): void {

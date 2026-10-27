@@ -43,7 +43,8 @@ cover it.
    (`seq 1 1000`) and confirm in the devtools console that the `data` channel
    delivers an `ArrayBuffer` (spec §13.3). If it delivers an array of numbers instead,
    apply the spec's fallback (base64 on the event channel) and record it in the
-   CHANGELOG.
+   CHANGELOG. In the same build, paste a few KB of text into `cat > /dev/null`
+   and type a few characters: they arrive, and the console shows no IPC error.
 6. Stop the servers:
 
    ```sh

@@ -21,21 +21,23 @@ beforeEach(() => {
   channels.length = 0;
 });
 
-test("sessionWrite encodes strings as UTF-8 bytes", async () => {
+test("sessionWrite sends UTF-8 bytes as the raw body, the id as a header", async () => {
   invoke.mockResolvedValue(undefined);
   await sessionWrite("s", "è");
-  expect(invoke).toHaveBeenCalledWith("session_write", {
-    id: "s",
-    data: [0xc3, 0xa8],
-  });
+  const [cmd, body, options] = invoke.mock.calls[0];
+  expect([cmd, Array.from(body as Uint8Array), options]).toEqual([
+    "session_write",
+    [0xc3, 0xa8],
+    { headers: { id: "s" } },
+  ]);
 });
 
-test("sessionWrite sends Uint8Array as a plain number array", async () => {
+test("sessionWrite sends a Uint8Array as it is", async () => {
   invoke.mockResolvedValue(undefined);
-  await sessionWrite("s", new Uint8Array([1, 2]));
-  expect(invoke).toHaveBeenCalledWith("session_write", {
-    id: "s",
-    data: [1, 2],
+  const bytes = new Uint8Array([1, 2]);
+  await sessionWrite("s", bytes);
+  expect(invoke).toHaveBeenCalledWith("session_write", bytes, {
+    headers: { id: "s" },
   });
 });
 

@@ -4,6 +4,16 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Typed text, pastes and snippets reach the server in the order they were
+  sent. Before, two writes sent together (a snippet with "Run immediately"
+  sends its text, then Enter) could arrive swapped.
+- Text sent to the terminal travels as raw bytes, no longer as a JSON list of
+  numbers, so big pastes are lighter.
+
 ## [0.4.0] - 2026-10-27
 
 Going back to 0.3.x: `connections.toml` is now at format version 3, so 0.3.x
