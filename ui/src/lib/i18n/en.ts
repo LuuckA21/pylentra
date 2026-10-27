@@ -89,6 +89,8 @@ export const en = {
   "form.jumpVia": "Connect through",
   "form.addLocal": "Add local forward",
   "form.addRemote": "Add remote forward",
+  "form.dynamic": "SOCKS {n}: {bind}",
+  "form.addDynamic": "+ SOCKS",
   "form.local": "Local forward {n}",
   "form.remote": "Remote forward {n}",
   "form.bindHost": "Bind address",
@@ -159,6 +161,11 @@ export const en = {
   "fwd.type": "Type",
   "fwd.local": "Local",
   "fwd.remote": "Remote",
+  "fwd.dynamic": "SOCKS (dynamic)",
+  "fwd.dynamicRow": "SOCKS {bind}",
+  "fwd.dynamicPill": "SOCKS :{port}",
+  "fwd.dynamicHint":
+    "Use {host}:{port} as a SOCKS5 proxy in the browser or with curl --socks5-hostname.",
   "fwd.create": "Start tunnel",
   "fwd.sessionOnly": "The tunnel lasts for this session only.",
 
@@ -281,7 +288,6 @@ export const en = {
     "ProxyJump {value} is not a host alias: no jump host.",
   "import.note.UnknownJump": "Jump host {alias} not found: no jump host.",
   "import.note.RemoteBindIgnored": "The remote listen address is ignored.",
-  "import.note.DynamicForward": "DynamicForward is not supported.",
   "import.note.ProxyCommand": "ProxyCommand is not supported.",
   "import.note.InvalidPort": "Invalid port: {value}.",
   "import.note.InvalidForward": "Invalid forward: {value}.",
@@ -319,6 +325,10 @@ export const en = {
   "snippet.confirmBody":
     "This shell will run each line as soon as it is pasted. Continue?",
   "snippet.confirmOk": "Paste",
+  "snippet.varsTitle": "Values for {name}",
+  "snippet.varsSend": "Send",
+  "snippet.asks": "asks for values",
+  "snippet.varsHint": "Use {{name}} to ask for a value when sending.",
 } as const;
 
 export type MessageKey = keyof typeof en;

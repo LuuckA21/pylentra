@@ -553,7 +553,76 @@ mod tests {
             color: None,
             icon: None,
             notes: None,
+            extra: Default::default(),
         }
+    }
+
+    #[test]
+    fn ui_json_with_nulls_still_deserializes() {
+        // `extra` is flattened, so serde buffers the whole object first.
+        let c: Connection = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(), "name": "n", "group_id": null, "host": "h",
+            "port": 22, "username": "u", "auth": { "type": "Agent" },
+            "jump_via": null, "forwards": [], "color": null,
+        }))
+        .unwrap();
+        assert_eq!((c.group_id, c.color), (None, None));
+        assert!(c.extra.is_empty());
+        let g: Group =
+            serde_json::from_value(serde_json::json!({ "id": Uuid::new_v4(), "name": "g" }))
+                .unwrap();
+        assert!(g.extra.is_empty());
+    }
+
+    #[test]
+    fn settings_save_from_ui_keeps_extra() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("settings.toml");
+        std::fs::write(
+            &path,
+            "futuro = \"x\"\nfuturo_nan = nan\nfuturo_arr = [nan]\n[futuro_tab]\nx = inf\n",
+        )
+        .unwrap();
+        let state = AppState::load(d.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        // What the UI does: get, JSON, back, with `futuro_nan` now `null`.
+        let json = serde_json::to_string(&do_settings_get(&state)).unwrap();
+        assert!(json.contains("\"futuro\":\"x\""), "{json}");
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        do_settings_save(&state, back).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("futuro = \"x\""), "{text}");
+        assert!(text.contains("futuro_nan = nan"), "{text}");
+        assert!(text.contains("futuro_arr = [nan]"), "{text}");
+        assert!(text.contains("x = inf"), "{text}");
+    }
+
+    #[test]
+    fn nested_null_unknown_keys_are_dropped_from_ui_json() {
+        let c: Connection = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(), "name": "n", "host": "h", "port": 22,
+            "username": "u", "auth": { "type": "Agent" }, "forwards": [],
+            "x": [null], "y": { "z": null }, "ok": 1,
+        }))
+        .unwrap();
+        assert_eq!(c.extra.keys().collect::<Vec<_>>(), ["ok"]);
+        let s: Settings =
+            serde_json::from_str(r#"{"x":[null],"y":{"z":null},"font_size":15}"#).unwrap();
+        assert!(s.extra.is_empty());
+    }
+
+    #[test]
+    fn null_unknown_keys_are_dropped_from_ui_json() {
+        let c: Connection = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(), "name": "n", "host": "h", "port": 22,
+            "username": "u", "auth": { "type": "Agent" }, "forwards": [],
+            "futuro": null, "futuro2": 3,
+        }))
+        .unwrap();
+        assert_eq!(c.extra.len(), 1);
+        assert!(!c.extra.contains_key("futuro"));
+        let s: Settings = serde_json::from_str(r#"{"futuro":null,"font_size":15}"#).unwrap();
+        assert!(s.extra.is_empty());
+        assert_eq!(s.font_size, 15);
     }
 
     fn secret(state: &AppState, id: Uuid, kind: SecretKind) -> Option<String> {
@@ -696,6 +765,7 @@ mod tests {
             text: "ls".into(),
             run: false,
             connection_id,
+            extra: Default::default(),
         }
     }
 

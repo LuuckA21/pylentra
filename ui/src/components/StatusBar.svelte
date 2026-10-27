@@ -53,7 +53,9 @@
   {#each active as [id, f] (id)}
     {#if f.state.type === "Active"}
       <Pill color="teal" pressed={forwardsOpen} onclick={onforwards}
-        >⇄ {f.state.bound_port} → {f.rule.dest_host}:{f.rule.dest_port}</Pill
+        >⇄ {f.rule.type === "Dynamic"
+          ? t("fwd.dynamicPill", { port: f.state.bound_port })
+          : `${f.state.bound_port} → ${f.rule.dest_host}:${f.rule.dest_port}`}</Pill
       >
     {/if}
   {/each}

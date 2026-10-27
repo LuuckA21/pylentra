@@ -28,6 +28,12 @@ test("shortcuts", () => {
   expect(shortcutFor(key("Tab", { ctrl: true, shift: true }))).toBe("prevTab");
 });
 
+test("F11 toggles fullscreen only without modifiers", () => {
+  expect(shortcutFor(key("F11"))).toBe("fullscreen");
+  expect(shortcutFor(key("F11", { ctrl: true }))).toBeNull();
+  expect(shortcutFor(key("F11", { shift: true }))).toBeNull();
+});
+
 test("other combos reach the shell", () => {
   expect(shortcutFor(key("v", { ctrl: true }))).toBeNull();
   expect(shortcutFor(key("Tab"))).toBeNull();

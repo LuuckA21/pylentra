@@ -1,6 +1,7 @@
-//! Local and remote port forwarding over an in-process server.
+//! Local, remote and dynamic (SOCKS5) port forwarding over an in-process server.
 mod support;
 
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -68,6 +69,7 @@ fn conn(env: &Env, forwards: Vec<ForwardRule>) -> Connection {
         color: None,
         icon: None,
         notes: None,
+        extra: Default::default(),
     }
 }
 
@@ -103,6 +105,42 @@ fn remote(bind_port: u16, dest: u16) -> ForwardRule {
         dest_port: dest,
         auto_start: false,
     }
+}
+
+fn dynamic(bind_port: u16, auto_start: bool) -> ForwardRule {
+    ForwardRule::Dynamic {
+        bind_host: "127.0.0.1".into(),
+        bind_port,
+        auto_start,
+    }
+}
+
+/// SOCKS5 CONNECT by domain name (ATYP 0x03); returns the reply code and the open stream.
+async fn socks_connect(port: u16, host: &str, dest_port: u16) -> io::Result<(u8, TcpStream)> {
+    let mut tcp = TcpStream::connect(("127.0.0.1", port)).await?;
+    tcp.write_all(&[5, 1, 0]).await?;
+    let mut method = [0u8; 2];
+    tcp.read_exact(&mut method).await?;
+    assert_eq!(method, [5, 0]);
+    let mut req = vec![5, 1, 0, 3, host.len() as u8];
+    req.extend_from_slice(host.as_bytes());
+    req.extend_from_slice(&dest_port.to_be_bytes());
+    tcp.write_all(&req).await?;
+    let mut reply = [0u8; 10];
+    tokio::time::timeout(T, tcp.read_exact(&mut reply))
+        .await
+        .map_err(|_| io::ErrorKind::TimedOut)??;
+    Ok((reply[1], tcp))
+}
+
+async fn echo_through(tcp: &mut TcpStream) {
+    tcp.write_all(b"ping").await.unwrap();
+    let mut buf = [0u8; 4];
+    tokio::time::timeout(T, tcp.read_exact(&mut buf))
+        .await
+        .expect("echo timed out")
+        .unwrap();
+    assert_eq!(&buf, b"ping");
 }
 
 async fn state_of(sink: &CollectSink, id: u32, want: fn(&ForwardState) -> bool) -> ForwardState {
@@ -398,4 +436,130 @@ async fn session_close_stops_forwards() {
             ..
         }
     )));
+}
+
+#[tokio::test]
+async fn dynamic_forward_relays_to_destination() {
+    let env = env().await;
+    let echo = spawn_tcp_echo().await;
+    let (id, sink) = open_ready(&env, vec![]).await;
+
+    let fid = env.mgr.forward_start(id, dynamic(0, false)).await.unwrap();
+    let port = bound_port(&sink, fid).await;
+    let (code, mut tcp) = socks_connect(port, "127.0.0.1", echo.port()).await.unwrap();
+    assert_eq!(code, 0x00);
+    echo_through(&mut tcp).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn dynamic_forward_two_clients() {
+    let env = env().await;
+    let echo = spawn_tcp_echo().await;
+    let (id, sink) = open_ready(&env, vec![]).await;
+
+    let fid = env.mgr.forward_start(id, dynamic(0, false)).await.unwrap();
+    let port = bound_port(&sink, fid).await;
+    let (a, b) = tokio::join!(
+        socks_connect(port, "127.0.0.1", echo.port()),
+        socks_connect(port, "127.0.0.1", echo.port())
+    );
+    let ((ca, mut a), (cb, mut b)) = (a.unwrap(), b.unwrap());
+    assert_eq!((ca, cb), (0x00, 0x00));
+    echo_through(&mut a).await;
+    echo_through(&mut b).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn dynamic_forward_unreachable_destination() {
+    let env = env().await;
+    let echo = spawn_tcp_echo().await;
+    let dead = {
+        let l = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let (id, sink) = open_ready(&env, vec![]).await;
+
+    let fid = env.mgr.forward_start(id, dynamic(0, false)).await.unwrap();
+    let port = bound_port(&sink, fid).await;
+    let (code, _) = socks_connect(port, "127.0.0.1", dead).await.unwrap();
+    assert_eq!(code, 0x04);
+    // The forward and the session live on.
+    let (code, mut tcp) = socks_connect(port, "127.0.0.1", echo.port()).await.unwrap();
+    assert_eq!(code, 0x00);
+    echo_through(&mut tcp).await;
+    env.mgr.write(id, b"ok".to_vec()).await.unwrap();
+    sink.wait_data_len(2, T).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn dynamic_forward_port_in_use() {
+    let env = env().await;
+    let taken = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let taken_port = taken.local_addr().unwrap().port();
+    let (id, sink) = open_ready(&env, vec![]).await;
+
+    let err = env
+        .mgr
+        .forward_start(id, dynamic(taken_port, false))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "forward.port_in_use");
+    sink.wait_event(
+        |e| {
+            matches!(e, SessionEvent::Forward { state: ForwardState::Failed { error }, .. }
+                if error.code == "forward.port_in_use")
+        },
+        T,
+    )
+    .await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn dynamic_forward_stop_frees_port() {
+    let env = env().await;
+    let (id, sink) = open_ready(&env, vec![]).await;
+
+    let fid = env.mgr.forward_start(id, dynamic(0, false)).await.unwrap();
+    let port = bound_port(&sink, fid).await;
+    env.mgr.forward_stop(id, fid).await.unwrap();
+    state_of(&sink, fid, |s| *s == ForwardState::Stopped).await;
+    assert_refused(port).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn dynamic_auto_start() {
+    let env = env().await;
+    let echo = spawn_tcp_echo().await;
+    let (id, sink) = open_ready(&env, vec![dynamic(0, true), dynamic(0, false)]).await;
+
+    let events = sink.events.lock().unwrap().clone();
+    let ready = events.iter().position(is_ready).unwrap();
+    let active: Vec<_> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            SessionEvent::Forward {
+                state: ForwardState::Active { bound_port },
+                ..
+            } => Some((i, *bound_port)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(active.len(), 1, "{active:?}");
+    assert!(active[0].0 < ready);
+    let (code, mut tcp) = socks_connect(active[0].1, "127.0.0.1", echo.port())
+        .await
+        .unwrap();
+    assert_eq!(code, 0x00);
+    echo_through(&mut tcp).await;
+    env.mgr.close(id).await.unwrap();
 }

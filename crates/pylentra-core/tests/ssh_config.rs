@@ -45,6 +45,7 @@ fn saved(name: &str) -> Connection {
         color: None,
         icon: None,
         notes: None,
+        extra: Default::default(),
     }
 }
 
@@ -260,12 +261,45 @@ fn ipv6_bind_and_invalid_forward() {
 }
 
 #[test]
+fn dynamic_forward_imported() {
+    let text = "Host a\n  DynamicForward 1080\n  LocalForward 1 h:2\nHost *\n  DynamicForward 127.0.0.1:1081\n  \
+        DynamicForward [::1]:1082\n  DynamicForward *:1083\n  DynamicForward localhost:1084\n  \
+        DynamicForward 0\n  DynamicForward a b\n  DynamicForward example.com:1085\n";
+    let r = parse(text, &[]);
+    let c = get(&r, "a");
+    let dynamic = |h: &str, p| ForwardRule::Dynamic {
+        bind_host: h.into(),
+        bind_port: p,
+        auto_start: false,
+    };
+    assert_eq!(
+        c.connection.forwards,
+        [
+            dynamic("127.0.0.1", 1080),
+            ForwardRule::Local {
+                bind_host: "127.0.0.1".into(),
+                bind_port: 1,
+                dest_host: "h".into(),
+                dest_port: 2,
+                auto_start: false,
+            },
+            dynamic("127.0.0.1", 1081),
+            dynamic("::1", 1082),
+            dynamic("0.0.0.0", 1083),
+            dynamic("127.0.0.1", 1084),
+        ]
+    );
+    let invalid = |v: &str| ImportNote::InvalidForward { value: v.into() };
+    assert_eq!(
+        c.notes,
+        [invalid("0"), invalid("a b"), invalid("example.com:1085")]
+    );
+}
+
+#[test]
 fn unsupported_directives_noted() {
     let r = scan("unsupported");
-    assert_eq!(
-        get(&r, "a").notes,
-        [ImportNote::DynamicForward, ImportNote::ProxyCommand]
-    );
+    assert_eq!(get(&r, "a").notes, [ImportNote::ProxyCommand]);
 }
 
 #[test]

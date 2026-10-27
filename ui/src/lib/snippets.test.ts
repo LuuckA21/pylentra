@@ -1,6 +1,15 @@
 import { expect, test } from "vitest";
 import type { Snippet } from "./bindings/Snippet";
-import { body, firstLine, groupSnippets, needsConfirm } from "./snippets";
+import {
+  body,
+  firstLine,
+  fillVars,
+  groupSnippets,
+  needsConfirm,
+  recallVar,
+  rememberVars,
+  snippetVars,
+} from "./snippets";
 
 const s = (name: string, text: string, connection_id?: string): Snippet => ({
   id: name,
@@ -49,4 +58,39 @@ test("groupSnippets shows a snippet of a deleted connection as global", () => {
   const g = groupSnippets([s("Ghost", "x", "gone")], "", "A", new Set(["A"]));
   expect(g.own).toEqual([]);
   expect(g.global.map((x) => x.name)).toEqual(["Ghost"]);
+});
+
+test("snippetVars lists distinct names in order of appearance", () => {
+  expect(snippetVars("tail {{ servizio }} {{n}} {{servizio}}")).toEqual([
+    "servizio",
+    "n",
+  ]);
+});
+
+test("snippetVars ignores escapes and invalid names", () => {
+  expect(snippetVars("{{{{x}}")).toEqual([]);
+  expect(snippetVars("{{ }} {{a b}} {{ .Values.x }} {{x!}}")).toEqual([]);
+  expect(snippetVars(`{{${"a".repeat(41)}}}`)).toEqual([]);
+  expect(snippetVars(`{{${"a".repeat(40)}}}`)).toEqual(["a".repeat(40)]);
+});
+
+test("fillVars replaces in one pass and inserts values literally", () => {
+  expect(fillVars("a {{x}} b {{ x }}", { x: "1" })).toBe("a 1 b 1");
+  expect(fillVars("{{{{x}}", {})).toBe("{{x}}");
+  expect(fillVars("{{x}}", { x: "$& `$'\n" })).toBe("$& `$'\n");
+  expect(fillVars("{{a}}{{b}}", { a: "{{b}}", b: "x" })).toBe("{{b}}x");
+});
+
+test("fillVars only reads own properties", () => {
+  expect(fillVars("{{x}}", {})).toBe("");
+  expect(fillVars("{{constructor}}", {})).toBe("");
+  expect(
+    fillVars("{{__proto__}}", Object.fromEntries([["__proto__", "v"]])),
+  ).toBe("v");
+});
+
+test("recallVar returns what rememberVars stored, per snippet", () => {
+  rememberVars("s1", { x: "v" });
+  expect(recallVar("s1", "x")).toBe("v");
+  expect(recallVar("s2", "x")).toBe("");
 });

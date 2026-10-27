@@ -126,6 +126,30 @@ cover it.
    Settings → Snippets says they are read-only, the file is not modified, and
    deleting a connection still works. Restore the permissions afterwards.
 
+## SOCKS forward
+
+1. On a connection add a SOCKS forward on the default `127.0.0.1:1080` ("+
+   SOCKS" in the connection form, or the type "SOCKS (dynamic)" in the
+   forward panel), start it, and check the status bar shows "SOCKS :1080".
+2. With a service visible only from the server, run
+   `curl --socks5-hostname 127.0.0.1:1080 http://internal-service` (or set the
+   browser's SOCKS5 proxy): it answers.
+3. Stop the forward: the port is released immediately.
+4. Bind it to a port already in use: the panel shows an error and the session
+   stays open.
+5. Import a `~/.ssh/config` host with `DynamicForward 1080`: it lands with a
+   SOCKS forward and no "skipped" note.
+
+## Snippet variables
+
+1. Create a snippet `ssh {{servizio}}` and send it: Pylentra asks for
+   `servizio` and pastes the text with the value.
+2. Send it again: the last value is proposed. Close the app and open it again:
+   the value is forgotten, and it is not in `snippets.toml`.
+3. `{{{{` pastes as `{{`, and `{{ range }}` or `{{ .Values.x }}` is pasted
+   as it is, without a prompt. The palette marks the snippets that ask for
+   values with a pill.
+
 ## Notes
 
 1. Add a note to a connection (form, under Appearance): a note icon appears in
@@ -170,6 +194,10 @@ cover it.
    position.
 3. With the window on a second monitor, close the app, unplug that monitor and
    open the app again: the window is visible on the main monitor.
+4. F11 enters and leaves fullscreen; after closing in fullscreen, the app
+   reopens not in fullscreen.
+5. Close the app while in fullscreen, open it again and leave fullscreen: the
+   window has its previous normal size, not the monitor size.
 
 ## Icon
 
@@ -201,6 +229,27 @@ cover it.
    connection loses its note, because 0.2.2 rewrites the whole
    `connections.toml`. `snippets.toml` is untouched (0.2.2 ignores it).
 4. Go back to 0.3: all the notes are gone, and all the snippets are back.
+
+## Downgrade to 0.3.1
+
+1. Get a 0.3.1 build from GitHub Releases. Use a 0.4 library with a SOCKS
+   forward, and back up `connections.toml` first (same folders as for 0.1.x
+   above).
+2. Open it in 0.3.1: it opens read-only and, since 0.3.1 does not know the
+   SOCKS forward, the library shows empty; edits are refused and nothing is
+   written.
+3. Go back to 0.4: every connection and forward is there, and
+   `connections.toml` is identical to the backup.
+4. Delete the SOCKS forwards in 0.4 and open the library in 0.3.1 again: the
+   connections are shown, still read-only, and nothing is written. Going back
+   to 0.4 shows everything.
+
+## Unknown fields
+
+1. Add an invented field by hand to a connection in `connections.toml` (for
+   example `futuro = 1`), and to `snippets.toml` and `settings.toml`.
+2. Start the app and change something (edit a connection, a snippet and a
+   setting): the invented fields are still in the three files.
 
 ## Language
 

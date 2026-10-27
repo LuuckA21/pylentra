@@ -8,7 +8,7 @@ export type Draft = {
   port: number | null;
   username: string;
   forwards: {
-    type: "Local" | "Remote";
+    type: "Local" | "Remote" | "Dynamic";
     bind_host: string;
     bind_port: number | null;
     dest_port: number | null;
@@ -38,11 +38,11 @@ export function validate(d: Draft): Record<string, MessageKey> {
     if (!d[f].trim()) errors[f] = "form.error.required";
   if (!validPort(d.port)) errors.port = "form.error.port";
   d.forwards.forEach((r, i) => {
-    if (r.type === "Local" && !isIp(r.bind_host))
+    if (r.type !== "Remote" && !isIp(r.bind_host))
       errors[`forwards[${i}].bind_host`] = "form.error.ip";
     if (!validPort(r.bind_port))
       errors[`forwards[${i}].bind_port`] = "form.error.port";
-    if (!validPort(r.dest_port))
+    if (r.type !== "Dynamic" && !validPort(r.dest_port))
       errors[`forwards[${i}].dest_port`] = "form.error.port";
   });
   return errors;

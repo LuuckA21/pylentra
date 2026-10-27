@@ -41,3 +41,34 @@ export function groupSnippets(
     ),
   };
 }
+
+// `{{{{` is the escape for a literal `{{`; both helpers share this one regex
+// so they always agree on what counts as a variable.
+const VAR = /\{\{\{\{|\{\{\s*([A-Za-z0-9_-]{1,40})\s*\}\}/g;
+
+export const snippetVars = (text: string): string[] => [
+  ...new Set([...text.matchAll(VAR)].flatMap((m) => (m[1] ? [m[1]] : []))),
+];
+
+// A replacer function inserts values literally: no `$` patterns, and a value
+// containing `{{x}}` is not expanded again.
+export const fillVars = (
+  text: string,
+  values: Record<string, string>,
+): string =>
+  text.replace(VAR, (_, name?: string) =>
+    name ? (Object.hasOwn(values, name) ? values[name] : "") : "{{",
+  );
+
+const remembered = new Map<string, string>();
+
+export const recallVar = (snippetId: string, name: string): string =>
+  remembered.get(`${snippetId}:${name}`) ?? "";
+
+export function rememberVars(
+  snippetId: string,
+  values: Record<string, string>,
+): void {
+  for (const [name, v] of Object.entries(values))
+    remembered.set(`${snippetId}:${name}`, v);
+}

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
-  import { body, firstLine, groupSnippets } from "../lib/snippets";
+  import { body, firstLine, groupSnippets, snippetVars } from "../lib/snippets";
   import { isSnippetsReadOnly, library } from "../lib/stores/library.svelte";
   import { snippets } from "../lib/stores/snippets.svelte";
   import Pill from "./ui/Pill.svelte";
@@ -123,6 +123,8 @@
             >
               <span class="name">{s.name}</span>
               {#if s.run}<Pill>{t("snippet.runs")}</Pill>{/if}
+              {#if snippetVars(s.text).length}<Pill>{t("snippet.asks")}</Pill
+                >{/if}
               <code>{firstLine(body(s.text))}</code>
             </div>
           {/each}

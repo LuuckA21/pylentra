@@ -2,8 +2,8 @@
 
 Pylentra is a desktop SSH connection manager for Linux and Windows. Keep your
 servers in a searchable library with groups, open them in terminal tabs, chain
-jump hosts, and manage local and remote port forwards, with secrets stored in
-the OS keychain and signed automatic updates.
+jump hosts, and manage local, remote and dynamic (SOCKS) port forwards, with
+secrets stored in the OS keychain and signed automatic updates.
 
 - Quick connect: type `user@host` and go, then save it if you like.
 - Import your servers from `~/.ssh/config` with a preview.

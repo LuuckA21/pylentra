@@ -57,6 +57,7 @@ fn conn(host: &str, port: u16) -> Connection {
         color: None,
         icon: None,
         notes: None,
+        extra: Default::default(),
     }
 }
 

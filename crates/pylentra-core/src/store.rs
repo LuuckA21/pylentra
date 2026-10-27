@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::model::{Connection, Group, MAX_JUMP_DEPTH, Settings, Warning};
+use crate::model::{Connection, Group, MAX_JUMP_DEPTH, Settings, Warning, lenient_extra};
 use crate::secrets::{SecretKind, SecretStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ts_rs::TS;
 use uuid::Uuid;
 
-pub const CONNECTIONS_VERSION: u32 = 2;
+pub const CONNECTIONS_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
 #[ts(export)]
@@ -21,6 +21,9 @@ pub struct Library {
     pub groups: Vec<Group>,
     #[serde(default)]
     pub connections: Vec<Connection>,
+    #[serde(flatten, deserialize_with = "lenient_extra")]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 impl Default for Library {
@@ -29,6 +32,7 @@ impl Default for Library {
             version: CONNECTIONS_VERSION,
             groups: vec![],
             connections: vec![],
+            extra: toml::Table::new(),
         }
     }
 }
@@ -188,9 +192,17 @@ impl ConnectionStore {
         let warnings = c.validate()?;
         let mut candidate = self.library.clone();
         let id = c.id;
+        // The store owns `extra`: the UI sends back what it received (move,
+        // duplicate) or builds a connection from scratch; neither is the file's.
         match candidate.connections.iter_mut().find(|x| x.id == id) {
-            Some(slot) => *slot = c,
-            None => candidate.connections.push(c),
+            Some(slot) => {
+                c.extra = std::mem::take(&mut slot.extra);
+                *slot = c;
+            }
+            None => {
+                c.extra = toml::Table::new();
+                candidate.connections.push(c);
+            }
         }
         if let Some(j) = candidate
             .connections
@@ -237,6 +249,7 @@ impl ConnectionStore {
         let mut seen: HashSet<Uuid> = candidate.connections.iter().map(|x| x.id).collect();
         for c in &mut conns {
             c.group_id = group_id;
+            c.extra = toml::Table::new();
             c.validate()?;
             if !seen.insert(c.id) {
                 return Err(CoreError::InvalidInput {
@@ -296,7 +309,7 @@ impl ConnectionStore {
         Ok(())
     }
 
-    pub fn upsert_group(&mut self, g: Group) -> Result<(), CoreError> {
+    pub fn upsert_group(&mut self, mut g: Group) -> Result<(), CoreError> {
         self.writable()?;
         if g.name.trim().is_empty() {
             return Err(CoreError::InvalidInput {
@@ -306,8 +319,14 @@ impl ConnectionStore {
         }
         let mut candidate = self.library.clone();
         match candidate.groups.iter_mut().find(|x| x.id == g.id) {
-            Some(slot) => *slot = g,
-            None => candidate.groups.push(g),
+            Some(slot) => {
+                g.extra = std::mem::take(&mut slot.extra);
+                *slot = g;
+            }
+            None => {
+                g.extra = toml::Table::new();
+                candidate.groups.push(g);
+            }
         }
         self.commit(candidate)
     }
@@ -405,6 +424,11 @@ impl SettingsStore {
 
     pub fn save(&mut self, s: Settings) -> Result<(), CoreError> {
         s.validate()?;
+        // The store owns `extra`; the UI's copy is ignored.
+        let s = Settings {
+            extra: self.settings.extra.clone(),
+            ..s
+        };
         let text = toml::to_string_pretty(&s).map_err(|e| CoreError::InvalidInput {
             field: "settings".into(),
             reason: e.to_string(),
@@ -436,6 +460,7 @@ mod tests {
             color: None,
             icon: None,
             notes: None,
+            extra: Default::default(),
         }
     }
 
@@ -463,7 +488,7 @@ mod tests {
     #[test]
     fn missing_file_creates_empty() {
         let (_d, s) = store();
-        assert_eq!(s.library().version, 2);
+        assert_eq!(s.library().version, 3);
         assert!(s.library().groups.is_empty() && s.library().connections.is_empty());
     }
 
@@ -474,6 +499,7 @@ mod tests {
             id: Uuid::new_v4(),
             name: "prod".into(),
             color: None,
+            extra: Default::default(),
         };
         s.upsert_group(g.clone()).unwrap();
         let mut a = conn("a");
@@ -540,6 +566,144 @@ mod tests {
         let (s, outcome) = ConnectionStore::load(path).unwrap();
         assert!(matches!(outcome, LoadOutcome::Ok));
         assert_eq!(s.get(id).unwrap().notes, None);
+    }
+
+    fn table(path: &Path) -> toml::Table {
+        toml::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn extra_survives_roundtrip() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let (id, other, gid) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        fs::write(
+            &path,
+            format!(
+                "version = 2\nfuturo = \"x\"\n\n[futuro_tabella]\na = 1\n\n[[groups]]\nid = \"{gid}\"\nname = \"g\"\nfuturo_g = true\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Key\", path = \"k\", save_passphrase = false }}\ncolor = 5\nfuturo_c = [1, 2]\n\n[[connections]]\nid = \"{other}\"\nname = \"o\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n"
+            ),
+        )
+        .unwrap();
+        let before = table(&path);
+        let (mut s, outcome) = ConnectionStore::load(path.clone()).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.get(id).unwrap().color, None);
+        let mut o = s.get(other).unwrap().clone();
+        o.name = "renamed".into();
+        s.upsert_connection(o).unwrap();
+        let after = table(&path);
+        for key in ["futuro", "futuro_tabella"] {
+            assert_eq!(after.get(key), before.get(key), "{key}");
+        }
+        assert_eq!(
+            after["groups"][0].get("futuro_g"),
+            before["groups"][0].get("futuro_g")
+        );
+        assert_eq!(
+            after["connections"][0].get("futuro_c"),
+            before["connections"][0].get("futuro_c")
+        );
+        assert!(before["connections"][0].get("futuro_c").is_some());
+        assert_eq!(after["version"].as_integer(), Some(3));
+        let (again, outcome) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(again.library(), s.library());
+        assert_eq!(again.get(id).unwrap().color, None);
+        assert_eq!(again.library().version, 3);
+    }
+
+    fn with_extra(path: &Path, id: Uuid, gid: Uuid) {
+        fs::write(
+            path,
+            format!(
+                "version = 3\n\n[[groups]]\nid = \"{gid}\"\nname = \"g\"\nfuturo_g = 1\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\nfuturo_c = 1\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn ui_save_keeps_connection_extra() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let (id, gid) = (Uuid::new_v4(), Uuid::new_v4());
+        with_extra(&path, id, gid);
+        let (mut s, _) = ConnectionStore::load(path.clone()).unwrap();
+        let c = Connection {
+            extra: toml::Table::new(),
+            ..s.get(id).unwrap().clone()
+        };
+        s.upsert_connection(c).unwrap();
+        let g = Group {
+            extra: toml::Table::new(),
+            ..s.library().groups[0].clone()
+        };
+        s.upsert_group(g).unwrap();
+        let t = table(&path);
+        assert_eq!(t["connections"][0]["futuro_c"].as_integer(), Some(1));
+        assert_eq!(t["groups"][0]["futuro_g"].as_integer(), Some(1));
+    }
+
+    #[test]
+    fn incoming_extra_is_ignored_on_update() {
+        let (d, mut s) = store();
+        let mut a = conn("a");
+        s.upsert_connection(a.clone()).unwrap();
+        a.extra.insert("iniettato".into(), 1.into());
+        s.upsert_connection(a.clone()).unwrap();
+        let mut g = Group {
+            id: Uuid::new_v4(),
+            name: "g".into(),
+            color: None,
+            extra: Default::default(),
+        };
+        s.upsert_group(g.clone()).unwrap();
+        g.extra.insert("iniettato".into(), 1.into());
+        s.upsert_group(g).unwrap();
+        let text = fs::read_to_string(d.path().join("connections.toml")).unwrap();
+        assert!(!text.contains("iniettato"), "{text}");
+        assert!(s.get(a.id).unwrap().extra.is_empty());
+    }
+
+    #[test]
+    fn delete_drops_extra() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let (id, gid) = (Uuid::new_v4(), Uuid::new_v4());
+        with_extra(&path, id, gid);
+        let (mut s, _) = ConnectionStore::load(path.clone()).unwrap();
+        s.delete_connection(id, &MemorySecretStore::default())
+            .unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("futuro_c"), "{text}");
+    }
+
+    #[test]
+    fn unknown_field_in_forward_rule_loads() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("connections.toml");
+        let id = Uuid::new_v4();
+        fs::write(
+            &path,
+            format!(
+                "version = 3\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n\n[[connections.forwards]]\ntype = \"Local\"\nbind_host = \"127.0.0.1\"\nbind_port = 8080\ndest_host = \"d\"\ndest_port = 80\nauto_start = false\nfuturo = 1\n"
+            ),
+        )
+        .unwrap();
+        let (s, outcome) = ConnectionStore::load(path).unwrap();
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.get(id).unwrap().forwards.len(), 1);
+    }
+
+    #[test]
+    fn import_starts_with_empty_extra() {
+        let (d, mut s) = store();
+        let mut a = conn("a");
+        a.extra.insert("iniettato".into(), 1.into());
+        s.import(vec![a.clone()], None).unwrap();
+        assert!(s.get(a.id).unwrap().extra.is_empty());
+        let text = fs::read_to_string(d.path().join("connections.toml")).unwrap();
+        assert!(!text.contains("iniettato"), "{text}");
     }
 
     #[test]
@@ -620,20 +784,20 @@ mod tests {
         let path = dir.path().join("connections.toml");
         let id = Uuid::new_v4();
         let text = format!(
-            "version = 3\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n"
+            "version = 4\n\n[[connections]]\nid = \"{id}\"\nname = \"n\"\nhost = \"h\"\nusername = \"u\"\nauth = {{ type = \"Agent\" }}\n"
         );
         fs::write(&path, &text).unwrap();
         (path, text)
     }
 
     #[test]
-    fn newer_version_is_read_only() {
+    fn v4_is_read_only() {
         let d = TempDir::new().unwrap();
         let (path, text) = newer_file(&d);
         let (mut s, outcome) = ConnectionStore::load(path.clone()).unwrap();
         assert!(matches!(
             outcome,
-            LoadOutcome::ReadOnlyNewerVersion { found: 3 }
+            LoadOutcome::ReadOnlyNewerVersion { found: 4 }
         ));
         assert_eq!(s.library().connections.len(), 1);
         let id = s.library().connections[0].id;
@@ -649,7 +813,8 @@ mod tests {
             s.upsert_group(Group {
                 id: Uuid::new_v4(),
                 name: "g".into(),
-                color: None
+                color: None,
+                extra: Default::default(),
             }),
             Err(CoreError::ReadOnly)
         ));
@@ -667,6 +832,7 @@ mod tests {
             id: Uuid::new_v4(),
             name: "prod".into(),
             color: Some(TagColor::Teal),
+            extra: Default::default(),
         };
         s.upsert_group(g).unwrap();
         let mut a = conn("a");
@@ -731,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_file_loads_and_is_rewritten_as_v2() {
+    fn v1_file_loads_and_is_rewritten_as_v3() {
         let d = TempDir::new().unwrap();
         let path = d.path().join("connections.toml");
         let id = Uuid::new_v4();
@@ -748,7 +914,7 @@ mod tests {
         assert!(
             fs::read_to_string(&path)
                 .unwrap()
-                .starts_with("version = 2")
+                .starts_with("version = 3")
         );
     }
 
@@ -776,6 +942,7 @@ mod tests {
             id: Uuid::new_v4(),
             name: "g".into(),
             color: None,
+            extra: Default::default(),
         };
         s.upsert_group(g.clone()).unwrap();
         let mut a = conn("a");
@@ -965,6 +1132,36 @@ mod tests {
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
         assert_eq!(s.get(), &Settings::default());
+    }
+
+    #[test]
+    fn settings_save_keeps_extra() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("settings.toml");
+        fs::write(&path, "futuro = \"x\"\nfont_size = 15\n").unwrap();
+        let (mut s, outcome) = SettingsStore::load(path.clone());
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        let new = Settings {
+            font_size: 16,
+            extra: toml::Table::new(),
+            ..s.get().clone()
+        };
+        s.save(new).unwrap();
+        let t = table(&path);
+        assert_eq!(t["futuro"].as_str(), Some("x"));
+        assert_eq!(t["font_size"].as_integer(), Some(16));
+        assert_eq!(s.get().extra.len(), 1);
+    }
+
+    #[test]
+    fn settings_non_text_theme_still_ignored() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("settings.toml");
+        fs::write(&path, "terminal_theme = 5\nfuturo = 1\n").unwrap();
+        let (s, outcome) = SettingsStore::load(path);
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.get().terminal_theme, Settings::default().terminal_theme);
+        assert_eq!(s.get().extra.len(), 1);
     }
 
     #[test]

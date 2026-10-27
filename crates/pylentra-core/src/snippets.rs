@@ -1,4 +1,5 @@
 use crate::error::CoreError;
+use crate::model::lenient_extra;
 use crate::store::{LoadOutcome, VersionOnly, atomic_write, parse, quarantine};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -21,6 +22,9 @@ pub struct Snippet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub connection_id: Option<Uuid>,
+    #[serde(flatten, deserialize_with = "lenient_extra")]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -28,6 +32,8 @@ pub struct SnippetFile {
     pub version: u32,
     #[serde(default)]
     pub snippets: Vec<Snippet>,
+    #[serde(flatten, deserialize_with = "lenient_extra")]
+    pub extra: toml::Table,
 }
 
 impl Default for SnippetFile {
@@ -35,6 +41,7 @@ impl Default for SnippetFile {
         Self {
             version: SNIPPETS_VERSION,
             snippets: vec![],
+            extra: toml::Table::new(),
         }
     }
 }
@@ -64,6 +71,8 @@ impl Snippet {
 pub struct SnippetStore {
     path: PathBuf,
     snippets: Vec<Snippet>,
+    /// Unknown top-level keys of the file, written back on every save.
+    extra: toml::Table,
     read_only: bool,
 }
 
@@ -72,6 +81,7 @@ impl SnippetStore {
         let mut store = Self {
             path,
             snippets: vec![],
+            extra: toml::Table::new(),
             read_only: false,
         };
         let bytes = match fs::read(&store.path) {
@@ -85,12 +95,15 @@ impl SnippetStore {
             Some(VersionOnly { version }) if version > SNIPPETS_VERSION => {
                 // Show what we can, but never write a format we do not know.
                 store.read_only = true;
-                store.snippets = parse::<SnippetFile>(&bytes).unwrap_or_default().snippets;
+                let file = parse::<SnippetFile>(&bytes).unwrap_or_default();
+                store.snippets = file.snippets;
+                store.extra = file.extra;
                 LoadOutcome::ReadOnlyNewerVersion { found: version }
             }
             Some(_) => match parse::<SnippetFile>(&bytes) {
                 Some(file) => {
                     store.snippets = file.snippets;
+                    store.extra = file.extra;
                     LoadOutcome::Ok
                 }
                 None => LoadOutcome::RecoveredFromCorrupt {
@@ -110,6 +123,7 @@ impl SnippetStore {
         Self {
             path,
             snippets: vec![],
+            extra: toml::Table::new(),
             read_only: true,
         }
     }
@@ -131,6 +145,7 @@ impl SnippetStore {
         let file = SnippetFile {
             version: SNIPPETS_VERSION,
             snippets: candidate,
+            extra: self.extra.clone(),
         };
         let text = toml::to_string_pretty(&file).map_err(|e| CoreError::InvalidInput {
             field: "snippets".into(),
@@ -145,9 +160,17 @@ impl SnippetStore {
         self.writable()?;
         s.validate()?;
         let mut candidate = self.snippets.clone();
+        // The store owns `extra`: the incoming copy is ignored.
+        let mut s = s;
         match candidate.iter_mut().find(|x| x.id == s.id) {
-            Some(slot) => *slot = s,
-            None => candidate.push(s),
+            Some(slot) => {
+                s.extra = std::mem::take(&mut slot.extra);
+                *slot = s;
+            }
+            None => {
+                s.extra = toml::Table::new();
+                candidate.push(s);
+            }
         }
         self.commit(candidate)
     }
@@ -191,6 +214,7 @@ mod tests {
             text: text.into(),
             run: false,
             connection_id: None,
+            extra: Default::default(),
         }
     }
 
@@ -212,6 +236,61 @@ mod tests {
             Err(CoreError::InvalidInput { field, .. }) => assert_eq!(field, want),
             other => panic!("expected InvalidInput({want}), got {other:?}"),
         }
+    }
+
+    fn table(d: &TempDir) -> toml::Table {
+        toml::from_str(&fs::read_to_string(d.path().join("snippets.toml")).unwrap()).unwrap()
+    }
+
+    fn with_extra(d: &TempDir, id: Uuid) -> SnippetStore {
+        fs::write(
+            d.path().join("snippets.toml"),
+            format!(
+                "version = 1\nfuturo = \"x\"\n\n[[snippets]]\nid = \"{id}\"\nname = \"n\"\ntext = \"ls\"\nfuturo_s = 1\n"
+            ),
+        )
+        .unwrap();
+        reload(d)
+    }
+
+    #[test]
+    fn extra_survives_roundtrip() {
+        let d = TempDir::new().unwrap();
+        let mut s = with_extra(&d, Uuid::new_v4());
+        s.upsert(snip("b", "pwd")).unwrap();
+        let t = table(&d);
+        assert_eq!(t["futuro"].as_str(), Some("x"));
+        assert_eq!(t["snippets"][0]["futuro_s"].as_integer(), Some(1));
+        assert_eq!(reload(&d).list(), s.list());
+    }
+
+    #[test]
+    fn ui_save_keeps_snippet_extra() {
+        let d = TempDir::new().unwrap();
+        let id = Uuid::new_v4();
+        let mut s = with_extra(&d, id);
+        let sn = Snippet {
+            extra: toml::Table::new(),
+            name: "renamed".into(),
+            ..s.list()[0].clone()
+        };
+        s.upsert(sn).unwrap();
+        let t = table(&d);
+        assert_eq!(t["snippets"][0]["name"].as_str(), Some("renamed"));
+        assert_eq!(t["snippets"][0]["futuro_s"].as_integer(), Some(1));
+        assert_eq!(t["futuro"].as_str(), Some("x"));
+    }
+
+    #[test]
+    fn incoming_extra_is_ignored_on_update() {
+        let (d, mut s) = store();
+        let mut a = snip("a", "ls");
+        a.extra.insert("iniettato".into(), 1.into());
+        s.upsert(a.clone()).unwrap();
+        s.upsert(a.clone()).unwrap();
+        let text = fs::read_to_string(d.path().join("snippets.toml")).unwrap();
+        assert!(!text.contains("iniettato"), "{text}");
+        assert!(s.list()[0].extra.is_empty());
     }
 
     #[test]

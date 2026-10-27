@@ -42,6 +42,26 @@ pub(crate) fn lenient_or_default<'de, D: Deserializer<'de>, T: DeserializeOwned 
     Ok(lenient(d)?.unwrap_or_default())
 }
 
+/// Reads the unknown keys of a flattened `extra`, dropping values with no TOML
+/// form (`null`, also nested): a non-finite float (`nan`) reaches the UI as
+/// `null`, which `toml::Value` would refuse on the way back.
+pub(crate) fn lenient_extra<'de, D: Deserializer<'de>>(d: D) -> Result<toml::Table, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Lenient {
+        V(toml::Value),
+        Skip(serde::de::IgnoredAny),
+    }
+    let raw = std::collections::BTreeMap::<String, Lenient>::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(k, v)| match v {
+            Lenient::V(v) => Some((k, v)),
+            Lenient::Skip(_) => None,
+        })
+        .collect())
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -107,6 +127,9 @@ pub struct Connection {
     )]
     #[ts(optional)]
     pub notes: Option<String>,
+    #[serde(flatten, deserialize_with = "lenient_extra")]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -142,6 +165,12 @@ pub enum ForwardRule {
         dest_port: u16,
         auto_start: bool,
     },
+    /// A SOCKS5 proxy: each client picks its destination.
+    Dynamic {
+        bind_host: String,
+        bind_port: u16,
+        auto_start: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
@@ -156,6 +185,9 @@ pub struct Group {
     )]
     #[ts(optional)]
     pub color: Option<TagColor>,
+    #[serde(flatten, deserialize_with = "lenient_extra")]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, TS)]
@@ -211,6 +243,9 @@ pub struct Settings {
     pub auto_reconnect: bool,
     pub confirm_close_active: bool,
     pub check_updates: bool,
+    #[serde(flatten, deserialize_with = "lenient_extra")]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 impl Default for Settings {
@@ -232,6 +267,7 @@ impl Default for Settings {
             auto_reconnect: false,
             confirm_close_active: true,
             check_updates: true,
+            extra: toml::Table::new(),
         }
     }
 }
@@ -310,6 +346,15 @@ fn require_nonzero(port: u16, field: String) -> Result<(), CoreError> {
 impl ForwardRule {
     /// Reports fields as `<prefix>.<field>`, e.g. `forwards[0].bind_port`.
     pub fn validate(&self, prefix: &str) -> Result<(), CoreError> {
+        let check_host = |bind_host: &str| {
+            if bind_host.parse::<IpAddr>().is_err() {
+                return Err(invalid(
+                    format!("{prefix}.bind_host"),
+                    "must be an IP address",
+                ));
+            }
+            Ok(())
+        };
         let (bind_port, dest_port) = match self {
             Self::Local {
                 bind_host,
@@ -317,22 +362,27 @@ impl ForwardRule {
                 dest_port,
                 ..
             } => {
-                if bind_host.parse::<IpAddr>().is_err() {
-                    return Err(invalid(
-                        format!("{prefix}.bind_host"),
-                        "must be an IP address",
-                    ));
-                }
-                (bind_port, dest_port)
+                check_host(bind_host)?;
+                (bind_port, Some(dest_port))
             }
             Self::Remote {
                 bind_port,
                 dest_port,
                 ..
-            } => (bind_port, dest_port),
+            } => (bind_port, Some(dest_port)),
+            Self::Dynamic {
+                bind_host,
+                bind_port,
+                ..
+            } => {
+                check_host(bind_host)?;
+                (bind_port, None)
+            }
         };
         require_nonzero(*bind_port, format!("{prefix}.bind_port"))?;
-        require_nonzero(*dest_port, format!("{prefix}.dest_port"))
+        dest_port.map_or(Ok(()), |p| {
+            require_nonzero(*p, format!("{prefix}.dest_port"))
+        })
     }
 }
 
@@ -420,6 +470,7 @@ mod tests {
             color: None,
             icon: None,
             notes: None,
+            extra: Default::default(),
         }
     }
 
@@ -550,6 +601,25 @@ mod tests {
         assert_eq!(invalid_field(&c), "forwards[1].bind_port");
         c.forwards = vec![remote(9000, 0)];
         assert_eq!(invalid_field(&c), "forwards[0].dest_port");
+    }
+
+    #[test]
+    fn dynamic_rule_validation() {
+        let dynamic = |bind_host: &str, bind_port| ForwardRule::Dynamic {
+            bind_host: bind_host.into(),
+            bind_port,
+            auto_start: false,
+        };
+        let mut c = conn();
+        c.forwards = vec![dynamic("localhost", 1080)];
+        assert_eq!(invalid_field(&c), "forwards[0].bind_host");
+        c.forwards = vec![dynamic("127.0.0.1", 0)];
+        assert_eq!(invalid_field(&c), "forwards[0].bind_port");
+        c.forwards = vec![dynamic("127.0.0.1", 1080)];
+        assert!(c.validate().is_ok());
+        let text = toml::to_string(&c).unwrap();
+        assert!(text.contains("type = \"Dynamic\""), "{text}");
+        assert_eq!(toml::from_str::<Connection>(&text).unwrap(), c);
     }
 
     #[test]

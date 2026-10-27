@@ -4,6 +4,41 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-27
+
+Going back to 0.3.x: `connections.toml` is now at format version 3, so 0.3.x
+opens it read-only. If the library only has rules 0.3.x knows, it shows it; if
+it has a SOCKS forward, it shows an empty library. Either way nothing is
+written, and nothing is lost: going back to 0.4 shows everything again.
+`snippets.toml` and `settings.toml` keep their format; 0.3.x pastes snippet
+variables as plain text.
+
+### Added
+
+- Dynamic (SOCKS5) port forwarding, the third forward type, like `ssh -D`:
+  add it with "+ SOCKS" in the connection form, or pick "SOCKS (dynamic)" as
+  the type in the forward panel. It listens on `127.0.0.1:1080` by default,
+  and the server resolves the destination. It speaks SOCKS5 without
+  authentication and only CONNECT. The status bar shows a "SOCKS :port" pill
+  while it runs. For example:
+  `curl --socks5-hostname 127.0.0.1:1080 http://internal-service`.
+- Importing from `~/.ssh/config` turns `DynamicForward` lines into SOCKS
+  forwards (before, they were skipped with a note).
+- Snippet variables: `{{name}}` in a snippet asks for the value when the
+  snippet is sent, with one single-line field per variable. The last value is
+  proposed again while the app stays open and is never written to disk. Write
+  `{{{{` for a literal `{{`; any other text between `{{ }}` (for example Helm
+  templates) is left as it is. A pill in the palette marks the snippets that
+  ask for values.
+- F11 toggles fullscreen. It is not remembered when the app reopens.
+
+### Changed
+
+- `connections.toml` moved to format version 3 (see above).
+- Fields in `connections.toml`, `snippets.toml` and `settings.toml` that a
+  future version adds are kept when Pylentra saves. This does not apply
+  inside individual forward rules or the authentication method.
+
 ## [0.3.1] - 2026-10-25
 
 ### Fixed

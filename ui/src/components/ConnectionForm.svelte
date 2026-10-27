@@ -34,7 +34,7 @@
   const auth = initial?.auth;
 
   type Row = {
-    type: "Local" | "Remote";
+    type: ForwardRule["type"];
     bind_host: string;
     bind_port: number | null;
     dest_host: string;
@@ -60,6 +60,8 @@
   let forwards = $state<Row[]>(
     (initial?.forwards ?? []).map((r) => ({
       bind_host: "",
+      dest_host: "",
+      dest_port: null,
       ...r,
     })),
   );
@@ -85,8 +87,8 @@
   function addForward(type: Row["type"]) {
     forwards.push({
       type,
-      bind_host: type === "Local" ? "127.0.0.1" : "",
-      bind_port: null,
+      bind_host: type === "Remote" ? "" : "127.0.0.1",
+      bind_port: type === "Dynamic" ? 1080 : null,
       dest_host: "localhost",
       dest_port: null,
       auto_start: false,
@@ -128,6 +130,13 @@
           dest_port: r.dest_port!,
           auto_start: r.auto_start,
         };
+        if (r.type === "Dynamic")
+          return {
+            type: "Dynamic",
+            bind_host: r.bind_host.trim(),
+            bind_port: common.bind_port,
+            auto_start: common.auto_start,
+          };
         return r.type === "Local"
           ? { type: "Local", bind_host: r.bind_host.trim(), ...common }
           : { type: "Remote", ...common };
@@ -391,11 +400,16 @@
           {@const p = `forwards[${i}]`}
           <fieldset class="forward">
             <legend
-              >{t(r.type === "Local" ? "form.local" : "form.remote", {
-                n: i + 1,
-              })}</legend
+              >{r.type === "Dynamic"
+                ? t("form.dynamic", {
+                    n: i + 1,
+                    bind: `${r.bind_host}:${r.bind_port ?? ""}`,
+                  })
+                : t(r.type === "Local" ? "form.local" : "form.remote", {
+                    n: i + 1,
+                  })}</legend
             >
-            {#if r.type === "Local"}
+            {#if r.type !== "Remote"}
               {@render input(
                 t("form.bindHost"),
                 `${p}.bind_host`,
@@ -410,19 +424,21 @@
               (v) => (r.bind_port = num(v)),
               { type: "number" },
             )}
-            {@render input(
-              t("form.destHost"),
-              `${p}.dest_host`,
-              r.dest_host,
-              (v) => (r.dest_host = v),
-            )}
-            {@render input(
-              t("form.destPort"),
-              `${p}.dest_port`,
-              r.dest_port,
-              (v) => (r.dest_port = num(v)),
-              { type: "number" },
-            )}
+            {#if r.type !== "Dynamic"}
+              {@render input(
+                t("form.destHost"),
+                `${p}.dest_host`,
+                r.dest_host,
+                (v) => (r.dest_host = v),
+              )}
+              {@render input(
+                t("form.destPort"),
+                `${p}.dest_port`,
+                r.dest_port,
+                (v) => (r.dest_port = num(v)),
+                { type: "number" },
+              )}
+            {/if}
             {@render check(
               t("form.autoStart"),
               r.auto_start,
@@ -443,6 +459,9 @@
           >
           <button type="button" onclick={() => addForward("Remote")}
             >{t("form.addRemote")}</button
+          >
+          <button type="button" onclick={() => addForward("Dynamic")}
+            >{t("form.addDynamic")}</button
           >
         </div>
       </fieldset>

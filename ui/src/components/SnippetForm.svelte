@@ -132,8 +132,10 @@
           style:font-family={settings.font_family}
           bind:value={text}
           aria-invalid={errors.text ? "true" : undefined}
-          aria-describedby={errors.text ? eid("text") : undefined}></textarea>
+          aria-describedby="{errors.text ? `${eid('text')} ` : ''}{uid}-hint"
+        ></textarea>
         {@render error("text")}
+        <p class="hint" id="{uid}-hint">{t("snippet.varsHint")}</p>
       </div>
       <div class="field">
         <label for="{uid}-scope">{t("snippet.scope")}</label>
@@ -208,6 +210,11 @@
   }
   textarea[aria-invalid="true"] {
     border-color: var(--danger);
+  }
+  .hint {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 12px;
   }
   .error {
     margin: 0;

@@ -213,3 +213,71 @@ test("a forward that stays failed does not reopen a closed panel", async () => {
   await rerender({ tab: failedTab() });
   expect(screen.queryByRole("dialog")).toBeNull();
 });
+
+const socks: ForwardRule = {
+  type: "Dynamic",
+  bind_host: "127.0.0.1",
+  bind_port: 1080,
+  auto_start: false,
+};
+
+test("SOCKS quick form asks only for the listening address and port", async () => {
+  render(ForwardPanel, { tab: tab({}), open: true, onclose });
+  await fireEvent.click(screen.getByRole("button", { name: "Add tunnel" }));
+  await fireEvent.change(screen.getByLabelText("Type"), {
+    target: { value: "Dynamic" },
+  });
+  expect(screen.queryByLabelText("Destination host")).toBeNull();
+  expect(screen.queryByLabelText("Destination port")).toBeNull();
+  expect(
+    (screen.getByLabelText("Bind address") as HTMLInputElement).value,
+  ).toBe("127.0.0.1");
+  expect((screen.getByLabelText("Bind port") as HTMLInputElement).value).toBe(
+    "1080",
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Start tunnel" }));
+  await waitFor(() =>
+    expect(api.forwardStart).toHaveBeenCalledWith("s1", socks),
+  );
+});
+
+test("an active SOCKS rule shows the proxy hint with the real port", () => {
+  library.connections = [
+    { id: "c1", name: "web", forwards: [socks] } as unknown as Connection,
+  ];
+  render(ForwardPanel, {
+    open: true,
+    onclose,
+    tab: tab({
+      1: { rule: socks, state: { type: "Active", bound_port: 40000 } },
+    }),
+  });
+  expect(screen.getByText("SOCKS 127.0.0.1:1080")).toBeTruthy();
+  expect(
+    screen.getByText(/Use 127\.0\.0\.1:40000 as a SOCKS5 proxy/),
+  ).toBeTruthy();
+});
+
+test.each([
+  ["::1", "[::1]:40000"],
+  ["0.0.0.0", "127.0.0.1:40000"],
+  ["::", "127.0.0.1:40000"],
+  ["192.168.1.5", "192.168.1.5:40000"],
+])("the SOCKS hint for a rule bound to %s uses %s", (bind_host, shown) => {
+  const rule: ForwardRule = { ...socks, bind_host };
+  library.connections = [
+    { id: "c1", name: "web", forwards: [rule] } as unknown as Connection,
+  ];
+  render(ForwardPanel, {
+    open: true,
+    onclose,
+    tab: tab({
+      1: { rule, state: { type: "Active", bound_port: 40000 } },
+    }),
+  });
+  expect(
+    screen.getByText(
+      new RegExp(`Use ${shown.replace(/[[\]]/g, "\\$&")} as a SOCKS5`),
+    ),
+  ).toBeTruthy();
+});

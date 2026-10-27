@@ -9,7 +9,13 @@
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
   import type { TabState } from "../lib/sessionReducer";
   import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
-  import { body, needsConfirm } from "../lib/snippets";
+  import {
+    body,
+    fillVars,
+    needsConfirm,
+    rememberVars,
+    snippetVars,
+  } from "../lib/snippets";
   import { fromOtherModal, shortcutFor, type Action } from "../lib/shortcuts";
   import {
     answer,
@@ -28,6 +34,7 @@
   import SecretPrompt from "./SecretPrompt.svelte";
   import SnippetForm from "./SnippetForm.svelte";
   import SnippetPalette from "./SnippetPalette.svelte";
+  import SnippetVarsDialog from "./SnippetVarsDialog.svelte";
   import StatusBar from "./StatusBar.svelte";
   import ConfirmDialog from "./ui/ConfirmDialog.svelte";
 
@@ -52,8 +59,10 @@
   let snippetsOpen = $state(false);
   // The terminal selection when the palette opened.
   let selection = $state("");
-  // A multi-line snippet waiting for the user's go-ahead, and the new-snippet form.
+  // A multi-line snippet waiting for the user's go-ahead, a snippet waiting for
+  // its variables, and the new-snippet form.
   let confirming = $state<Snippet>();
+  let asking = $state<Snippet>();
   let newSnippet = $state<{ text: string }>();
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
@@ -211,6 +220,7 @@
     if (tab.phase !== "ready") {
       snippetsOpen = false;
       confirming = undefined;
+      asking = undefined;
     }
   });
 
@@ -226,7 +236,7 @@
 
   function toggleSnippets() {
     if (snippetsOpen) return closeSnippets();
-    if (tab.phase !== "ready" || confirming || newSnippet) return;
+    if (tab.phase !== "ready" || confirming || asking || newSnippet) return;
     selection = term?.getSelection() ?? "";
     forwardsOpen = false;
     snippetsOpen = true;
@@ -249,6 +259,12 @@
 
   function pick(s: Snippet) {
     snippetsOpen = false;
+    if (snippetVars(s.text).length) asking = s;
+    // Escapes like {{{{ apply with or without variables.
+    else send({ ...s, text: fillVars(s.text, {}) });
+  }
+
+  function send(s: Snippet) {
     if (term && needsConfirm(s.text, s.run, term.modes.bracketedPasteMode))
       confirming = s;
     else paste(s);
@@ -257,11 +273,13 @@
   function run(a: Action, e: KeyboardEvent) {
     // Copy and paste act on the terminal only when it has focus; elsewhere the
     // native behavior stays.
-    // Search and quick connect focus their own fields, which handle them.
+    // Search and quick connect focus their own fields, which handle them;
+    // fullscreen belongs to App.
     const inTerminal = el.contains(e.target as Node);
     if (
       a === "search" ||
       a === "quickConnect" ||
+      a === "fullscreen" ||
       ((a === "copy" || a === "paste") && !inTerminal)
     )
       return;
@@ -282,7 +300,7 @@
 
   function onwindowkey(e: KeyboardEvent) {
     // Our own modals sit inside root, so fromOtherModal lets them through.
-    if (confirming || newSnippet || fromOtherModal(e, root)) return;
+    if (confirming || asking || newSnippet || fromOtherModal(e, root)) return;
     const a = active ? shortcutFor(e) : null;
     if (a) run(a, e);
   }
@@ -359,6 +377,25 @@
       onconfirm={() => paste(s)}
       oncancel={() => {
         confirming = undefined;
+        term?.focus();
+      }}
+    />
+  {/if}
+
+  {#if asking}
+    {@const s = asking}
+    <SnippetVarsDialog
+      snippet={s}
+      names={snippetVars(s.text)}
+      onsubmit={(values) => {
+        // s follows `asking`, so read it before clearing.
+        const filled = { ...s, text: fillVars(s.text, values) };
+        rememberVars(s.id, values);
+        asking = undefined;
+        send(filled);
+      }}
+      oncancel={() => {
+        asking = undefined;
         term?.focus();
       }}
     />

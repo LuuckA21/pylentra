@@ -108,10 +108,24 @@ test("core error shown at field", async () => {
   const text = screen.getByLabelText("Text");
   await waitFor(() => expect(text.getAttribute("aria-invalid")).toBe("true"));
   expect(
-    document.getElementById(text.getAttribute("aria-describedby")!)
-      ?.textContent,
+    document.getElementById(
+      text.getAttribute("aria-describedby")!.split(" ")[0],
+    )?.textContent,
   ).toContain("too long");
   expect(onsaved).not.toHaveBeenCalled();
+});
+
+test("the variables hint shows {{name}} literally and describes the text", async () => {
+  setup();
+  const hint = screen.getByText(
+    "Use {{name}} to ask for a value when sending.",
+  );
+  const text = screen.getByLabelText("Text");
+  expect(text.getAttribute("aria-describedby")).toBe(hint.id);
+  await save();
+  const [err, h] = text.getAttribute("aria-describedby")!.split(" ");
+  expect(document.getElementById(err)?.textContent).toBe("Required.");
+  expect(h).toBe(hint.id);
 });
 
 test("editing keeps the id and prefills", async () => {

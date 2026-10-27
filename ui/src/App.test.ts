@@ -15,9 +15,11 @@ vi.mock("@tauri-apps/plugin-updater", () => ({
 vi.mock("@tauri-apps/plugin-log", () => ({ warn: vi.fn() }));
 const win = vi.hoisted(() => ({
   closeRequested: undefined as
-    ((e: { preventDefault: () => void }) => void) | undefined,
+    ((e: { preventDefault: () => void }) => void | Promise<void>) | undefined,
   unlisten: vi.fn(),
   destroy: vi.fn().mockResolvedValue(undefined),
+  isFullscreen: vi.fn().mockResolvedValue(false),
+  setFullscreen: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -26,6 +28,8 @@ vi.mock("@tauri-apps/api/window", () => ({
       return Promise.resolve(win.unlisten);
     },
     destroy: win.destroy,
+    isFullscreen: win.isFullscreen,
+    setFullscreen: win.setFullscreen,
   }),
 }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
@@ -47,6 +51,8 @@ beforeEach(() => {
   vi.mocked(warn).mockClear();
   win.destroy.mockClear();
   win.unlisten.mockClear();
+  win.isFullscreen.mockClear().mockResolvedValue(false);
+  win.setFullscreen.mockClear();
   sessions.tabs.splice(0);
   sessions.active = null;
   toasts.splice(0);
@@ -115,6 +121,28 @@ test("the window close is held back while a session is ready", async () => {
   expect(win.destroy).toHaveBeenCalled();
 });
 
+test("closing leaves fullscreen first, so the saved size is the normal one", async () => {
+  win.isFullscreen.mockResolvedValue(true);
+  openReady();
+  render(App);
+  await waitFor(() => expect(win.closeRequested).toBeDefined());
+  win.closeRequested?.({ preventDefault: vi.fn() });
+  await fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+  await waitFor(() => expect(win.destroy).toHaveBeenCalled());
+  expect(win.setFullscreen).toHaveBeenCalledWith(false);
+  expect(win.setFullscreen.mock.invocationCallOrder[0]).toBeLessThan(
+    win.destroy.mock.invocationCallOrder[0],
+  );
+});
+
+test("an unconfirmed close leaves fullscreen before it proceeds", async () => {
+  win.isFullscreen.mockResolvedValue(true);
+  render(App);
+  await waitFor(() => expect(win.closeRequested).toBeDefined());
+  await win.closeRequested?.({ preventDefault: vi.fn() });
+  expect(win.setFullscreen).toHaveBeenCalledWith(false);
+});
+
 test("a failed window destroy shows an error and dismisses the dialog", async () => {
   win.destroy.mockRejectedValueOnce(new Error("denied"));
   openReady();
@@ -169,4 +197,35 @@ test("startup check is skipped when check_updates is off", async () => {
   await waitFor(() => expect(settings.check_updates).toBe(false));
   await new Promise((r) => setTimeout(r, 0));
   expect(check).not.toHaveBeenCalled();
+});
+
+test("F11 toggles fullscreen, but not behind a dialog", async () => {
+  openReady();
+  render(App);
+  await fireEvent.keyDown(document.body, { key: "F11" });
+  await waitFor(() => expect(win.setFullscreen).toHaveBeenCalledWith(true));
+
+  win.isFullscreen.mockResolvedValue(true);
+  await fireEvent.keyDown(document.body, { key: "F11" });
+  await waitFor(() => expect(win.setFullscreen).toHaveBeenCalledWith(false));
+
+  win.setFullscreen.mockClear();
+  await closeX();
+  await fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "F11" });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(win.setFullscreen).not.toHaveBeenCalled();
+});
+
+test("F11 key auto-repeat does not toggle fullscreen", async () => {
+  render(App);
+  await fireEvent.keyDown(document.body, { key: "F11", repeat: true });
+  await new Promise((r) => setTimeout(r, 0));
+  expect(win.setFullscreen).not.toHaveBeenCalled();
+});
+
+test("a failed fullscreen toggle shows an error", async () => {
+  win.setFullscreen.mockRejectedValueOnce(new Error("denied"));
+  render(App);
+  await fireEvent.keyDown(document.body, { key: "F11" });
+  await waitFor(() => expect(toasts.at(-1)).toMatchObject({ kind: "error" }));
 });

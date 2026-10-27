@@ -105,6 +105,19 @@ test("only snippets that run get the pill", () => {
   expect(pills[0].closest("[role=option]")?.textContent).toContain("Zeta");
 });
 
+test("only snippets with variables get the asks pill", () => {
+  snippets.list = [
+    snip("1", "Tail", "tail {{file}}"),
+    snip("2", "Plain", "ls", { run: true }),
+  ];
+  setup({ connectionId: null });
+  const pills = screen
+    .getAllByRole("option")
+    .map((o) => o.textContent?.includes("asks for values"));
+  expect(pills).toEqual([false, true]);
+  expect(screen.getAllByText("asks for values")).toHaveLength(1);
+});
+
 test("save selection shows only with a selection", async () => {
   const { unmount } = render(SnippetPalette, {
     connectionId: "A",

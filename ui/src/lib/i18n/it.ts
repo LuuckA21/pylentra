@@ -92,6 +92,8 @@ export const it: Record<MessageKey, string> = {
   "form.jumpVia": "Connetti tramite",
   "form.addLocal": "Aggiungi inoltro locale",
   "form.addRemote": "Aggiungi inoltro remoto",
+  "form.dynamic": "SOCKS {n}: {bind}",
+  "form.addDynamic": "+ SOCKS",
   "form.local": "Inoltro locale {n}",
   "form.remote": "Inoltro remoto {n}",
   "form.bindHost": "Indirizzo di ascolto",
@@ -162,6 +164,11 @@ export const it: Record<MessageKey, string> = {
   "fwd.type": "Tipo",
   "fwd.local": "Locale",
   "fwd.remote": "Remoto",
+  "fwd.dynamic": "SOCKS (dinamico)",
+  "fwd.dynamicRow": "SOCKS {bind}",
+  "fwd.dynamicPill": "SOCKS :{port}",
+  "fwd.dynamicHint":
+    "Usa {host}:{port} come proxy SOCKS5 nel browser o con curl --socks5-hostname.",
   "fwd.create": "Avvia tunnel",
   "fwd.sessionOnly": "Il tunnel vale solo per questa sessione.",
 
@@ -288,7 +295,6 @@ export const it: Record<MessageKey, string> = {
   "import.note.UnknownJump": "Jump host {alias} non trovato: nessun jump host.",
   "import.note.RemoteBindIgnored":
     "L'indirizzo di ascolto remoto viene ignorato.",
-  "import.note.DynamicForward": "DynamicForward non è supportato.",
   "import.note.ProxyCommand": "ProxyCommand non è supportato.",
   "import.note.InvalidPort": "Porta non valida: {value}.",
   "import.note.InvalidForward": "Forward non valido: {value}.",
@@ -326,4 +332,8 @@ export const it: Record<MessageKey, string> = {
   "snippet.confirmBody":
     "Questa shell eseguirà ogni riga appena incollata. Continuare?",
   "snippet.confirmOk": "Incolla",
+  "snippet.varsTitle": "Valori per {name}",
+  "snippet.varsSend": "Invia",
+  "snippet.asks": "chiede valori",
+  "snippet.varsHint": "Usa {{nome}} per chiedere un valore all'invio.",
 };
