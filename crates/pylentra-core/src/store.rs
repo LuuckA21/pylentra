@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::model::{Connection, Group, MAX_JUMP_DEPTH, Settings, Warning};
+use crate::model::{Connection, Group, MAX_JUMP_DEPTH, Settings, Warning, lenient_extra};
 use crate::secrets::{SecretKind, SecretStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -21,7 +21,7 @@ pub struct Library {
     pub groups: Vec<Group>,
     #[serde(default)]
     pub connections: Vec<Connection>,
-    #[serde(flatten)]
+    #[serde(flatten, deserialize_with = "lenient_extra")]
     #[ts(skip)]
     pub extra: toml::Table,
 }
@@ -192,7 +192,8 @@ impl ConnectionStore {
         let warnings = c.validate()?;
         let mut candidate = self.library.clone();
         let id = c.id;
-        // The store owns `extra`: the UI rebuilds connections from its forms.
+        // The store owns `extra`: the UI sends back what it received (move,
+        // duplicate) or builds a connection from scratch; neither is the file's.
         match candidate.connections.iter_mut().find(|x| x.id == id) {
             Some(slot) => {
                 c.extra = std::mem::take(&mut slot.extra);
@@ -423,6 +424,11 @@ impl SettingsStore {
 
     pub fn save(&mut self, s: Settings) -> Result<(), CoreError> {
         s.validate()?;
+        // The store owns `extra`; the UI's copy is ignored.
+        let s = Settings {
+            extra: self.settings.extra.clone(),
+            ..s
+        };
         let text = toml::to_string_pretty(&s).map_err(|e| CoreError::InvalidInput {
             field: "settings".into(),
             reason: e.to_string(),
@@ -1126,6 +1132,36 @@ mod tests {
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
         assert_eq!(s.get(), &Settings::default());
+    }
+
+    #[test]
+    fn settings_save_keeps_extra() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("settings.toml");
+        fs::write(&path, "futuro = \"x\"\nfont_size = 15\n").unwrap();
+        let (mut s, outcome) = SettingsStore::load(path.clone());
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        let new = Settings {
+            font_size: 16,
+            extra: toml::Table::new(),
+            ..s.get().clone()
+        };
+        s.save(new).unwrap();
+        let t = table(&path);
+        assert_eq!(t["futuro"].as_str(), Some("x"));
+        assert_eq!(t["font_size"].as_integer(), Some(16));
+        assert_eq!(s.get().extra.len(), 1);
+    }
+
+    #[test]
+    fn settings_non_text_theme_still_ignored() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("settings.toml");
+        fs::write(&path, "terminal_theme = 5\nfuturo = 1\n").unwrap();
+        let (s, outcome) = SettingsStore::load(path);
+        assert!(matches!(outcome, LoadOutcome::Ok));
+        assert_eq!(s.get().terminal_theme, Settings::default().terminal_theme);
+        assert_eq!(s.get().extra.len(), 1);
     }
 
     #[test]

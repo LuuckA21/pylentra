@@ -42,6 +42,17 @@ pub(crate) fn lenient_or_default<'de, D: Deserializer<'de>, T: DeserializeOwned 
     Ok(lenient(d)?.unwrap_or_default())
 }
 
+/// Reads the unknown keys of a flattened `extra`, dropping `null` ones: a TOML
+/// value with no JSON form (`nan`) reaches the UI as `null`, which `toml::Table`
+/// would refuse on the way back.
+pub(crate) fn lenient_extra<'de, D: Deserializer<'de>>(d: D) -> Result<toml::Table, D::Error> {
+    let raw = std::collections::BTreeMap::<String, Option<toml::Value>>::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        .collect())
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -107,7 +118,7 @@ pub struct Connection {
     )]
     #[ts(optional)]
     pub notes: Option<String>,
-    #[serde(flatten)]
+    #[serde(flatten, deserialize_with = "lenient_extra")]
     #[ts(skip)]
     pub extra: toml::Table,
 }
@@ -159,7 +170,7 @@ pub struct Group {
     )]
     #[ts(optional)]
     pub color: Option<TagColor>,
-    #[serde(flatten)]
+    #[serde(flatten, deserialize_with = "lenient_extra")]
     #[ts(skip)]
     pub extra: toml::Table,
 }
@@ -217,6 +228,9 @@ pub struct Settings {
     pub auto_reconnect: bool,
     pub confirm_close_active: bool,
     pub check_updates: bool,
+    #[serde(flatten, deserialize_with = "lenient_extra")]
+    #[ts(skip)]
+    pub extra: toml::Table,
 }
 
 impl Default for Settings {
@@ -238,6 +252,7 @@ impl Default for Settings {
             auto_reconnect: false,
             confirm_close_active: true,
             check_updates: true,
+            extra: toml::Table::new(),
         }
     }
 }
