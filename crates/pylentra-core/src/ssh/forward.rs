@@ -1,7 +1,8 @@
-//! Port forwarding of one session: local listeners, remote (`tcpip-forward`) routes, state events.
+//! Port forwarding of one session: local and SOCKS5 listeners, remote (`tcpip-forward`) routes, state events.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -16,6 +17,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use super::SessionSink;
 use super::events::{ForwardState, SessionEvent};
 use super::handler::ClientHandler;
+use super::socks::{self, HANDSHAKE_TIMEOUT};
 use crate::error::CoreError;
 use crate::model::ForwardRule;
 
@@ -81,6 +83,11 @@ impl Forwards {
                 dest_port,
                 ..
             } => start_remote(target, &self.routes, *bind_port, dest_host, *dest_port).await,
+            ForwardRule::Dynamic {
+                bind_host,
+                bind_port,
+                ..
+            } => start_dynamic(target, bind_host, *bind_port).await,
         };
         let (state, result) = match started {
             Ok((active, bound_port)) => {
@@ -145,35 +152,37 @@ impl Forwards {
 
 pub(crate) fn auto_start(rule: &ForwardRule) -> bool {
     match rule {
-        ForwardRule::Local { auto_start, .. } | ForwardRule::Remote { auto_start, .. } => {
-            *auto_start
-        }
+        ForwardRule::Local { auto_start, .. }
+        | ForwardRule::Remote { auto_start, .. }
+        | ForwardRule::Dynamic { auto_start, .. } => *auto_start,
     }
 }
 
-async fn start_local(
-    target: &Target,
-    bind_host: &str,
-    bind_port: u16,
-    dest_host: &str,
-    dest_port: u16,
-) -> Result<(Active, u16), CoreError> {
-    let listener = TcpListener::bind((bind_host, bind_port))
+async fn bind_listener(bind_host: &str, bind_port: u16) -> Result<TcpListener, CoreError> {
+    TcpListener::bind((bind_host, bind_port))
         .await
         .map_err(|e| match e.kind() {
             io::ErrorKind::AddrInUse => CoreError::PortInUse { port: bind_port },
             io::ErrorKind::PermissionDenied => CoreError::PermissionDenied { port: bind_port },
             _ => CoreError::Io(e),
-        })?;
+        })
+}
+
+/// Binds the listener and spawns the accept loop, which runs `relay` per connection.
+async fn listen<F: Future<Output = ()> + Send + 'static>(
+    bind_host: &str,
+    bind_port: u16,
+    relay: impl Fn(TcpStream, SocketAddr) -> F + Send + 'static,
+) -> Result<(Active, u16), CoreError> {
+    let listener = bind_listener(bind_host, bind_port).await?;
     let bound_port = listener.local_addr()?.port();
-    let (target, dest_host) = (target.clone(), dest_host.to_string());
     let task = tokio::spawn(async move {
         let mut relays = JoinSet::new();
         loop {
             tokio::select! {
                 accepted = listener.accept() => match accepted {
                     Ok((tcp, peer)) => {
-                        relays.spawn(relay_local(target.clone(), tcp, peer, dest_host.clone(), dest_port));
+                        relays.spawn(relay(tcp, peer));
                     }
                     Err(e) => {
                         // e.g. out of file descriptors: back off instead of spinning.
@@ -187,6 +196,32 @@ async fn start_local(
         }
     });
     Ok((Active::Local(task), bound_port))
+}
+
+async fn start_local(
+    target: &Target,
+    bind_host: &str,
+    bind_port: u16,
+    dest_host: &str,
+    dest_port: u16,
+) -> Result<(Active, u16), CoreError> {
+    let (target, dest_host) = (target.clone(), dest_host.to_string());
+    listen(bind_host, bind_port, move |tcp, peer| {
+        relay_local(target.clone(), tcp, peer, dest_host.clone(), dest_port)
+    })
+    .await
+}
+
+async fn start_dynamic(
+    target: &Target,
+    bind_host: &str,
+    bind_port: u16,
+) -> Result<(Active, u16), CoreError> {
+    let target = target.clone();
+    listen(bind_host, bind_port, move |tcp, peer| {
+        relay_dynamic(target.clone(), tcp, peer)
+    })
+    .await
 }
 
 async fn relay_local(
@@ -210,6 +245,27 @@ async fn relay_local(
         }
         // `tcp` drops: the client sees the connection closed.
         Err(e) => log::debug!("direct-tcpip open failed: {e}"),
+    }
+}
+
+async fn relay_dynamic(target: Target, mut tcp: TcpStream, peer: SocketAddr) {
+    let (host, port) = match socks::handshake(&mut tcp, HANDSHAKE_TIMEOUT).await {
+        Ok(dest) => dest,
+        Err(e) => return log::debug!("socks handshake failed: {e}"),
+    };
+    let opened = target
+        .channel_open_direct_tcpip(host, port.into(), peer.ip().to_string(), peer.port().into())
+        .await;
+    match opened {
+        Ok(channel) => {
+            if socks::reply(&mut tcp, 0x00).await.is_ok() {
+                let _ = copy_bidirectional(&mut channel.into_stream(), &mut tcp).await;
+            }
+        }
+        Err(e) => {
+            log::debug!("direct-tcpip open failed: {e}");
+            let _ = socks::reply(&mut tcp, 0x04).await;
+        }
     }
 }
 

@@ -34,7 +34,7 @@
   const auth = initial?.auth;
 
   type Row = {
-    type: "Local" | "Remote";
+    type: ForwardRule["type"];
     bind_host: string;
     bind_port: number | null;
     dest_host: string;
@@ -60,6 +60,8 @@
   let forwards = $state<Row[]>(
     (initial?.forwards ?? []).map((r) => ({
       bind_host: "",
+      dest_host: "",
+      dest_port: null,
       ...r,
     })),
   );
@@ -128,6 +130,13 @@
           dest_port: r.dest_port!,
           auto_start: r.auto_start,
         };
+        if (r.type === "Dynamic")
+          return {
+            type: "Dynamic",
+            bind_host: r.bind_host.trim(),
+            bind_port: common.bind_port,
+            auto_start: common.auto_start,
+          };
         return r.type === "Local"
           ? { type: "Local", bind_host: r.bind_host.trim(), ...common }
           : { type: "Remote", ...common };

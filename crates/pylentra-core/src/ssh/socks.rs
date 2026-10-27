@@ -5,10 +5,8 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-#[allow(dead_code)] // used by forward.rs from the next commit
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum SocksError {
     Io(io::Error),
@@ -16,6 +14,18 @@ pub(crate) enum SocksError {
     BadVersion,
     NoAcceptableMethod,
     Rejected(u8),
+}
+
+impl std::fmt::Display for SocksError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "{e}"),
+            Self::Timeout => f.write_str("timed out"),
+            Self::BadVersion => f.write_str("not SOCKS5"),
+            Self::NoAcceptableMethod => f.write_str("no acceptable method"),
+            Self::Rejected(code) => write!(f, "request refused with code {code:#04x}"),
+        }
+    }
 }
 
 impl From<io::Error> for SocksError {
@@ -26,7 +36,6 @@ impl From<io::Error> for SocksError {
 
 /// Runs greeting and request within `deadline`; refusals are answered here, a wrong
 /// version closes silently. Returns the requested target host and port.
-#[allow(dead_code)]
 pub(crate) async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
     s: &mut S,
     deadline: Duration,
@@ -94,7 +103,6 @@ async fn refuse<S: AsyncWrite + Unpin, T>(s: &mut S, code: u8) -> Result<T, Sock
 }
 
 /// Replies with `code` and the bound address 0.0.0.0:0.
-#[allow(dead_code)]
 pub(crate) async fn reply<S: AsyncWrite + Unpin>(s: &mut S, code: u8) -> io::Result<()> {
     s.write_all(&[5, code, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
     s.flush().await

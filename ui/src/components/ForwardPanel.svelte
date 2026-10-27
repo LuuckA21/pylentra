@@ -26,8 +26,8 @@
       r.type,
       r.type === "Local" ? r.bind_host : "",
       r.bind_port,
-      r.dest_host,
-      r.dest_port,
+      r.type === "Dynamic" ? "" : r.dest_host,
+      r.type === "Dynamic" ? "" : r.dest_port,
     ].join("|");
 
   // Saved rules first, then tunnels added at runtime. A rule that was started,
@@ -50,7 +50,9 @@
   const label = (r: ForwardRule) =>
     r.type === "Local"
       ? `L ${r.bind_host}:${r.bind_port} → ${r.dest_host}:${r.dest_port}`
-      : `R ${r.bind_port} → ${r.dest_host}:${r.dest_port}`;
+      : r.type === "Remote"
+        ? `R ${r.bind_port} → ${r.dest_host}:${r.dest_port}`
+        : `D ${r.bind_host}:${r.bind_port}`;
 
   const usable = $derived(!!tab.sessionId && tab.phase === "ready");
 
