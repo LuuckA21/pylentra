@@ -16,10 +16,11 @@ variables as plain text.
 ### Added
 
 - Dynamic (SOCKS5) port forwarding, the third forward type, like `ssh -D`:
-  add it with "+ SOCKS" in the connection form or in the forward panel. It
-  listens on `127.0.0.1:1080` by default, and the server resolves the
-  destination. It speaks SOCKS5 without authentication and only CONNECT. The
-  status bar shows a "SOCKS :port" pill while it runs. For example:
+  add it with "+ SOCKS" in the connection form, or pick "SOCKS (dynamic)" as
+  the type in the forward panel. It listens on `127.0.0.1:1080` by default,
+  and the server resolves the destination. It speaks SOCKS5 without
+  authentication and only CONNECT. The status bar shows a "SOCKS :port" pill
+  while it runs. For example:
   `curl --socks5-hostname 127.0.0.1:1080 http://internal-service`.
 - Importing from `~/.ssh/config` turns `DynamicForward` lines into SOCKS
   forwards (before, they were skipped with a note).

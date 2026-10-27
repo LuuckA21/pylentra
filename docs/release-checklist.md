@@ -129,8 +129,8 @@ cover it.
 ## SOCKS forward
 
 1. On a connection add a SOCKS forward on the default `127.0.0.1:1080` ("+
-   SOCKS" in the form and in the forward panel), start it, and check the
-   status bar shows "SOCKS :1080".
+   SOCKS" in the connection form, or the type "SOCKS (dynamic)" in the
+   forward panel), start it, and check the status bar shows "SOCKS :1080".
 2. With a service visible only from the server, run
    `curl --socks5-hostname 127.0.0.1:1080 http://internal-service` (or set the
    browser's SOCKS5 proxy): it answers.
