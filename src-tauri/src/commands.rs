@@ -578,7 +578,11 @@ mod tests {
     fn settings_save_from_ui_keeps_extra() {
         let d = TempDir::new().unwrap();
         let path = d.path().join("settings.toml");
-        std::fs::write(&path, "futuro = \"x\"\nfuturo_nan = nan\n").unwrap();
+        std::fs::write(
+            &path,
+            "futuro = \"x\"\nfuturo_nan = nan\nfuturo_arr = [nan]\n[futuro_tab]\nx = inf\n",
+        )
+        .unwrap();
         let state = AppState::load(d.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
         // What the UI does: get, JSON, back, with `futuro_nan` now `null`.
         let json = serde_json::to_string(&do_settings_get(&state)).unwrap();
@@ -588,6 +592,22 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("futuro = \"x\""), "{text}");
         assert!(text.contains("futuro_nan = nan"), "{text}");
+        assert!(text.contains("futuro_arr = [nan]"), "{text}");
+        assert!(text.contains("x = inf"), "{text}");
+    }
+
+    #[test]
+    fn nested_null_unknown_keys_are_dropped_from_ui_json() {
+        let c: Connection = serde_json::from_value(serde_json::json!({
+            "id": Uuid::new_v4(), "name": "n", "host": "h", "port": 22,
+            "username": "u", "auth": { "type": "Agent" }, "forwards": [],
+            "x": [null], "y": { "z": null }, "ok": 1,
+        }))
+        .unwrap();
+        assert_eq!(c.extra.keys().collect::<Vec<_>>(), ["ok"]);
+        let s: Settings =
+            serde_json::from_str(r#"{"x":[null],"y":{"z":null},"font_size":15}"#).unwrap();
+        assert!(s.extra.is_empty());
     }
 
     #[test]

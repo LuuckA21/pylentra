@@ -42,14 +42,23 @@ pub(crate) fn lenient_or_default<'de, D: Deserializer<'de>, T: DeserializeOwned 
     Ok(lenient(d)?.unwrap_or_default())
 }
 
-/// Reads the unknown keys of a flattened `extra`, dropping `null` ones: a TOML
-/// value with no JSON form (`nan`) reaches the UI as `null`, which `toml::Table`
-/// would refuse on the way back.
+/// Reads the unknown keys of a flattened `extra`, dropping values with no TOML
+/// form (`null`, also nested): a non-finite float (`nan`) reaches the UI as
+/// `null`, which `toml::Value` would refuse on the way back.
 pub(crate) fn lenient_extra<'de, D: Deserializer<'de>>(d: D) -> Result<toml::Table, D::Error> {
-    let raw = std::collections::BTreeMap::<String, Option<toml::Value>>::deserialize(d)?;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Lenient {
+        V(toml::Value),
+        Skip(serde::de::IgnoredAny),
+    }
+    let raw = std::collections::BTreeMap::<String, Lenient>::deserialize(d)?;
     Ok(raw
         .into_iter()
-        .filter_map(|(k, v)| v.map(|v| (k, v)))
+        .filter_map(|(k, v)| match v {
+            Lenient::V(v) => Some((k, v)),
+            Lenient::Skip(_) => None,
+        })
         .collect())
 }
 
