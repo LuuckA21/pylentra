@@ -8,7 +8,7 @@
   import ImportDialog from "./components/ImportDialog.svelte";
   import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
-  import TerminalPane from "./components/TerminalPane.svelte";
+  import TabView from "./components/TabView.svelte";
   import Toasts from "./components/Toasts.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
@@ -20,9 +20,10 @@
   import { library, refresh } from "./lib/stores/library.svelte";
   import { loadSnippets } from "./lib/stores/snippets.svelte";
   import {
-    closeTab,
+    closePane,
     linkQuickPane,
     openTab,
+    paneOf,
     sessions,
   } from "./lib/stores/sessions.svelte";
   import { loadSettings, settings } from "./lib/stores/settings.svelte";
@@ -31,13 +32,13 @@
 
   const openConnectionIds = $derived(
     new Set(
-      sessions.tabs
-        .filter((tab) => tab.phase !== "closed")
-        .map((tab) => tab.connectionId),
+      sessions.panes
+        .filter((pane) => pane.phase !== "closed")
+        .map((pane) => pane.connectionId),
     ),
   );
   // `connection` undefined means a new connection. `quickPaneId`: the form
-  // saves that quick tab's connection (pre-filled, created as new).
+  // saves that quick pane's connection (pre-filled, created as new).
   let editing = $state<{
     connection?: Connection;
     quickPaneId?: string;
@@ -53,19 +54,19 @@
   } | null>(null);
 
   const liveCount = () =>
-    sessions.tabs.filter((tab) => tab.phase === "ready").length;
+    sessions.panes.filter((pane) => pane.phase === "ready").length;
 
-  // Only a connected tab is worth asking about.
+  // Only a connected pane is worth asking about.
   function requestClose(paneId: string) {
-    const tab = sessions.tabs.find((x) => x.paneId === paneId);
-    if (!tab || !settings.confirm_close_active || tab.phase !== "ready")
-      return closeTab(paneId);
+    const pane = paneOf(paneId);
+    if (!pane || !settings.confirm_close_active || pane.phase !== "ready")
+      return closePane(paneId);
     confirming = {
       title: t("confirm.tab.title"),
       message: t("confirm.tab.body", {
-        name: tab.quick?.name ?? nameOf(tab.connectionId),
+        name: pane.quick?.name ?? nameOf(pane.connectionId),
       }),
-      action: () => closeTab(paneId),
+      action: () => closePane(paneId),
     };
   }
 
@@ -81,9 +82,9 @@
     if (connection) editing = { connection };
   }
 
-  // Opens the new-connection form pre-filled from a quick tab, named after its host.
+  // Opens the new-connection form pre-filled from a quick pane, named after its host.
   function saveQuick(paneId: string) {
-    const quick = sessions.tabs.find((tab) => tab.paneId === paneId)?.quick;
+    const quick = paneOf(paneId)?.quick;
     if (quick)
       editing = {
         connection: { ...quick, name: quick.host },
@@ -164,26 +165,28 @@
       {#if sessions.tabs.length}
         <div class="topbar">
           <div class="tabbar" role="tablist" aria-label={t("tabs.label")}>
-            {#each sessions.tabs as tab (tab.paneId)}
-              <div class="tab" class:active={tab.paneId === sessions.active}>
+            {#each sessions.tabs as tab (tab.tabId)}
+              {@const pane = paneOf(tab.focus)!}
+              <!-- The tab is named after its focused pane. -->
+              <div class="tab" class:active={tab.tabId === sessions.active}>
                 <button
                   type="button"
                   role="tab"
                   class="title"
-                  class:closed={tab.phase === "closed"}
-                  aria-selected={tab.paneId === sessions.active}
-                  onclick={() => (sessions.active = tab.paneId)}
+                  class:closed={pane.phase === "closed"}
+                  aria-selected={tab.tabId === sessions.active}
+                  onclick={() => (sessions.active = tab.tabId)}
                 >
-                  <span class="dot tag-{dotOf(tab.connectionId) ?? 'none'}"
+                  <span class="dot tag-{dotOf(pane.connectionId) ?? 'none'}"
                   ></span>
-                  {tab.quick?.name ?? nameOf(tab.connectionId)}
+                  {pane.quick?.name ?? nameOf(pane.connectionId)}
                 </button>
                 <button
                   type="button"
                   class="close"
                   aria-label={t("tabs.close")}
                   title={t("tabs.close")}
-                  onclick={() => requestClose(tab.paneId)}>×</button
+                  onclick={() => requestClose(tab.focus)}>×</button
                 >
               </div>
             {/each}
@@ -191,11 +194,11 @@
           <div class="quick"><QuickConnect onopen={openTab} /></div>
         </div>
         <div class="tabs">
-          {#each sessions.tabs as tab (tab.paneId)}
-            <TerminalPane
-              pane={tab}
-              active={tab.paneId === sessions.active}
-              onedit={(id) => (tab.quick ? saveQuick(tab.paneId) : edit(id))}
+          {#each sessions.tabs as tab (tab.tabId)}
+            <TabView
+              {tab}
+              visible={tab.tabId === sessions.active}
+              onedit={edit}
               onsave={saveQuick}
               onclose={requestClose}
             />

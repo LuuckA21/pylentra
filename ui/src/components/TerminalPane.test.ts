@@ -95,7 +95,8 @@ beforeEach(() => {
 const setup = () => {
   render(TerminalPane, {
     pane: initialPane("t1", "c1"),
-    active: true,
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -187,7 +188,8 @@ test("shows the attempt and Cancel stops the retries", async () => {
   vi.mocked(connect).mockClear();
   const { rerender } = render(TerminalPane, {
     pane: initialPane("t1", "c1"),
-    active: true,
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -261,7 +263,8 @@ test("unmounting cancels the pending retry", async () => {
   vi.mocked(connect).mockClear();
   const { unmount } = render(TerminalPane, {
     pane: initialPane("t1", "c1"),
-    active: true,
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -279,7 +282,8 @@ test("turning auto reconnect off during the wait stops the chain", async () => {
   vi.mocked(connect).mockClear();
   const { rerender } = render(TerminalPane, {
     pane: initialPane("t1", "c1"),
-    active: true,
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -317,7 +321,8 @@ test("Ctrl+Shift+W asks the parent to close the tab", async () => {
   const onclose = vi.fn();
   render(TerminalPane, {
     pane: initialPane("t1", "c1"),
-    active: true,
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose,
@@ -334,7 +339,8 @@ test("Ctrl+Shift+W asks the parent to close the tab", async () => {
 const readyPane = { ...initialPane("t1", "c1"), phase: "ready" } as PaneState;
 const props = (pane: PaneState) => ({
   pane,
-  active: true,
+  visible: true,
+  focused: true,
   onedit: vi.fn(),
   onsave: vi.fn(),
   onclose: vi.fn(),
@@ -507,7 +513,7 @@ test("switching to another tab closes the palette", async () => {
   setup2();
   await shortcut();
   expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
-  await view.rerender({ active: false });
+  await view.rerender({ visible: false });
   expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
 });
 
@@ -534,6 +540,20 @@ test("tab shortcuts do not act behind the new-snippet form", async () => {
   });
   expect(cycleTab).not.toHaveBeenCalled();
   expect(p.onclose).not.toHaveBeenCalled();
+});
+
+test("a visible pane without the focus ignores pane shortcuts", async () => {
+  const p = { ...props(readyPane), focused: false };
+  render(TerminalPane, p);
+  await fireEvent.keyDown(document.body, {
+    key: "W",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  await shortcut();
+  expect(p.onclose).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  expect(made.terms[0].focus).not.toHaveBeenCalled();
 });
 
 test("opening the forwards panel closes the palette", async () => {

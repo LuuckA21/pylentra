@@ -54,6 +54,7 @@ beforeEach(() => {
   win.isFullscreen.mockClear().mockResolvedValue(false);
   win.setFullscreen.mockClear();
   sessions.tabs.splice(0);
+  sessions.panes.splice(0);
   sessions.active = null;
   toasts.splice(0);
   updates.available = null;
@@ -63,7 +64,7 @@ beforeEach(() => {
 
 const openReady = () => {
   openTab("c1");
-  sessions.tabs[0].phase = "ready";
+  sessions.panes[0].phase = "ready";
 };
 const closeX = () =>
   fireEvent.click(screen.getByRole("button", { name: "Close tab" }));
@@ -94,7 +95,7 @@ test("closing a ready tab asks first; Cancel keeps it, Close removes it", async 
 
 test("closing a closed tab, or with the setting off, does not ask", async () => {
   openTab("c1");
-  sessions.tabs[0].phase = "closed";
+  sessions.panes[0].phase = "closed";
   render(App);
   await closeX();
   expect(screen.queryByRole("alertdialog")).toBeNull();

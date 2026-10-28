@@ -40,19 +40,25 @@
 
   let {
     pane,
-    active,
+    visible,
+    focused,
     onedit,
     onsave,
     onclose,
   }: {
     pane: PaneState;
-    active: boolean;
+    // Its tab is shown, and it is the tab's focused pane.
+    visible: boolean;
+    focused: boolean;
+    // A saved connection only: a quick pane's error offers onsave instead.
     onedit: (connectionId: string) => void;
     onsave: (paneId: string) => void;
     // The parent decides whether closing needs confirmation.
     onclose: (paneId: string) => void;
   } = $props();
 
+  // The pane's own shortcuts and keyboard focus.
+  const active = $derived(visible && focused);
   let el: HTMLDivElement;
   let root: HTMLDivElement;
   let forwardsOpen = $state(false);
@@ -208,14 +214,15 @@
     fit?.fit();
   });
 
-  // Focus the terminal when the tab is shown, unless an overlay holds the focus.
+  // Focus the terminal when the pane is shown and focused, unless an overlay
+  // holds the focus.
   $effect(() => {
     if (active && !untrack(() => pane.prompt || pane.closed?.type === "Error"))
       term?.focus();
   });
 
   // A session that dropped under an open palette must not receive anything:
-  // the Enter would also restart a closed tab.
+  // the Enter would also restart a closed pane.
   $effect(() => {
     if (pane.phase !== "ready") {
       snippetsOpen = false;
@@ -224,7 +231,8 @@
     }
   });
 
-  // A palette left open on a hidden tab would catch the keys of the next visit.
+  // A palette left open on a hidden or unfocused pane would catch the keys of
+  // the next visit.
   $effect(() => {
     if (!active) snippetsOpen = false;
   });
@@ -308,7 +316,7 @@
 
 <svelte:window onkeydown={onwindowkey} />
 
-<div class="tab" class:active bind:this={root}>
+<div class="pane" bind:this={root}>
   <div class="inset"><div class="terminal" bind:this={el}></div></div>
   <div class="anchor">
     {#if pane.phase === "ready"}
@@ -425,23 +433,21 @@
       error={pane.closed.error}
       mismatch={pane.mismatch}
       onretry={start}
-      onedit={() => onedit(pane.connectionId)}
+      onedit={() =>
+        pane.quick ? onsave(pane.paneId) : onedit(pane.connectionId)}
     />
   {/if}
 </div>
 
 <style>
-  .tab {
+  .pane {
     position: absolute;
     inset: 0;
-    display: none;
+    display: flex;
     flex-direction: column;
     overflow: hidden;
     background: var(--surface-1);
     border-radius: var(--radius-lg);
-  }
-  .tab.active {
-    display: flex;
   }
   /* The fit addon measures its parent, so the padding sits one level above. */
   .inset {

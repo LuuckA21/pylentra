@@ -3,12 +3,21 @@ import type { PromptAnswer } from "../bindings/PromptAnswer";
 import type { SessionEvent } from "../bindings/SessionEvent";
 import type { Connection } from "../bindings/Connection";
 import type { QuickTarget } from "../quickTarget";
+import { firstPane, rects, remove, type Node } from "../layout";
 import { recordRecent } from "../recent";
 import { initialPane, reduce, type PaneState } from "../sessionReducer";
 import { isApiError, toastError } from "./toasts.svelte";
 
-export const sessions = $state<{ tabs: PaneState[]; active: string | null }>({
+// A tab lays out its panes in `root`; `focus` is one of them. `active` is a tabId.
+export type Tab = { tabId: string; root: Node; focus: string };
+
+export const sessions = $state<{
+  tabs: Tab[];
+  panes: PaneState[];
+  active: string | null;
+}>({
   tabs: [],
+  panes: [],
   active: null,
 });
 
@@ -19,13 +28,31 @@ export const sessions = $state<{ tabs: PaneState[]; active: string | null }>({
 const sessionIds = new Map<string, Promise<string>>();
 
 const indexOf = (paneId: string) =>
-  sessions.tabs.findIndex((t) => t.paneId === paneId);
+  sessions.panes.findIndex((p) => p.paneId === paneId);
+
+export const paneOf = (paneId: string): PaneState | undefined =>
+  sessions.panes.find((p) => p.paneId === paneId);
+
+const tabIndexOf = (paneId: string) =>
+  sessions.tabs.findIndex((t) => paneId in rects(t.root).panes);
+
+export const tabOf = (paneId: string): Tab | undefined =>
+  sessions.tabs[tabIndexOf(paneId)];
+
+function addTab(pane: PaneState): string {
+  const tabId = crypto.randomUUID();
+  sessions.panes.push(pane);
+  sessions.tabs.push({
+    tabId,
+    root: { pane: pane.paneId },
+    focus: pane.paneId,
+  });
+  sessions.active = tabId;
+  return pane.paneId;
+}
 
 export function openTab(connectionId: string): string {
-  const paneId = crypto.randomUUID();
-  sessions.tabs.push(initialPane(paneId, connectionId));
-  sessions.active = paneId;
-  return paneId;
+  return addTab(initialPane(crypto.randomUUID(), connectionId));
 }
 
 export function openQuickTab({ user, host, port }: QuickTarget): string {
@@ -40,24 +67,21 @@ export function openQuickTab({ user, host, port }: QuickTarget): string {
     jump_via: null,
     forwards: [],
   };
-  const paneId = crypto.randomUUID();
-  sessions.tabs.push(initialPane(paneId, quick.id, quick));
-  sessions.active = paneId;
-  return paneId;
+  return addTab(initialPane(crypto.randomUUID(), quick.id, quick));
 }
 
-// The open session keeps running; only the tab's identity changes.
+// The open session keeps running; only the pane's identity changes.
 export function linkQuickPane(paneId: string, saved: Connection): void {
   const i = indexOf(paneId);
   if (i < 0) return;
-  sessions.tabs[i] = {
-    ...sessions.tabs[i],
+  sessions.panes[i] = {
+    ...sessions.panes[i],
     connectionId: saved.id,
     quick: undefined,
   };
 }
 
-// Starts (or restarts, in the same tab) the session. Events of a tab that was
+// Starts (or restarts, in the same pane) the session. Events of a pane that was
 // closed meanwhile are dropped.
 export function connect(
   paneId: string,
@@ -70,18 +94,18 @@ export function connect(
   if (i < 0) return;
   const update = (f: (t: PaneState) => PaneState) => {
     const j = indexOf(paneId);
-    if (j >= 0) sessions.tabs[j] = f(sessions.tabs[j]);
+    if (j >= 0) sessions.panes[j] = f(sessions.panes[j]);
   };
   const event = (e: SessionEvent) => {
     if (indexOf(paneId) < 0) return;
     update((t) => reduce(t, e));
-    const pane = sessions.tabs[indexOf(paneId)];
+    const pane = sessions.panes[indexOf(paneId)];
     if (e.type === "Status" && e.stage === "Ready" && !pane.quick)
       recordRecent(pane.connectionId);
     onEvent(e);
   };
-  const { connectionId, quick } = sessions.tabs[i];
-  sessions.tabs[i] = initialPane(paneId, connectionId, quick);
+  const { connectionId, quick } = sessions.panes[i];
+  sessions.panes[i] = initialPane(paneId, connectionId, quick);
   const onBytes = (bytes: Uint8Array) => indexOf(paneId) >= 0 && onData(bytes);
   const id = quick
     ? api.sessionOpenQuick(quick, cols, rows, onBytes, event)
@@ -128,7 +152,7 @@ export async function answer(paneId: string, a: PromptAnswer): Promise<void> {
   const i = indexOf(paneId);
   const id = sessionIds.get(paneId);
   if (i < 0 || !id) return;
-  sessions.tabs[i] = { ...sessions.tabs[i], prompt: undefined };
+  sessions.panes[i] = { ...sessions.panes[i], prompt: undefined };
   try {
     await api.sessionAnswer(await id, a);
   } catch (e) {
@@ -136,22 +160,40 @@ export async function answer(paneId: string, a: PromptAnswer): Promise<void> {
   }
 }
 
-export function closeTab(paneId: string): void {
+// Closes the pane's session if it is live; the last pane takes its tab along.
+export function closePane(paneId: string): void {
   const i = indexOf(paneId);
   if (i < 0) return;
-  const [pane] = sessions.tabs.splice(i, 1);
+  const [pane] = sessions.panes.splice(i, 1);
   const id = sessionIds.get(paneId);
   sessionIds.delete(paneId);
   if (pane.phase !== "closed")
     id?.then((sid) => api.sessionClose(sid)).catch(() => {});
-  if (sessions.active === paneId)
+  const t = tabIndexOf(paneId);
+  if (t < 0) return;
+  const tab = sessions.tabs[t];
+  const root = remove(tab.root, paneId);
+  if (root) {
+    tab.root = root;
+    if (tab.focus === paneId) tab.focus = firstPane(root);
+    return;
+  }
+  sessions.tabs.splice(t, 1);
+  if (sessions.active === tab.tabId)
     sessions.active =
-      sessions.tabs[Math.min(i, sessions.tabs.length - 1)]?.paneId ?? null;
+      sessions.tabs[Math.min(t, sessions.tabs.length - 1)]?.tabId ?? null;
+}
+
+export function closeTab(tabId: string): void {
+  const tab = sessions.tabs.find((t) => t.tabId === tabId);
+  if (tab) Object.keys(rects(tab.root).panes).forEach(closePane);
 }
 
 export function cycleTab(delta: 1 | -1): void {
   const n = sessions.tabs.length;
   if (!n) return;
-  const i = sessions.active ? indexOf(sessions.active) : 0;
-  sessions.active = sessions.tabs[(i + delta + n) % n].paneId;
+  const i = sessions.active
+    ? sessions.tabs.findIndex((t) => t.tabId === sessions.active)
+    : 0;
+  sessions.active = sessions.tabs[(i + delta + n) % n].tabId;
 }

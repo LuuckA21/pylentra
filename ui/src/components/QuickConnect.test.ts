@@ -17,6 +17,7 @@ const conn = (id: string, name: string) =>
 
 beforeEach(() => {
   sessions.tabs.splice(0);
+  sessions.panes.splice(0);
   sessions.active = null;
   library.groups = [];
   library.connections = Array.from({ length: 8 }, (_, i) =>
@@ -45,7 +46,7 @@ test("Enter without a selection connects to the typed target", async () => {
   await type("root@Host.example:2222");
   await fireEvent.keyDown(field(), { key: "Enter" });
   expect(onopen).not.toHaveBeenCalled();
-  expect(sessions.tabs[0].quick).toMatchObject({
+  expect(sessions.panes[0].quick).toMatchObject({
     username: "root",
     host: "Host.example",
     port: 2222,
