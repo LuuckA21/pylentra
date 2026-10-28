@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import type { Connection } from "../lib/bindings/Connection";
 import type { Group } from "../lib/bindings/Group";
-import type { TabState } from "../lib/sessionReducer";
+import type { PaneState } from "../lib/sessionReducer";
 import StatusBar from "./StatusBar.svelte";
 
 const groups: Group[] = [{ id: "g1", name: "Production", color: "red" }];
@@ -16,8 +16,8 @@ const rule = {
   auto_start: false,
 } as const;
 
-const tab = (readyAt: number): TabState => ({
-  tabId: "t1",
+const pane = (readyAt: number): PaneState => ({
+  paneId: "t1",
   connectionId: "c1",
   sessionId: "s1",
   phase: "ready",
@@ -31,7 +31,7 @@ const tab = (readyAt: number): TabState => ({
 test("shows the group pill, one pill per active forward and the connected time", async () => {
   const onforwards = vi.fn();
   render(StatusBar, {
-    tab: tab(Date.now() - 2 * 3600_000),
+    pane: pane(Date.now() - 2 * 3600_000),
     connection,
     groups,
     onforwards,
@@ -51,8 +51,8 @@ test("an active SOCKS forward shows a SOCKS pill", () => {
     auto_start: false,
   } as const;
   render(StatusBar, {
-    tab: {
-      ...tab(Date.now()),
+    pane: {
+      ...pane(Date.now()),
       forwards: {
         1: { rule: socks, state: { type: "Active", bound_port: 1080 } },
       },
@@ -66,7 +66,7 @@ test("an active SOCKS forward shows a SOCKS pill", () => {
 
 test("short sessions read '< 1 min' and minutes count up", () => {
   const { unmount } = render(StatusBar, {
-    tab: tab(Date.now()),
+    pane: pane(Date.now()),
     connection,
     groups,
     onforwards: () => {},
@@ -74,7 +74,7 @@ test("short sessions read '< 1 min' and minutes count up", () => {
   expect(screen.getByText("< 1 min")).toBeTruthy();
   unmount();
   render(StatusBar, {
-    tab: tab(Date.now() - 5 * 60_000),
+    pane: pane(Date.now() - 5 * 60_000),
     connection,
     groups,
     onforwards: () => {},
@@ -84,7 +84,7 @@ test("short sessions read '< 1 min' and minutes count up", () => {
 
 test("the Forward button and pills report whether the panel is open", () => {
   render(StatusBar, {
-    tab: tab(Date.now()),
+    pane: pane(Date.now()),
     connection,
     groups,
     onforwards: vi.fn(),
@@ -104,9 +104,9 @@ test("the Forward button and pills report whether the panel is open", () => {
 
 test("the snippets button is disabled outside ready and opens the palette", async () => {
   const onsnippets = vi.fn();
-  const base = tab(Date.now());
+  const base = pane(Date.now());
   const { rerender } = render(StatusBar, {
-    tab: { ...base, phase: "connecting" },
+    pane: { ...base, phase: "connecting" },
     connection,
     groups,
     onforwards: vi.fn(),
@@ -114,7 +114,7 @@ test("the snippets button is disabled outside ready and opens the palette", asyn
   });
   const button = screen.getByRole("button", { name: "Snippets" });
   expect(button).toHaveProperty("disabled", true);
-  await rerender({ tab: base, snippetsOpen: true });
+  await rerender({ pane: base, snippetsOpen: true });
   expect(button).toHaveProperty("disabled", false);
   expect(button.getAttribute("aria-expanded")).toBe("true");
   await fireEvent.click(button);

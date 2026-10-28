@@ -3,7 +3,7 @@
   import type { ApiError } from "../lib/bindings/ApiError";
   import { errorMessage, t } from "../lib/i18n";
   import { modal } from "../lib/modal";
-  import { keygenHint, type TabState } from "../lib/sessionReducer";
+  import { keygenHint, type PaneState } from "../lib/sessionReducer";
   import { toastError } from "../lib/stores/toasts.svelte";
 
   let {
@@ -13,7 +13,7 @@
     onedit,
   }: {
     error: ApiError;
-    mismatch: TabState["mismatch"];
+    mismatch: PaneState["mismatch"];
     onretry: () => void;
     onedit: () => void;
   } = $props();

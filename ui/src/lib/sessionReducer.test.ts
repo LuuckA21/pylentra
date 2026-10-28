@@ -1,14 +1,14 @@
 import { afterEach, expect, test, vi } from "vitest";
 import type { SessionEvent } from "./bindings/SessionEvent";
 import {
-  initialTab,
+  initialPane,
   keygenHint,
   reduce,
-  type TabState,
+  type PaneState,
 } from "./sessionReducer";
 
-const run = (...events: SessionEvent[]): TabState =>
-  events.reduce(reduce, initialTab("t1", "c1"));
+const run = (...events: SessionEvent[]): PaneState =>
+  events.reduce(reduce, initialPane("t1", "c1"));
 
 const hostKey: SessionEvent = {
   type: "HostKeyPrompt",
@@ -27,7 +27,7 @@ const local = {
 } as const;
 
 test("status events advance phase", () => {
-  expect(initialTab("t1", "c1").phase).toBe("connecting");
+  expect(initialPane("t1", "c1").phase).toBe("connecting");
   const s = run({ type: "Status", stage: "Connecting" });
   expect(s.phase).toBe("connecting");
   const a = reduce(s, { type: "Status", stage: "Authenticating" });
@@ -90,7 +90,7 @@ test("Closed clears pending prompt", () => {
 });
 
 test("reduce does not mutate its input", () => {
-  const s = initialTab("t1", "c1");
+  const s = initialPane("t1", "c1");
   reduce(s, hostKey);
   expect(s.prompt).toBeUndefined();
 });

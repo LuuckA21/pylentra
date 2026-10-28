@@ -18,7 +18,7 @@ import {
   closeTab,
   connect,
   cycleTab,
-  linkQuickTab,
+  linkQuickPane,
   openQuickTab,
   openTab,
   sessions,
@@ -82,7 +82,7 @@ test("closing the active tab closes its session and activates a neighbor", async
   expect(api.sessionClose).toHaveBeenCalledWith("s1");
   expect(sessions.active).toBe(a);
   emit({ type: "Status", stage: "Ready" }); // late event of the closed tab is dropped
-  expect(sessions.tabs.map((t) => t.tabId)).toEqual([a]);
+  expect(sessions.tabs.map((t) => t.paneId)).toEqual([a]);
 });
 
 test("cycleTab wraps around", () => {
@@ -180,7 +180,7 @@ test("connect uses sessionOpenQuick for quick tabs and does not record them as r
   expect(recentIds(new Set([quick!.id]))).toEqual([]);
 });
 
-test("linkQuickTab points the tab at the saved connection", async () => {
+test("linkQuickPane points the tab at the saved connection", async () => {
   const id = openQuickTab(target);
   connect(
     id,
@@ -190,7 +190,7 @@ test("linkQuickTab points the tab at the saved connection", async () => {
     () => {},
   );
   await flush();
-  linkQuickTab(id, {
+  linkQuickPane(id, {
     ...sessions.tabs[0].quick!,
     id: "saved",
     name: "Example.com",

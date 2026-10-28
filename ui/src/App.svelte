@@ -8,7 +8,7 @@
   import ImportDialog from "./components/ImportDialog.svelte";
   import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
-  import TerminalTab from "./components/TerminalTab.svelte";
+  import TerminalPane from "./components/TerminalPane.svelte";
   import Toasts from "./components/Toasts.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
@@ -21,7 +21,7 @@
   import { loadSnippets } from "./lib/stores/snippets.svelte";
   import {
     closeTab,
-    linkQuickTab,
+    linkQuickPane,
     openTab,
     sessions,
   } from "./lib/stores/sessions.svelte";
@@ -36,11 +36,12 @@
         .map((tab) => tab.connectionId),
     ),
   );
-  // `connection` undefined means a new connection. `quickTabId`: the form
+  // `connection` undefined means a new connection. `quickPaneId`: the form
   // saves that quick tab's connection (pre-filled, created as new).
-  let editing = $state<{ connection?: Connection; quickTabId?: string } | null>(
-    null,
-  );
+  let editing = $state<{
+    connection?: Connection;
+    quickPaneId?: string;
+  } | null>(null);
   let settingsOpen = $state(false);
   let importOpen = $state(false);
 
@@ -55,16 +56,16 @@
     sessions.tabs.filter((tab) => tab.phase === "ready").length;
 
   // Only a connected tab is worth asking about.
-  function requestClose(tabId: string) {
-    const tab = sessions.tabs.find((x) => x.tabId === tabId);
+  function requestClose(paneId: string) {
+    const tab = sessions.tabs.find((x) => x.paneId === paneId);
     if (!tab || !settings.confirm_close_active || tab.phase !== "ready")
-      return closeTab(tabId);
+      return closeTab(paneId);
     confirming = {
       title: t("confirm.tab.title"),
       message: t("confirm.tab.body", {
         name: tab.quick?.name ?? nameOf(tab.connectionId),
       }),
-      action: () => closeTab(tabId),
+      action: () => closeTab(paneId),
     };
   }
 
@@ -81,12 +82,12 @@
   }
 
   // Opens the new-connection form pre-filled from a quick tab, named after its host.
-  function saveQuick(tabId: string) {
-    const quick = sessions.tabs.find((tab) => tab.tabId === tabId)?.quick;
+  function saveQuick(paneId: string) {
+    const quick = sessions.tabs.find((tab) => tab.paneId === paneId)?.quick;
     if (quick)
       editing = {
         connection: { ...quick, name: quick.host },
-        quickTabId: tabId,
+        quickPaneId: paneId,
       };
   }
 
@@ -163,15 +164,15 @@
       {#if sessions.tabs.length}
         <div class="topbar">
           <div class="tabbar" role="tablist" aria-label={t("tabs.label")}>
-            {#each sessions.tabs as tab (tab.tabId)}
-              <div class="tab" class:active={tab.tabId === sessions.active}>
+            {#each sessions.tabs as tab (tab.paneId)}
+              <div class="tab" class:active={tab.paneId === sessions.active}>
                 <button
                   type="button"
                   role="tab"
                   class="title"
                   class:closed={tab.phase === "closed"}
-                  aria-selected={tab.tabId === sessions.active}
-                  onclick={() => (sessions.active = tab.tabId)}
+                  aria-selected={tab.paneId === sessions.active}
+                  onclick={() => (sessions.active = tab.paneId)}
                 >
                   <span class="dot tag-{dotOf(tab.connectionId) ?? 'none'}"
                   ></span>
@@ -182,7 +183,7 @@
                   class="close"
                   aria-label={t("tabs.close")}
                   title={t("tabs.close")}
-                  onclick={() => requestClose(tab.tabId)}>×</button
+                  onclick={() => requestClose(tab.paneId)}>×</button
                 >
               </div>
             {/each}
@@ -190,11 +191,11 @@
           <div class="quick"><QuickConnect onopen={openTab} /></div>
         </div>
         <div class="tabs">
-          {#each sessions.tabs as tab (tab.tabId)}
-            <TerminalTab
-              {tab}
-              active={tab.tabId === sessions.active}
-              onedit={(id) => (tab.quick ? saveQuick(tab.tabId) : edit(id))}
+          {#each sessions.tabs as tab (tab.paneId)}
+            <TerminalPane
+              pane={tab}
+              active={tab.paneId === sessions.active}
+              onedit={(id) => (tab.quick ? saveQuick(tab.paneId) : edit(id))}
               onsave={saveQuick}
               onclose={requestClose}
             />
@@ -214,9 +215,9 @@
 {#if editing}
   <ConnectionForm
     connection={editing.connection}
-    isNew={!!editing.quickTabId}
+    isNew={!!editing.quickPaneId}
     onsaved={(saved) => {
-      if (editing?.quickTabId) linkQuickTab(editing.quickTabId, saved);
+      if (editing?.quickPaneId) linkQuickPane(editing.quickPaneId, saved);
       editing = null;
     }}
     oncancel={() => (editing = null)}

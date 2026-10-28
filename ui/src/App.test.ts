@@ -34,7 +34,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 // xterm needs a real browser; the tab strip is what is under test.
-vi.mock("./components/TerminalTab.svelte", () => ({ default: () => {} }));
+vi.mock("./components/TerminalPane.svelte", () => ({ default: () => {} }));
 
 import { check } from "@tauri-apps/plugin-updater";
 import { warn } from "@tauri-apps/plugin-log";

@@ -7,7 +7,7 @@
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
-  import type { TabState } from "../lib/sessionReducer";
+  import type { PaneState } from "../lib/sessionReducer";
   import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
   import {
     body,
@@ -39,18 +39,18 @@
   import ConfirmDialog from "./ui/ConfirmDialog.svelte";
 
   let {
-    tab,
+    pane,
     active,
     onedit,
     onsave,
     onclose,
   }: {
-    tab: TabState;
+    pane: PaneState;
     active: boolean;
     onedit: (connectionId: string) => void;
-    onsave: (tabId: string) => void;
+    onsave: (paneId: string) => void;
     // The parent decides whether closing needs confirmation.
-    onclose: (tabId: string) => void;
+    onclose: (paneId: string) => void;
   } = $props();
 
   let el: HTMLDivElement;
@@ -78,10 +78,10 @@
   function launch() {
     const tm = term;
     if (!tm) return;
-    // Per session: tab.readyAt is not read here because connect resets it.
+    // Per session: pane.readyAt is not read here because connect resets it.
     let wasReady = false;
     connect(
-      tab.tabId,
+      pane.paneId,
       tm.cols,
       tm.rows,
       (bytes) => tm.write(bytes),
@@ -128,7 +128,7 @@
     launch();
   }
 
-  const onanswer = (a: PromptAnswer) => answer(tab.tabId, a);
+  const onanswer = (a: PromptAnswer) => answer(pane.paneId, a);
 
   onMount(() => {
     const tm = new Terminal({
@@ -149,18 +149,18 @@
     // Our shortcuts never reach the shell; the window handler below runs them.
     tm.attachCustomKeyEventHandler((e) => !shortcutFor(e));
     tm.onData((d) => {
-      if (tab.phase === "ready") write(tab, d);
-      else if (tab.phase === "closed" && tab.closed?.type !== "Error") {
+      if (pane.phase === "ready") write(pane, d);
+      else if (pane.phase === "closed" && pane.closed?.type !== "Error") {
         if (d === "\r") start();
       }
     });
     tm.onBinary((d) =>
       write(
-        tab,
+        pane,
         Uint8Array.from(d, (c) => c.charCodeAt(0)),
       ),
     );
-    tm.onResize(({ cols, rows }) => resize(tab, cols, rows));
+    tm.onResize(({ cols, rows }) => resize(pane, cols, rows));
     tm.onSelectionChange(() => {
       const text = settings.copy_on_select ? tm.getSelection() : "";
       // A clipboard error here would only be noise.
@@ -210,14 +210,14 @@
 
   // Focus the terminal when the tab is shown, unless an overlay holds the focus.
   $effect(() => {
-    if (active && !untrack(() => tab.prompt || tab.closed?.type === "Error"))
+    if (active && !untrack(() => pane.prompt || pane.closed?.type === "Error"))
       term?.focus();
   });
 
   // A session that dropped under an open palette must not receive anything:
   // the Enter would also restart a closed tab.
   $effect(() => {
-    if (tab.phase !== "ready") {
+    if (pane.phase !== "ready") {
       snippetsOpen = false;
       confirming = undefined;
       asking = undefined;
@@ -236,7 +236,7 @@
 
   function toggleSnippets() {
     if (snippetsOpen) return closeSnippets();
-    if (tab.phase !== "ready" || confirming || asking || newSnippet) return;
+    if (pane.phase !== "ready" || confirming || asking || newSnippet) return;
     selection = term?.getSelection() ?? "";
     forwardsOpen = false;
     snippetsOpen = true;
@@ -249,7 +249,7 @@
 
   function paste(s: Snippet) {
     confirming = undefined;
-    if (tab.phase === "ready") {
+    if (pane.phase === "ready") {
       term?.paste(body(s.text));
       // Through onData, like typing.
       if (s.run) term?.input("\r");
@@ -292,7 +292,7 @@
         .readText()
         .then((text) => term?.paste(text))
         .catch(toastError);
-    } else if (a === "closeTab") onclose(tab.tabId);
+    } else if (a === "closeTab") onclose(pane.paneId);
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
     else if (a === "snippets") toggleSnippets();
@@ -311,17 +311,17 @@
 <div class="tab" class:active bind:this={root}>
   <div class="inset"><div class="terminal" bind:this={el}></div></div>
   <div class="anchor">
-    {#if tab.phase === "ready"}
+    {#if pane.phase === "ready"}
       <ForwardPanel
-        {tab}
+        {pane}
         bind:open={forwardsOpen}
         onclose={() => (forwardsOpen = false)}
       />
       {#if snippetsOpen}
         <SnippetPalette
-          connectionId={tab.quick ? null : tab.connectionId}
+          connectionId={pane.quick ? null : pane.connectionId}
           connectionName={library.connections.find(
-            (c) => c.id === tab.connectionId,
+            (c) => c.id === pane.connectionId,
           )?.name}
           {selection}
           onpick={pick}
@@ -334,35 +334,35 @@
       {/if}
     {/if}
     <StatusBar
-      {tab}
-      connection={library.connections.find((c) => c.id === tab.connectionId)}
+      {pane}
+      connection={library.connections.find((c) => c.id === pane.connectionId)}
       groups={library.groups}
       onforwards={() => (forwardsOpen = !forwardsOpen)}
       {forwardsOpen}
       onsnippets={toggleSnippets}
       {snippetsOpen}
-      onsave={tab.quick ? () => onsave(tab.tabId) : undefined}
+      onsave={pane.quick ? () => onsave(pane.paneId) : undefined}
     />
   </div>
 
-  {#if tab.phase === "connecting" || tab.phase === "authenticating"}
+  {#if pane.phase === "connecting" || pane.phase === "authenticating"}
     <p class="status" role="status">
       {t(
-        tab.phase === "connecting"
+        pane.phase === "connecting"
           ? "session.connecting"
           : "session.authenticating",
       )}
     </p>
   {/if}
 
-  {#key tab.prompt}
-    {#if tab.prompt?.type === "HostKeyPrompt"}
-      <HostKeyDialog prompt={tab.prompt} {onanswer} />
-    {:else if tab.prompt?.type === "SecretPrompt"}
+  {#key pane.prompt}
+    {#if pane.prompt?.type === "HostKeyPrompt"}
+      <HostKeyDialog prompt={pane.prompt} {onanswer} />
+    {:else if pane.prompt?.type === "SecretPrompt"}
       <SecretPrompt
-        prompt={tab.prompt}
-        connectionId={tab.connectionId}
-        quick={tab.quick}
+        prompt={pane.prompt}
+        connectionId={pane.connectionId}
+        quick={pane.quick}
         {onanswer}
       />
     {/if}
@@ -405,7 +405,7 @@
     <SnippetForm
       preset={{
         text: newSnippet.text,
-        connectionId: tab.quick ? null : tab.connectionId,
+        connectionId: pane.quick ? null : pane.connectionId,
       }}
       onclose={() => {
         newSnippet = undefined;
@@ -420,12 +420,12 @@
       max={RECONNECT_DELAYS.length}
       oncancel={cancelRetry}
     />
-  {:else if tab.closed?.type === "Error"}
+  {:else if pane.closed?.type === "Error"}
     <ErrorOverlay
-      error={tab.closed.error}
-      mismatch={tab.mismatch}
+      error={pane.closed.error}
+      mismatch={pane.mismatch}
       onretry={start}
-      onedit={() => onedit(tab.connectionId)}
+      onedit={() => onedit(pane.connectionId)}
     />
   {/if}
 </div>

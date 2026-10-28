@@ -2,11 +2,11 @@
   import type { Connection } from "../lib/bindings/Connection";
   import type { Group } from "../lib/bindings/Group";
   import { t } from "../lib/i18n";
-  import type { TabState } from "../lib/sessionReducer";
+  import type { PaneState } from "../lib/sessionReducer";
   import Pill from "./ui/Pill.svelte";
 
   let {
-    tab,
+    pane,
     connection,
     groups,
     onforwards,
@@ -15,7 +15,7 @@
     snippetsOpen = false,
     onsave,
   }: {
-    tab: TabState;
+    pane: PaneState;
     connection: Connection | undefined;
     groups: Group[];
     onforwards: () => void;
@@ -28,7 +28,7 @@
 
   const group = $derived(groups.find((g) => g.id === connection?.group_id));
   const active = $derived(
-    Object.entries(tab.forwards).filter(([, f]) => f.state.type === "Active"),
+    Object.entries(pane.forwards).filter(([, f]) => f.state.type === "Active"),
   );
 
   // The duration only changes by the minute, so one tick a minute is enough.
@@ -39,8 +39,8 @@
   });
 
   const connected = $derived.by(() => {
-    if (tab.phase !== "ready" || tab.readyAt === undefined) return null;
-    const min = Math.max(0, Math.floor((now - tab.readyAt) / 60_000));
+    if (pane.phase !== "ready" || pane.readyAt === undefined) return null;
+    const min = Math.max(0, Math.floor((now - pane.readyAt) / 60_000));
     if (min < 1) return t("status.lessThanMinute");
     return min < 60
       ? t("status.minutes", { n: min })
@@ -62,7 +62,7 @@
   <button
     type="button"
     class="fwd"
-    disabled={tab.phase !== "ready"}
+    disabled={pane.phase !== "ready"}
     aria-expanded={forwardsOpen}
     onclick={onforwards}>{t("status.forward")}</button
   >
@@ -70,7 +70,7 @@
     <button
       type="button"
       class="fwd"
-      disabled={tab.phase !== "ready"}
+      disabled={pane.phase !== "ready"}
       aria-expanded={snippetsOpen}
       onclick={onsnippets}>{t("snippet.button")}</button
     >

@@ -63,11 +63,11 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
 
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
-import { initialTab, type TabState } from "../lib/sessionReducer";
+import { initialPane, type PaneState } from "../lib/sessionReducer";
 import { connect, cycleTab } from "../lib/stores/sessions.svelte";
 import { settings } from "../lib/stores/settings.svelte";
 import { snippets } from "../lib/stores/snippets.svelte";
-import TerminalTab from "./TerminalTab.svelte";
+import TerminalPane from "./TerminalPane.svelte";
 
 beforeEach(() => {
   made.terms.length = 0;
@@ -93,8 +93,8 @@ beforeEach(() => {
 });
 
 const setup = () => {
-  render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
+  render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
@@ -185,8 +185,8 @@ test("retries after 1, 2, 5, 10, 30 s and stops after 5", async () => {
 test("shows the attempt and Cancel stops the retries", async () => {
   vi.useFakeTimers();
   vi.mocked(connect).mockClear();
-  const { rerender } = render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
+  const { rerender } = render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
@@ -199,11 +199,11 @@ test("shows the attempt and Cancel stops the retries", async () => {
   expect(document.activeElement).toBe(cancel);
   // The reducer would have stored the reason on the tab.
   await rerender({
-    tab: {
-      ...initialTab("t1", "c1"),
+    pane: {
+      ...initialPane("t1", "c1"),
       phase: "closed",
       closed: { type: "Error", error: { code: "network.timeout", params: {} } },
-    } satisfies TabState,
+    } satisfies PaneState,
   });
   await fireEvent.click(cancel);
   await vi.advanceTimersByTimeAsync(60000);
@@ -259,8 +259,8 @@ test.each([
 test("unmounting cancels the pending retry", async () => {
   vi.useFakeTimers();
   vi.mocked(connect).mockClear();
-  const { unmount } = render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
+  const { unmount } = render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
@@ -277,8 +277,8 @@ test("unmounting cancels the pending retry", async () => {
 test("turning auto reconnect off during the wait stops the chain", async () => {
   vi.useFakeTimers();
   vi.mocked(connect).mockClear();
-  const { rerender } = render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
+  const { rerender } = render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
@@ -287,11 +287,11 @@ test("turning auto reconnect off during the wait stops the chain", async () => {
   ready();
   drop();
   await rerender({
-    tab: {
-      ...initialTab("t1", "c1"),
+    pane: {
+      ...initialPane("t1", "c1"),
       phase: "closed",
       closed: { type: "Error", error: { code: "network.timeout", params: {} } },
-    } satisfies TabState,
+    } satisfies PaneState,
   });
   settings.auto_reconnect = false;
   await vi.advanceTimersByTimeAsync(1000);
@@ -315,8 +315,8 @@ test("a second Closed during the wait does not add a second retry", async () => 
 
 test("Ctrl+Shift+W asks the parent to close the tab", async () => {
   const onclose = vi.fn();
-  render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
+  render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
     active: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
@@ -331,9 +331,9 @@ test("Ctrl+Shift+W asks the parent to close the tab", async () => {
 });
 
 // Snippet palette.
-const readyTab = { ...initialTab("t1", "c1"), phase: "ready" } as TabState;
-const props = (tab: TabState) => ({
-  tab,
+const readyPane = { ...initialPane("t1", "c1"), phase: "ready" } as PaneState;
+const props = (pane: PaneState) => ({
+  pane,
   active: true,
   onedit: vi.fn(),
   onsave: vi.fn(),
@@ -348,10 +348,10 @@ const pick = async (text: string, run: boolean) => {
 };
 
 test("Ctrl+Shift+P opens the palette on a ready tab only", async () => {
-  const { rerender } = render(TerminalTab, props(initialTab("t1", "c1")));
+  const { rerender } = render(TerminalPane, props(initialPane("t1", "c1")));
   await shortcut();
   expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
-  await rerender(props(readyTab));
+  await rerender(props(readyPane));
   await shortcut();
   expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
 });
@@ -397,7 +397,7 @@ test("the palette closes when the session drops, and nothing is sent", async () 
   const { rerender } = view;
   snippets.list = [{ id: "s1", name: "S", text: "ls", run: true }];
   await shortcut();
-  await rerender({ tab: { ...readyTab, phase: "closed" } });
+  await rerender({ pane: { ...readyPane, phase: "closed" } });
   expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
   expect(term.paste).not.toHaveBeenCalled();
   expect(term.input).not.toHaveBeenCalled();
@@ -407,7 +407,7 @@ test("a pending multi-line confirm goes away when the session drops", async () =
   const term = setup2();
   await pick("a\nb", false);
   expect(screen.getByRole("alertdialog")).toBeTruthy();
-  await view.rerender({ tab: { ...readyTab, phase: "closed" } });
+  await view.rerender({ pane: { ...readyPane, phase: "closed" } });
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(term.paste).not.toHaveBeenCalled();
 });
@@ -485,14 +485,14 @@ test("a filled multi-line snippet still asks for confirmation", async () => {
 test("the variables dialog goes away when the session drops", async () => {
   const term = setup2();
   await pick("tail {{s}}", false);
-  await view.rerender({ tab: { ...readyTab, phase: "closed" } });
+  await view.rerender({ pane: { ...readyPane, phase: "closed" } });
   expect(screen.queryByRole("dialog", { name: "Values for S" })).toBeNull();
   expect(term.paste).not.toHaveBeenCalled();
 });
 
 test("tab shortcuts do not act behind the variables dialog", async () => {
-  const p = props(readyTab);
-  render(TerminalTab, p);
+  const p = props(readyPane);
+  render(TerminalPane, p);
   await pick("tail {{s}}", false);
   await fireEvent.keyDown(document.body, {
     key: "W",
@@ -521,8 +521,8 @@ test("Esc in the palette gives the focus back to the terminal", async () => {
 });
 
 test("tab shortcuts do not act behind the new-snippet form", async () => {
-  const p = props(readyTab);
-  render(TerminalTab, p);
+  const p = props(readyPane);
+  render(TerminalPane, p);
   await shortcut();
   await fireEvent.click(screen.getByText("New snippet"));
   expect(screen.getByRole("dialog", { name: "New snippet" })).toBeTruthy();
@@ -547,7 +547,7 @@ test("opening the forwards panel closes the palette", async () => {
 
 let view: ReturnType<typeof render>;
 function setup2() {
-  view = render(TerminalTab, props(readyTab));
+  view = render(TerminalPane, props(readyPane));
   return made.terms[0];
 }
 
