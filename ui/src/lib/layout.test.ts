@@ -82,6 +82,16 @@ test("neighbor finds the adjacent pane, topmost on ties", () => {
   expect(neighbor(panes, "A", "left")).toBeNull();
 });
 
+test("neighbor prefers the longer overlap", () => {
+  const skewed: Node = {
+    dir: "row",
+    ratio: 0.5,
+    a: A,
+    b: { dir: "column", ratio: 0.3, a: B, b: C },
+  };
+  expect(neighbor(rects(skewed).panes, "A", "right")).toBe("C");
+});
+
 test("setRatio clamps to 0.1..0.9", () => {
   const ratioAt = (n: Node) => ("ratio" in n ? n.ratio : NaN);
   const b = (n: Node) => ("b" in n ? n.b : n);
@@ -94,6 +104,15 @@ test("clampRatio honours the pixel minimum when the size is known", () => {
   expect(clampRatio(0.05, 1000, 160)).toBe(0.16);
   expect(clampRatio(0.5, 0, 160)).toBe(0.5);
   expect(clampRatio(0.95, 0, 160)).toBe(0.9);
+  expect(clampRatio(0.95, 1000, 160)).toBeCloseTo(0.84);
+});
+
+test("clampRatio stays within 0.1..0.9 when the minimum does not fit", () => {
+  for (const total of [100, 250, 320, 400]) {
+    const r = clampRatio(0.5, total, 160);
+    expect(r).toBeGreaterThanOrEqual(0.1);
+    expect(r).toBeLessThanOrEqual(0.9);
+  }
 });
 
 test("count and firstPane", () => {

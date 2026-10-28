@@ -51,7 +51,7 @@ export function clampRatio(
   let r = Math.max(0.1, Math.min(0.9, ratio));
   if (totalPx > 0) {
     const m = minPx / totalPx;
-    r = Math.max(m, Math.min(1 - m, r));
+    r = Math.max(0.1, Math.min(0.9, Math.max(m, Math.min(1 - m, r))));
   }
   return r;
 }
