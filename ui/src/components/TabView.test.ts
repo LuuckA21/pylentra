@@ -269,3 +269,90 @@ test("a click on a waiting prompt's text puts the keyboard in the prompt", async
   await fireEvent.click(text);
   expect(dialog.contains(document.activeElement)).toBe(true);
 });
+
+const separator = (name = "Resize panes") =>
+  screen.getByRole("separator", { name });
+
+test("a divider between side-by-side panes is a keyboard-reachable separator", async () => {
+  show(true);
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  const sep = separator();
+  expect(sep.getAttribute("aria-orientation")).toBe("vertical");
+  expect(sep.getAttribute("aria-valuenow")).toBe("50");
+  expect(sep.getAttribute("tabindex")).toBe("0");
+});
+
+test("the arrows move the divider by 5%, Enter recenters, and it stops at 10%", async () => {
+  show(true);
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  const sep = separator();
+  const now = () => separator().getAttribute("aria-valuenow");
+  await fireEvent.keyDown(sep, { key: "ArrowRight" });
+  expect(now()).toBe("55");
+  await fireEvent.keyDown(sep, { key: "ArrowLeft" });
+  await fireEvent.keyDown(sep, { key: "ArrowLeft" });
+  expect(now()).toBe("45");
+  await fireEvent.keyDown(sep, { key: "Enter" });
+  expect(now()).toBe("50");
+  for (let i = 0; i < 12; i++)
+    await fireEvent.keyDown(sep, { key: "ArrowLeft" });
+  expect(now()).toBe("10");
+});
+
+test("a double click recenters the divider", async () => {
+  show(true);
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  await fireEvent.keyDown(separator(), { key: "ArrowRight" });
+  await fireEvent.dblClick(separator());
+  expect(separator().getAttribute("aria-valuenow")).toBe("50");
+});
+
+test("dragging follows the pointer but keeps 160 px on each side", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    left: 0,
+    top: 0,
+    right: 1000,
+    bottom: 600,
+    width: 1000,
+    height: 600,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  });
+  const capture = vi.fn();
+  const release = vi.fn();
+  HTMLElement.prototype.setPointerCapture = capture;
+  HTMLElement.prototype.releasePointerCapture = release;
+  show(true);
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  const sep = separator();
+  await fireEvent.pointerDown(sep, { clientX: 500, pointerId: 1 });
+  expect(capture).toHaveBeenCalledWith(1);
+  await fireEvent.pointerMove(sep, { clientX: 750, pointerId: 1 });
+  expect(sep.getAttribute("aria-valuenow")).toBe("75");
+  await fireEvent.pointerMove(sep, { clientX: 50, pointerId: 1 });
+  expect(sep.getAttribute("aria-valuenow")).toBe("16");
+  await fireEvent.pointerUp(sep, { pointerId: 1 });
+  expect(release).toHaveBeenCalledWith(1);
+  // Released: further movement is ignored.
+  await fireEvent.pointerMove(sep, { clientX: 750, pointerId: 1 });
+  expect(sep.getAttribute("aria-valuenow")).toBe("16");
+  vi.restoreAllMocks();
+});
+
+test("a divider between stacked panes is horizontal and answers up and down", async () => {
+  show(true);
+  splitPane(sessions.panes[0].paneId, "column", "c2");
+  await tick();
+  const sep = separator();
+  expect(sep.getAttribute("aria-orientation")).toBe("horizontal");
+  await fireEvent.keyDown(sep, { key: "ArrowDown" });
+  expect(sep.getAttribute("aria-valuenow")).toBe("55");
+  await fireEvent.keyDown(sep, { key: "ArrowUp" });
+  await fireEvent.keyDown(sep, { key: "ArrowUp" });
+  expect(sep.getAttribute("aria-valuenow")).toBe("45");
+});

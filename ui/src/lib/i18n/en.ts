@@ -131,6 +131,7 @@ export const en = {
   "pane.splitRight": "Split right",
   "pane.splitDown": "Split down",
   "pane.splitTitle": "Open in the new pane",
+  "pane.divider": "Resize panes",
   "session.connecting": "Connecting\u2026",
   "session.authenticating": "Authenticating\u2026",
   "session.ended": "Session ended. Press Enter to reconnect.",

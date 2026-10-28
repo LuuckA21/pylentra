@@ -134,6 +134,7 @@ export const it: Record<MessageKey, string> = {
   "pane.splitRight": "Dividi affiancata",
   "pane.splitDown": "Dividi sotto",
   "pane.splitTitle": "Apri nella nuova parte",
+  "pane.divider": "Ridimensiona le parti",
   "session.connecting": "Connessione\u2026",
   "session.authenticating": "Autenticazione\u2026",
   "session.ended": "Sessione terminata. Premi Invio per riconnetterti.",

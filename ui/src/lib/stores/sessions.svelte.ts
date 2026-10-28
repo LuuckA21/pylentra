@@ -10,9 +10,11 @@ import {
   neighbor,
   rects,
   remove,
+  setRatio,
   split,
   type Dir,
   type Node,
+  type Path,
   type Side,
 } from "../layout";
 import { recordRecent } from "../recent";
@@ -100,6 +102,11 @@ export function splitPane(
   tab.root = split(tab.root, paneId, dir, pane.paneId);
   tab.focus = pane.paneId;
   return pane.paneId;
+}
+
+export function setTabRatio(tabId: string, path: Path, ratio: number): void {
+  const tab = sessions.tabs.find((t) => t.tabId === tabId);
+  if (tab) tab.root = setRatio(tab.root, path, ratio);
 }
 
 // The open session keeps running; only the pane's identity changes.

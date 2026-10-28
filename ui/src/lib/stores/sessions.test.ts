@@ -12,6 +12,7 @@ vi.mock("../api", () => ({
 
 import { api } from "../api";
 import { recentIds } from "../recent";
+import { rects } from "../layout";
 import type { SessionEvent } from "../bindings/SessionEvent";
 import {
   answer,
@@ -25,6 +26,7 @@ import {
   openQuickTab,
   openTab,
   sessions,
+  setTabRatio,
   splitPane,
   tabOf,
   write,
@@ -414,4 +416,16 @@ test("a write waits for the one before it, even a failed one", async () => {
     ["s1", "ls"],
     ["s1", "\r"],
   ]);
+});
+
+test("setTabRatio sets the ratio at a path, clamped, and ignores an unknown tab", () => {
+  const { tab } = threePanes();
+  setTabRatio(tab.tabId, [], 0.7);
+  expect((tab.root as { ratio: number }).ratio).toBe(0.7);
+  setTabRatio(tab.tabId, ["b"], 0.99);
+  expect(rects(tab.root).dividers.find((d) => d.path[0] === "b")!.ratio).toBe(
+    0.9,
+  );
+  setTabRatio("nope", [], 0.2);
+  expect((tab.root as { ratio: number }).ratio).toBe(0.7);
 });
