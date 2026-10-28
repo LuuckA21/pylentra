@@ -19,7 +19,9 @@ import {
   closeTab,
   connect,
   cycleTab,
+  focusPane,
   linkQuickPane,
+  moveFocus,
   openQuickTab,
   openTab,
   sessions,
@@ -201,6 +203,74 @@ test("splitPane refuses a fifth pane and changes nothing", () => {
   const before = JSON.parse(JSON.stringify(sessions));
   expect(splitPane(p, "row", "c5")).toBeNull();
   expect(JSON.parse(JSON.stringify(sessions))).toEqual(before);
+});
+
+// A | (B / C), focus on C.
+const threePanes = () => {
+  const a = openTab("c1");
+  const b = splitPane(a, "row", "c2")!;
+  const c = splitPane(b, "column", "c3")!;
+  return { a, b, c, tab: sessions.tabs[0] };
+};
+
+test("moveFocus follows the neighbor on the active tab, and stops at the edge", () => {
+  const { a, tab } = threePanes();
+  moveFocus("left");
+  expect(tab.focus).toBe(a);
+  moveFocus("left");
+  expect(tab.focus).toBe(a);
+});
+
+test("focusPane focuses the pane and activates its tab", () => {
+  const { b, tab } = threePanes();
+  openTab("c4");
+  focusPane(b);
+  expect(tab.focus).toBe(b);
+  expect(sessions.active).toBe(tab.tabId);
+});
+
+test("closing the focused pane focuses the first pane of its sibling", () => {
+  const { a, b, c, tab } = threePanes();
+  focusPane(a);
+  closePane(a);
+  expect(tab.root).toEqual({
+    dir: "column",
+    ratio: 0.5,
+    a: { pane: b },
+    b: { pane: c },
+  });
+  expect(tab.focus).toBe(b);
+});
+
+test("closing the focused pane in a nested split focuses its sibling, not the tab's first pane", () => {
+  const { a, b, c, tab } = threePanes();
+  closePane(c);
+  expect(tab.root).toEqual({
+    dir: "row",
+    ratio: 0.5,
+    a: { pane: a },
+    b: { pane: b },
+  });
+  expect(tab.focus).toBe(b);
+});
+
+test("closing a pane without the focus leaves the focus where it is", () => {
+  const { a, b, c, tab } = threePanes();
+  focusPane(b);
+  closePane(c);
+  expect(tab.focus).toBe(b);
+  expect(tab.root).toMatchObject({ a: { pane: a }, b: { pane: b } });
+});
+
+test("closing a pane missing from the panes still removes its leaf", () => {
+  const { a, b, c, tab } = threePanes();
+  sessions.panes.splice(
+    sessions.panes.findIndex((p) => p.paneId === c),
+    1,
+  );
+  closePane(c);
+  expect(tab.root).toMatchObject({ a: { pane: a }, b: { pane: b } });
+  expect(tab.focus).toBe(b);
 });
 
 test("cycleTab wraps around", () => {

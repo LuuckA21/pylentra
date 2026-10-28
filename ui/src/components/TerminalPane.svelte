@@ -6,7 +6,7 @@
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
-  import type { Dir } from "../lib/layout";
+  import type { Dir, Side } from "../lib/layout";
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
   import type { PaneState } from "../lib/sessionReducer";
   import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
@@ -22,6 +22,8 @@
     answer,
     connect,
     cycleTab,
+    focusPane,
+    moveFocus,
     resize,
     write,
   } from "../lib/stores/sessions.svelte";
@@ -48,6 +50,7 @@
     onclose,
     canSplit = false,
     onsplit,
+    multi = false,
   }: {
     pane: PaneState;
     // Its tab is shown, and it is the tab's focused pane.
@@ -61,6 +64,8 @@
     // The tab has room for another pane; onsplit opens the picker for it.
     canSplit?: boolean;
     onsplit?: (paneId: string, dir: Dir) => void;
+    // The tab holds other panes: the focused one shows an accent border.
+    multi?: boolean;
   } = $props();
 
   // The pane's own shortcuts and keyboard focus.
@@ -221,9 +226,13 @@
   });
 
   // Focus the terminal when the pane is shown and focused, unless an overlay
-  // holds the focus.
+  // or something else in the pane (reached with Tab, say) holds the focus.
   $effect(() => {
-    if (active && !untrack(() => pane.prompt || pane.closed?.type === "Error"))
+    if (
+      active &&
+      !untrack(() => pane.prompt || pane.closed?.type === "Error") &&
+      !root.contains(document.activeElement)
+    )
       term?.focus();
   });
 
@@ -306,13 +315,21 @@
         .readText()
         .then((text) => term?.paste(text))
         .catch(toastError);
-    } else if (a === "closeTab") onclose(pane.paneId);
+    } else if (a === "closePane") onclose(pane.paneId);
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
     else if (a === "snippets") toggleSnippets();
     else if ((a === "splitRight" || a === "splitDown") && canSplit)
       onsplit?.(pane.paneId, a === "splitRight" ? "row" : "column");
+    else if (SIDES[a]) moveFocus(SIDES[a]);
   }
+
+  const SIDES: Partial<Record<Action, Side>> = {
+    focusLeft: "left",
+    focusRight: "right",
+    focusUp: "up",
+    focusDown: "down",
+  };
 
   function onwindowkey(e: KeyboardEvent) {
     // Our own modals sit inside root, so fromOtherModal lets them through.
@@ -324,7 +341,15 @@
 
 <svelte:window onkeydown={onwindowkey} />
 
-<div class="pane" bind:this={root}>
+<!-- A press or a focus anywhere in the pane makes it the tab's focused one. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="pane"
+  class:focused={focused && multi}
+  bind:this={root}
+  onfocusin={() => focusPane(pane.paneId)}
+  onpointerdown={() => focusPane(pane.paneId)}
+>
   <div class="inset"><div class="terminal" bind:this={el}></div></div>
   <div class="anchor">
     {#if pane.phase === "ready"}
@@ -458,6 +483,16 @@
     overflow: hidden;
     background: var(--surface-1);
     border-radius: var(--radius-lg);
+  }
+  /* Inside the pane, so the terminal keeps its size; an overlay, so the status
+     bar does not paint over it. */
+  .pane.focused::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--accent);
+    border-radius: inherit;
+    pointer-events: none;
   }
   /* The fit addon measures its parent, so the padding sits one level above. */
   .inset {

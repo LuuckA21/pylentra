@@ -7,11 +7,13 @@ import {
   count,
   firstPane,
   MAX_PANES,
+  neighbor,
   rects,
   remove,
   split,
   type Dir,
   type Node,
+  type Side,
 } from "../layout";
 import { recordRecent } from "../recent";
 import { initialPane, reduce, type PaneState } from "../sessionReducer";
@@ -190,8 +192,31 @@ export async function answer(paneId: string, a: PromptAnswer): Promise<void> {
   }
 }
 
-// Closes the pane's session if it is live; the last pane takes its tab along.
+// The node that takes a pane's place when it is removed.
+function siblingOf(n: Node, paneId: string): Node | undefined {
+  if ("pane" in n) return undefined;
+  if ("pane" in n.a && n.a.pane === paneId) return n.b;
+  if ("pane" in n.b && n.b.pane === paneId) return n.a;
+  return siblingOf(n.a, paneId) ?? siblingOf(n.b, paneId);
+}
+
+// Closes the pane's session if it is live; the focus goes to the sibling's
+// first pane, and the last pane takes its tab along.
 export function closePane(paneId: string): void {
+  const t = tabIndexOf(paneId);
+  if (t >= 0) {
+    const tab = sessions.tabs[t];
+    const sibling = siblingOf(tab.root, paneId);
+    if (sibling) {
+      if (tab.focus === paneId) tab.focus = firstPane(sibling);
+      tab.root = remove(tab.root, paneId)!;
+    } else {
+      sessions.tabs.splice(t, 1);
+      if (sessions.active === tab.tabId)
+        sessions.active =
+          sessions.tabs[Math.min(t, sessions.tabs.length - 1)]?.tabId ?? null;
+    }
+  }
   const i = indexOf(paneId);
   if (i < 0) return;
   const [pane] = sessions.panes.splice(i, 1);
@@ -199,24 +224,25 @@ export function closePane(paneId: string): void {
   sessionIds.delete(paneId);
   if (pane.phase !== "closed")
     id?.then((sid) => api.sessionClose(sid)).catch(() => {});
-  const t = tabIndexOf(paneId);
-  if (t < 0) return;
-  const tab = sessions.tabs[t];
-  const root = remove(tab.root, paneId);
-  if (root) {
-    tab.root = root;
-    if (tab.focus === paneId) tab.focus = firstPane(root);
-    return;
-  }
-  sessions.tabs.splice(t, 1);
-  if (sessions.active === tab.tabId)
-    sessions.active =
-      sessions.tabs[Math.min(t, sessions.tabs.length - 1)]?.tabId ?? null;
 }
 
 export function closeTab(tabId: string): void {
   const tab = sessions.tabs.find((t) => t.tabId === tabId);
   if (tab) Object.keys(rects(tab.root).panes).forEach(closePane);
+}
+
+export function focusPane(paneId: string): void {
+  const tab = tabOf(paneId);
+  if (!tab) return;
+  tab.focus = paneId;
+  sessions.active = tab.tabId;
+}
+
+// On the active tab; without a neighbor on that side nothing changes.
+export function moveFocus(side: Side): void {
+  const tab = sessions.tabs.find((t) => t.tabId === sessions.active);
+  const id = tab && neighbor(rects(tab.root).panes, tab.focus, side);
+  if (id) tab.focus = id;
 }
 
 export function cycleTab(delta: 1 | -1): void {

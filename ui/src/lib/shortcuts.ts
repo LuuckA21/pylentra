@@ -1,7 +1,7 @@
 export type Action =
   | "copy"
   | "paste"
-  | "closeTab"
+  | "closePane"
   | "search"
   | "nextTab"
   | "prevTab"
@@ -9,12 +9,16 @@ export type Action =
   | "snippets"
   | "fullscreen"
   | "splitRight"
-  | "splitDown";
+  | "splitDown"
+  | "focusLeft"
+  | "focusRight"
+  | "focusUp"
+  | "focusDown";
 
 const WITH_SHIFT: Record<string, Action> = {
   C: "copy",
   V: "paste",
-  W: "closeTab",
+  W: "closePane",
   F: "search",
   K: "quickConnect",
   P: "snippets",
@@ -22,8 +26,18 @@ const WITH_SHIFT: Record<string, Action> = {
   E: "splitDown",
 };
 
-// F11, Ctrl+Shift+C/V/W/F/K/P/D/E and Ctrl+(Shift+)Tab; everything else (Ctrl+C included) belongs to the shell.
+const WITH_ALT: Record<string, Action> = {
+  ArrowLeft: "focusLeft",
+  ArrowRight: "focusRight",
+  ArrowUp: "focusUp",
+  ArrowDown: "focusDown",
+};
+
+// F11, Alt+arrows, Ctrl+Shift+C/V/W/F/K/P/D/E and Ctrl+(Shift+)Tab; everything
+// else (Ctrl+C, Alt+letter, Ctrl+Alt+arrow included) belongs to the shell.
 export function shortcutFor(e: KeyboardEvent): Action | null {
+  if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey)
+    return WITH_ALT[e.key] ?? null;
   if (e.key === "F11" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey)
     return "fullscreen";
   if (!e.ctrlKey || e.altKey || e.metaKey) return null;

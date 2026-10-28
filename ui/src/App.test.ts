@@ -1,5 +1,12 @@
 import { beforeEach, expect, test, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/svelte";
+import { tick } from "svelte";
 
 vi.mock("./lib/api", () => ({
   api: {
@@ -33,15 +40,47 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
-// xterm needs a real browser; the tab strip is what is under test.
-vi.mock("./components/TerminalPane.svelte", () => ({ default: () => {} }));
+// xterm needs a real browser; the tab strip is what is under test. The stub
+// offers the pane's requests (Ctrl+Shift+W, Split right) as buttons and, like
+// the real pane, takes the focus when one of them does.
+vi.mock("./components/TerminalPane.svelte", async () => {
+  const { focusPane } = await import("./lib/stores/sessions.svelte");
+  return {
+    default: (
+      anchor: ChildNode,
+      props: {
+        pane: { paneId: string };
+        onclose: (paneId: string) => void;
+        onsplit: (paneId: string, dir: string) => void;
+      },
+    ) => {
+      const button = (name: string, onclick: () => void) => {
+        const b = document.createElement("button");
+        b.textContent = name;
+        b.onclick = onclick;
+        b.onfocus = () => focusPane(props.pane.paneId);
+        return b;
+      };
+      anchor.before(
+        button("Close pane", () => props.onclose(props.pane.paneId)),
+        button("Split right", () => props.onsplit(props.pane.paneId, "row")),
+      );
+    },
+  };
+});
 
 import { check } from "@tauri-apps/plugin-updater";
 import { warn } from "@tauri-apps/plugin-log";
 import App from "./App.svelte";
 import { api } from "./lib/api";
 import { setLang } from "./lib/i18n";
-import { openTab, sessions } from "./lib/stores/sessions.svelte";
+import {
+  closePane,
+  focusPane,
+  openTab,
+  sessions,
+  splitPane,
+} from "./lib/stores/sessions.svelte";
 import { settings } from "./lib/stores/settings.svelte";
 import { toasts } from "./lib/stores/toasts.svelte";
 import { updates } from "./lib/stores/updates.svelte";
@@ -107,6 +146,94 @@ test("closing a closed tab, or with the setting off, does not ask", async () => 
   await closeX();
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(sessions.tabs).toHaveLength(0);
+});
+
+// One tab of two panes; `ready` says which ones are connected.
+const openTwo = (...ready: boolean[]) => {
+  const a = openTab("web");
+  const b = splitPane(a, "row", "db")!;
+  sessions.panes.forEach((p, i) => (p.phase = ready[i] ? "ready" : "closed"));
+  return [a, b];
+};
+
+test("a tab is named after its focused pane, plus how many others it holds", () => {
+  const [a, b] = openTwo();
+  splitPane(b, "column", "x");
+  focusPane(a);
+  render(App);
+  expect(screen.getByRole("tab", { name: "web +2" })).toBeTruthy();
+});
+
+test("the tab's × asks once for all its connected panes", async () => {
+  openTwo(true, true);
+  render(App);
+  await closeX();
+  expect(screen.getByRole("alertdialog").textContent).toContain(
+    "2 sessions in this tab are still connected.",
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(sessions.tabs).toHaveLength(0);
+  expect(sessions.panes).toHaveLength(0);
+});
+
+test("the tab's × with one connected pane names it", async () => {
+  openTwo(false, true);
+  render(App);
+  await closeX();
+  const dialog = screen.getByRole("alertdialog");
+  expect(dialog.textContent).toContain("Close this session?");
+  expect(dialog.textContent).toContain("The connection to db will be closed.");
+  await fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(sessions.panes).toHaveLength(0);
+});
+
+test("closing a connected pane asks first; a closed one goes at once", async () => {
+  const [a] = openTwo(true, false);
+  render(App);
+  const [closeA, closeB] = screen.getAllByRole("button", {
+    name: "Close pane",
+  });
+  await fireEvent.click(closeA);
+  expect(screen.getByRole("alertdialog").textContent).toContain(
+    "Close this session?",
+  );
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await fireEvent.click(closeB);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(sessions.tabs[0].root).toEqual({ pane: a });
+});
+
+test("Split right opens the picker, and the pick splits the pane, focusing the new one", async () => {
+  openTab("c1");
+  render(App);
+  const split = screen.getByRole("button", { name: "Split right" });
+  split.focus();
+  await fireEvent.click(split);
+  const dialog = screen.getByRole("dialog", { name: "Open in the new pane" });
+  const field = within(dialog).getByRole("combobox");
+  await fireEvent.input(field, { target: { value: "u@h" } });
+  await fireEvent.keyDown(field, { key: "Enter" });
+  await waitFor(() => expect(sessions.panes).toHaveLength(2));
+  expect(sessions.tabs).toHaveLength(1);
+  // The picker gives the focus back to the old pane before the split.
+  expect(sessions.tabs[0].focus).toBe(sessions.panes[1].paneId);
+  expect(
+    screen.queryByRole("dialog", { name: "Open in the new pane" }),
+  ).toBeNull();
+});
+
+test("the picker goes away with the pane it would split", async () => {
+  const id = openTab("c1");
+  render(App);
+  await fireEvent.click(screen.getByRole("button", { name: "Split right" }));
+  expect(
+    screen.getByRole("dialog", { name: "Open in the new pane" }),
+  ).toBeTruthy();
+  closePane(id);
+  await tick();
+  expect(
+    screen.queryByRole("dialog", { name: "Open in the new pane" }),
+  ).toBeNull();
 });
 
 test("the window close is held back while a session is ready", async () => {

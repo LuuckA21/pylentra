@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { warn } from "@tauri-apps/plugin-log";
   import QuickConnect from "./components/QuickConnect.svelte";
@@ -18,16 +18,19 @@
   import { fromOtherModal, shortcutFor } from "./lib/shortcuts";
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
-  import type { Dir } from "./lib/layout";
+  import { count, rects, type Dir } from "./lib/layout";
+  import type { PaneState } from "./lib/sessionReducer";
   import { library, refresh } from "./lib/stores/library.svelte";
   import { loadSnippets } from "./lib/stores/snippets.svelte";
   import {
     closePane,
+    closeTab,
     linkQuickPane,
     openTab,
     paneOf,
     sessions,
     splitPane,
+    type Tab,
   } from "./lib/stores/sessions.svelte";
   import { loadSettings, settings } from "./lib/stores/settings.svelte";
   import { toastError } from "./lib/stores/toasts.svelte";
@@ -48,8 +51,11 @@
   } | null>(null);
   let settingsOpen = $state(false);
   let importOpen = $state(false);
-  // The pane the picker will split; the picker goes away with the pane.
+  // The pane the picker will split; cleared when that pane goes away.
   let splitting = $state<{ paneId: string; dir: Dir } | null>(null);
+  $effect(() => {
+    if (splitting && !paneOf(splitting.paneId)) splitting = null;
+  });
 
   // The one confirmation on screen; `action` runs if the user confirms.
   let confirming = $state<{
@@ -61,22 +67,32 @@
   const liveCount = () =>
     sessions.panes.filter((pane) => pane.phase === "ready").length;
 
-  // Only a connected pane is worth asking about.
-  function requestClose(paneId: string) {
-    const pane = paneOf(paneId);
-    if (!pane || !settings.confirm_close_active || pane.phase !== "ready")
-      return closePane(paneId);
+  // Only connected panes are worth asking about: one is named, more are counted.
+  function requestClose(paneIds: string[], action: () => void) {
+    const ready = paneIds
+      .map(paneOf)
+      .filter((pane): pane is PaneState => pane?.phase === "ready");
+    if (!settings.confirm_close_active || !ready.length) return action();
+    const one = ready.length === 1;
     confirming = {
-      title: t("confirm.tab.title"),
-      message: t("confirm.tab.body", {
-        name: pane.quick?.name ?? nameOf(pane.connectionId),
-      }),
-      action: () => closePane(paneId),
+      title: t(one ? "confirm.tab.title" : "confirm.tabs.title"),
+      message: one
+        ? t("confirm.tab.body", { name: titleOf(ready[0]) })
+        : t("confirm.tabs.body", { n: ready.length }),
+      action,
     };
   }
 
+  const requestClosePane = (paneId: string) =>
+    requestClose([paneId], () => closePane(paneId));
+
+  const requestCloseTab = (tab: Tab) =>
+    requestClose(Object.keys(rects(tab.root).panes), () => closeTab(tab.tabId));
+
   const connOf = (id: string) => library.connections.find((c) => c.id === id);
   const nameOf = (id: string) => connOf(id)?.name ?? id;
+  const titleOf = (pane: PaneState) =>
+    pane.quick?.name ?? nameOf(pane.connectionId);
   const dotOf = (id: string) => {
     const c = connOf(id);
     return c ? colorOf(c, library.groups) : null;
@@ -184,14 +200,19 @@
                 >
                   <span class="dot tag-{dotOf(pane.connectionId) ?? 'none'}"
                   ></span>
-                  {pane.quick?.name ?? nameOf(pane.connectionId)}
+                  {titleOf(pane)}
+                  {#if count(tab.root) > 1}
+                    <span class="more"
+                      >{t("tabs.more", { n: count(tab.root) - 1 })}</span
+                    >
+                  {/if}
                 </button>
                 <button
                   type="button"
                   class="close"
                   aria-label={t("tabs.close")}
                   title={t("tabs.close")}
-                  onclick={() => requestClose(tab.focus)}>×</button
+                  onclick={() => requestCloseTab(tab)}>×</button
                 >
               </div>
             {/each}
@@ -205,7 +226,7 @@
               visible={tab.tabId === sessions.active}
               onedit={edit}
               onsave={saveQuick}
-              onclose={requestClose}
+              onclose={requestClosePane}
               onsplit={(paneId, dir) => (splitting = { paneId, dir })}
             />
           {/each}
@@ -234,9 +255,12 @@
 {/if}
 {#if splitting && paneOf(splitting.paneId)}
   <SplitPicker
-    onpick={(target) => {
+    onpick={async (target) => {
       const { paneId, dir } = splitting!;
       splitting = null;
+      // Once the picker has given the focus back to the old pane, so the new
+      // pane keeps it.
+      await tick();
       splitPane(paneId, dir, target);
     }}
     oncancel={() => (splitting = null)}
@@ -343,6 +367,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .more {
+    color: var(--fg-muted);
+    font-weight: 400;
   }
   .title.closed {
     color: var(--fg-muted);

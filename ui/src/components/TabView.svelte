@@ -20,7 +20,8 @@
   } = $props();
 
   const layout = $derived(rects(tab.root).panes);
-  const canSplit = $derived(count(tab.root) < MAX_PANES);
+  const n = $derived(count(tab.root));
+  const canSplit = $derived(n < MAX_PANES);
 </script>
 
 <!-- A flat list keyed by pane: a split or a close moves a pane without
@@ -45,6 +46,7 @@
           {onsave}
           {onclose}
           {canSplit}
+          multi={n > 1}
           {onsplit}
         />
       </div>

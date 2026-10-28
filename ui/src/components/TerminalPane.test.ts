@@ -57,6 +57,8 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
   answer: vi.fn(),
   connect: vi.fn(),
   cycleTab: vi.fn(),
+  focusPane: vi.fn(),
+  moveFocus: vi.fn(),
   resize: vi.fn(),
   write: vi.fn(),
 }));
@@ -64,7 +66,12 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
 import { initialPane, type PaneState } from "../lib/sessionReducer";
-import { connect, cycleTab } from "../lib/stores/sessions.svelte";
+import {
+  connect,
+  cycleTab,
+  focusPane,
+  moveFocus,
+} from "../lib/stores/sessions.svelte";
 import { settings } from "../lib/stores/settings.svelte";
 import { snippets } from "../lib/stores/snippets.svelte";
 import TerminalPane from "./TerminalPane.svelte";
@@ -317,7 +324,7 @@ test("a second Closed during the wait does not add a second retry", async () => 
   vi.useRealTimers();
 });
 
-test("Ctrl+Shift+W asks the parent to close the tab", async () => {
+test("Ctrl+Shift+W asks the parent to close the pane", async () => {
   const onclose = vi.fn();
   render(TerminalPane, {
     pane: initialPane("t1", "c1"),
@@ -608,4 +615,39 @@ test.each([
   render(TerminalPane, p);
   await splitKey();
   expect(p.onsplit).not.toHaveBeenCalled();
+});
+
+test("Alt+arrows in the focused pane move the focus", async () => {
+  vi.mocked(moveFocus).mockClear();
+  render(TerminalPane, props(readyPane));
+  await fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  await fireEvent.keyDown(document.body, { key: "ArrowUp", altKey: true });
+  expect(vi.mocked(moveFocus).mock.calls).toEqual([["right"], ["up"]]);
+});
+
+test("Alt+arrows in a pane without the focus do nothing", async () => {
+  vi.mocked(moveFocus).mockClear();
+  render(TerminalPane, { ...props(readyPane), focused: false });
+  await fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  expect(moveFocus).not.toHaveBeenCalled();
+});
+
+test("focusing or pressing inside the pane focuses it", async () => {
+  vi.mocked(focusPane).mockClear();
+  const { container } = render(TerminalPane, {
+    ...props(readyPane),
+    focused: false,
+  });
+  const terminal = container.querySelector(".terminal")!;
+  await fireEvent.focusIn(terminal);
+  await fireEvent.pointerDown(terminal);
+  expect(vi.mocked(focusPane).mock.calls).toEqual([["t1"], ["t1"]]);
+});
+
+test("the terminal takes the keyboard focus when its pane gets the focus", async () => {
+  const p = { ...props(readyPane), focused: false };
+  const { rerender } = render(TerminalPane, p);
+  expect(made.terms[0].focus).not.toHaveBeenCalled();
+  await rerender({ ...p, focused: true });
+  expect(made.terms[0].focus).toHaveBeenCalled();
 });
