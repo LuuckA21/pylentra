@@ -51,11 +51,8 @@
   } | null>(null);
   let settingsOpen = $state(false);
   let importOpen = $state(false);
-  // The pane the picker will split; cleared when that pane goes away.
+  // The pane the picker will split; the picker is gone once that pane is.
   let splitting = $state<{ paneId: string; dir: Dir } | null>(null);
-  $effect(() => {
-    if (splitting && !paneOf(splitting.paneId)) splitting = null;
-  });
 
   // The one confirmation on screen; `action` runs if the user confirms.
   let confirming = $state<{

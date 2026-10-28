@@ -26,7 +26,7 @@
     forwardsOpen?: boolean;
     onsnippets?: () => void;
     snippetsOpen?: boolean;
-    /** Only for quick (unsaved) tabs. */
+    /** Only for quick (unsaved) panes. */
     onsave?: () => void;
     onsplit?: (dir: Dir) => void;
     // False when the tab holds as many panes as it can.

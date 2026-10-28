@@ -7,7 +7,7 @@ import type { SessionEvent } from "./bindings/SessionEvent";
 export type PaneState = {
   paneId: string;
   connectionId: string;
-  /** Set while the tab runs an unsaved connection (`connectionId` is its throwaway id). */
+  /** Set while the pane runs an unsaved connection (`connectionId` is its throwaway id). */
   quick?: Connection;
   sessionId?: string;
   phase: "connecting" | "authenticating" | "ready" | "closed";

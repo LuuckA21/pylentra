@@ -1,4 +1,4 @@
-import { beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { tick } from "svelte";
 
@@ -90,6 +90,13 @@ beforeEach(() => {
       disconnect() {}
     },
   );
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  // Defined by the drag test (jsdom has no pointer capture).
+  Reflect.deleteProperty(HTMLElement.prototype, "setPointerCapture");
+  Reflect.deleteProperty(HTMLElement.prototype, "releasePointerCapture");
 });
 
 const show = (visible: boolean) => {
@@ -322,10 +329,13 @@ test("dragging follows the pointer but keeps 160 px on each side", async () => {
     y: 0,
     toJSON: () => ({}),
   });
-  const capture = vi.fn();
-  const release = vi.fn();
-  HTMLElement.prototype.setPointerCapture = capture;
-  HTMLElement.prototype.releasePointerCapture = release;
+  // jsdom has no pointer capture; define it so spyOn can wrap and restore it.
+  Object.assign(HTMLElement.prototype, {
+    setPointerCapture() {},
+    releasePointerCapture() {},
+  });
+  const capture = vi.spyOn(HTMLElement.prototype, "setPointerCapture");
+  const release = vi.spyOn(HTMLElement.prototype, "releasePointerCapture");
   show(true);
   splitPane(sessions.panes[0].paneId, "row", "c2");
   await tick();
@@ -341,7 +351,6 @@ test("dragging follows the pointer but keeps 160 px on each side", async () => {
   // Released: further movement is ignored.
   await fireEvent.pointerMove(sep, { clientX: 750, pointerId: 1 });
   expect(sep.getAttribute("aria-valuenow")).toBe("16");
-  vi.restoreAllMocks();
 });
 
 test("a divider between stacked panes is horizontal and answers up and down", async () => {
@@ -355,4 +364,25 @@ test("a divider between stacked panes is horizontal and answers up and down", as
   await fireEvent.keyDown(sep, { key: "ArrowUp" });
   await fireEvent.keyDown(sep, { key: "ArrowUp" });
   expect(sep.getAttribute("aria-valuenow")).toBe("45");
+});
+
+test("a key with a modifier is not a divider key", async () => {
+  show(true);
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  const sep = separator();
+  for (const mod of ["altKey", "ctrlKey", "metaKey", "shiftKey"])
+    await fireEvent.keyDown(sep, { key: "ArrowRight", [mod]: true });
+  expect(sep.getAttribute("aria-valuenow")).toBe("50");
+});
+
+test("dragging a divider leaves the keyboard where it was", async () => {
+  show(true);
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  made.terms[0].textarea.focus();
+  // The browser's default for a mouse press is to focus the divider.
+  const pressed = await fireEvent.mouseDown(separator());
+  expect(pressed).toBe(false);
+  expect(document.activeElement).toBe(made.terms[0].textarea);
 });

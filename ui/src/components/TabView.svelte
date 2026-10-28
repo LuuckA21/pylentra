@@ -54,6 +54,8 @@
   }
 
   function key(e: KeyboardEvent, d: Divider) {
+    // Alt+arrow is the window's pane-focus shortcut, not a resize.
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     const back = d.dir === "row" ? "ArrowLeft" : "ArrowUp";
     const fwd = d.dir === "row" ? "ArrowRight" : "ArrowDown";
     const next =
@@ -70,9 +72,44 @@
   }
 </script>
 
+<!-- Dividers come first in the DOM so Tab from outside the terminals reaches
+     them (a terminal swallows Tab); z-index keeps them over the panes. -->
 <!-- A flat list keyed by pane: a split or a close moves a pane without
      recreating it, so its terminal and session survive. -->
 <div class="view" hidden={!visible}>
+  {#each geometry.dividers as d (d.path.join())}
+    {@const row = d.dir === "row"}
+    <!-- A focusable separator is a widget (ARIA window splitter). -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div
+      class="divider"
+      class:row
+      role="separator"
+      tabindex="0"
+      aria-label={t("pane.divider")}
+      aria-orientation={row ? "vertical" : "horizontal"}
+      aria-valuenow={pct(d)}
+      aria-valuemin="10"
+      aria-valuemax="90"
+      style:left={row ? `${d.area.x + d.area.w * d.ratio}%` : `${d.area.x}%`}
+      style:top={row ? `${d.area.y}%` : `${d.area.y + d.area.h * d.ratio}%`}
+      style:width={row ? undefined : `${d.area.w}%`}
+      style:height={row ? `${d.area.h}%` : undefined}
+      onmousedown={(e) => e.preventDefault()}
+      onpointerdown={(e) => {
+        dragging = d;
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      }}
+      onpointermove={(e) => drag(e, d)}
+      onpointerup={(e) => {
+        dragging = null;
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      }}
+      onlostpointercapture={() => (dragging = null)}
+      ondblclick={() => setTabRatio(tab.tabId, d.path, 0.5)}
+      onkeydown={(e) => key(e, d)}
+    ></div>
+  {/each}
   {#each Object.keys(layout) as id (id)}
     {@const pane = paneOf(id)}
     {@const r = layout[id]}
@@ -97,38 +134,6 @@
         />
       </div>
     {/if}
-  {/each}
-  {#each geometry.dividers as d (d.path.join())}
-    {@const row = d.dir === "row"}
-    <!-- A focusable separator is a widget (ARIA window splitter). -->
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-    <div
-      class="divider"
-      class:row
-      role="separator"
-      tabindex="0"
-      aria-label={t("pane.divider")}
-      aria-orientation={row ? "vertical" : "horizontal"}
-      aria-valuenow={pct(d)}
-      aria-valuemin="10"
-      aria-valuemax="90"
-      style:left={row ? `${d.area.x + d.area.w * d.ratio}%` : `${d.area.x}%`}
-      style:top={row ? `${d.area.y}%` : `${d.area.y + d.area.h * d.ratio}%`}
-      style:width={row ? undefined : `${d.area.w}%`}
-      style:height={row ? `${d.area.h}%` : undefined}
-      onpointerdown={(e) => {
-        dragging = d;
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      }}
-      onpointermove={(e) => drag(e, d)}
-      onpointerup={(e) => {
-        dragging = null;
-        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-      }}
-      onlostpointercapture={() => (dragging = null)}
-      ondblclick={() => setTabRatio(tab.tabId, d.path, 0.5)}
-      onkeydown={(e) => key(e, d)}
-    ></div>
   {/each}
 </div>
 
