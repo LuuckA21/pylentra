@@ -2,7 +2,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { Terminal } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
@@ -226,15 +226,29 @@
     fit?.fit();
   });
 
-  // When the pane is shown and focused, and nothing in it (reached with Tab,
-  // say) holds the focus: an overlay that opened meanwhile takes it, as if just
-  // opened, else the terminal. Also when an overlay opens or closes.
-  $effect(() => {
-    void [pane.prompt, pane.closed, waiting];
-    if (!active || root.contains(document.activeElement)) return;
+  // An overlay that opened while the pane waited takes the focus, as if just
+  // opened; else the terminal.
+  function focusInside() {
     const overlay = root.querySelector<HTMLElement>("[data-modal]");
     if (overlay) focusFirst(overlay);
     else term?.focus();
+  }
+
+  // When the pane gets the focus, unless something in it (reached with Tab,
+  // say) already holds it.
+  $effect(() => {
+    if (active && !root.contains(document.activeElement)) focusInside();
+  });
+
+  // A closed overlay, or a click on plain text, drops the focus to the body.
+  const free = () =>
+    !document.activeElement || document.activeElement === document.body;
+
+  // When an overlay opens or closes, only if the focus is free: a window
+  // dialog or field keeps it.
+  $effect(() => {
+    void [pane.prompt, pane.closed, waiting];
+    if (untrack(() => active) && free()) focusInside();
   });
 
   // A session that dropped under an open palette must not receive anything:
@@ -342,8 +356,9 @@
 
 <svelte:window onkeydown={onwindowkey} />
 
-<!-- A press or a focus anywhere in the pane makes it the tab's focused one. -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- A press or a focus anywhere in the pane makes it the tab's focused one;
+     the keyboard gets there with Alt+arrows and Tab. -->
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 <div
   class="pane"
   class:focused={focused && multi}
@@ -351,6 +366,7 @@
   bind:this={root}
   onfocusin={() => focusPane(pane.paneId)}
   onpointerdown={() => focusPane(pane.paneId)}
+  onclick={() => active && free() && focusInside()}
 >
   <div class="inset"><div class="terminal" bind:this={el}></div></div>
   <div class="anchor">

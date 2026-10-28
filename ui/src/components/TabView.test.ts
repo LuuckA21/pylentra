@@ -1,5 +1,5 @@
 import { beforeEach, expect, test, vi } from "vitest";
-import { render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { tick } from "svelte";
 
 // xterm needs a real browser: a fake that records its options and listeners.
@@ -233,4 +233,39 @@ test("a prompt closing in a pane the focus has left does not take it back", asyn
   await tick();
   expect(slotB.contains(document.activeElement)).toBe(true);
   expect(sessions.tabs[0].focus).toBe(b);
+});
+
+test.each([
+  [
+    "the session ends",
+    {},
+    { phase: "closed", closed: { type: "Exited", code: 0 } },
+  ],
+  ["a prompt goes away", { prompt: prompts[0][1] }, { prompt: undefined }],
+])(
+  "the terminal does not take the focus from outside the pane when %s",
+  async (_, before, change) => {
+    show(true);
+    Object.assign(sessions.panes[0], before);
+    await tick();
+    const outside = document.body.appendChild(document.createElement("input"));
+    outside.focus();
+    Object.assign(sessions.panes[0], change);
+    await tick();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  },
+);
+
+test("a click on a waiting prompt's text puts the keyboard in the prompt", async () => {
+  const { slotB } = await twoPanes();
+  sessions.panes[1].prompt = prompts[0][1];
+  await tick();
+  const dialog = within(slotB).getByRole("dialog");
+  const text = dialog.querySelector("h2, h3") ?? dialog;
+  await fireEvent.pointerDown(text);
+  // The browser's own mousedown on plain text drops the focus to the body.
+  (document.activeElement as HTMLElement).blur();
+  await fireEvent.click(text);
+  expect(dialog.contains(document.activeElement)).toBe(true);
 });

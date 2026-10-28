@@ -200,7 +200,7 @@
                 >
                   <span class="dot tag-{dotOf(pane.connectionId) ?? 'none'}"
                   ></span>
-                  {titleOf(pane)}
+                  <span class="name">{titleOf(pane)}</span>
                   {#if count(tab.root) > 1}
                     <span class="more"
                       >{t("tabs.more", { n: count(tab.root) - 1 })}</span
@@ -364,11 +364,16 @@
     gap: var(--space-2);
     max-width: 200px;
     padding-right: var(--space-1);
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* The name shrinks, so a long one never hides the "+N". */
+  .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .more {
+    flex: none;
     color: var(--fg-muted);
     font-weight: 400;
   }
