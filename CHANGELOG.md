@@ -17,8 +17,8 @@ Nothing saved changes format: going back to 0.4.x loses nothing.
   Quick connect picker chooses the new pane's server: a saved connection or
   `user@host`; Esc cancels.
 - Each pane has its own session, status bar, forwards, snippets, prompts and
-  reconnection. A prompt in a pane without focus waits until that pane gets
-  the focus.
+  reconnection. A prompt in a pane without focus is shown in that pane and
+  does not take the keyboard; click it (or move the focus there) to answer.
 - Alt+Left, Right, Up and Down move the focus between panes, and a click
   focuses one too. With more than one pane, the focused one has an accent
   border.

@@ -189,17 +189,22 @@ cover it.
    buttons and both shortcuts do nothing.
 2. Run `htop` in one pane and drag a divider: it redraws to the new size, and
    no pane gets smaller than 160x120 px.
-3. Tab to a divider: the arrow keys move it in 5% steps, Enter and
-   double-click split evenly.
+3. Start outside the terminal (click a status-bar button of a pane) and press
+   Tab or Shift+Tab until a divider is highlighted (Tab inside a terminal goes
+   to the shell): the arrow keys move it in 5% steps, Enter and double-click
+   split evenly.
 4. Alt+Left, Right, Up and Down move the focus between panes (accent border);
    clicking a pane focuses it. In zsh, Alt+B and Alt+F still move by word.
 5. Trigger a password prompt in a pane without focus (for example a
-   reconnection): it waits, and shows when that pane gets the focus.
-6. Ctrl+Shift+W on a pane with a live session asks for confirmation, then
-   closes that pane and the others fill the space. Closing the last pane
-   closes the tab.
-7. Click the tab's x with several live sessions: one confirmation for all of
-   them.
+   reconnection): it appears in that pane without taking the focus from the
+   pane you are typing in; clicking it (or Alt+arrow to that pane) lets you
+   answer.
+6. With the confirmation setting on (Settings, the one that asks before
+   closing live sessions), Ctrl+Shift+W on a pane with a live session asks
+   for confirmation, then closes that pane and the others fill the space.
+   Closing the last pane closes the tab.
+7. With the same setting on, click the tab's x with several live sessions:
+   one confirmation for all of them.
 
 ## Settings
 
