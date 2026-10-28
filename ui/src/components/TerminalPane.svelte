@@ -2,10 +2,11 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { Terminal } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
-  import { onMount, untrack } from "svelte";
+  import { onMount } from "svelte";
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
+  import { focusFirst } from "../lib/modal";
   import type { Dir, Side } from "../lib/layout";
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
   import type { PaneState } from "../lib/sessionReducer";
@@ -225,15 +226,15 @@
     fit?.fit();
   });
 
-  // Focus the terminal when the pane is shown and focused, unless an overlay
-  // or something else in the pane (reached with Tab, say) holds the focus.
+  // When the pane is shown and focused, and nothing in it (reached with Tab,
+  // say) holds the focus: an overlay that opened meanwhile takes it, as if just
+  // opened, else the terminal. Also when an overlay opens or closes.
   $effect(() => {
-    if (
-      active &&
-      !untrack(() => pane.prompt || pane.closed?.type === "Error") &&
-      !root.contains(document.activeElement)
-    )
-      term?.focus();
+    void [pane.prompt, pane.closed, waiting];
+    if (!active || root.contains(document.activeElement)) return;
+    const overlay = root.querySelector<HTMLElement>("[data-modal]");
+    if (overlay) focusFirst(overlay);
+    else term?.focus();
   });
 
   // A session that dropped under an open palette must not receive anything:
@@ -346,6 +347,7 @@
 <div
   class="pane"
   class:focused={focused && multi}
+  data-unfocused={!active || undefined}
   bind:this={root}
   onfocusin={() => focusPane(pane.paneId)}
   onpointerdown={() => focusPane(pane.paneId)}

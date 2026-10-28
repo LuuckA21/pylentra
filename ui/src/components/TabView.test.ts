@@ -12,6 +12,7 @@ const made = vi.hoisted(() => ({
     paste: ReturnType<typeof vi.fn>;
     input: ReturnType<typeof vi.fn>;
     focus: ReturnType<typeof vi.fn>;
+    textarea: HTMLTextAreaElement;
     modes: { bracketedPasteMode: boolean };
   }[],
 }));
@@ -24,14 +25,17 @@ vi.mock("@xterm/xterm", () => ({
     onSelect?: () => void;
     paste = vi.fn();
     input = vi.fn();
-    focus = vi.fn();
+    textarea = document.createElement("textarea");
+    focus = vi.fn(() => this.textarea.focus());
     modes = { bracketedPasteMode: false };
     constructor(options: Record<string, unknown>) {
       this.options = options;
       made.terms.push(this);
     }
     loadAddon() {}
-    open() {}
+    open(parent: HTMLElement) {
+      parent.append(this.textarea);
+    }
     keyHandler?: (e: KeyboardEvent) => boolean;
     attachCustomKeyEventHandler(cb: (e: KeyboardEvent) => boolean) {
       this.keyHandler = cb;
@@ -60,7 +64,14 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
-import { openTab, sessions, splitPane } from "../lib/stores/sessions.svelte";
+import type { PaneState } from "../lib/sessionReducer";
+import {
+  focusPane,
+  moveFocus,
+  openTab,
+  sessions,
+  splitPane,
+} from "../lib/stores/sessions.svelte";
 import TabView from "./TabView.svelte";
 
 beforeEach(() => {
@@ -145,4 +156,81 @@ test("a prompt stays in the pane it belongs to after a split", async () => {
   const slots = container.querySelectorAll<HTMLElement>(".slot");
   expect(within(slots[0]).getByRole("dialog")).toBe(prompt);
   expect(within(slots[1]).queryByRole("dialog")).toBeNull();
+});
+
+// Two panes side by side, A focused (its terminal has the keyboard).
+const twoPanes = async () => {
+  const { container } = show(true);
+  const a = sessions.panes[0].paneId;
+  const b = splitPane(a, "row", "c2")!;
+  focusPane(a);
+  await tick();
+  const [slotA, slotB] = container.querySelectorAll<HTMLElement>(".slot");
+  expect(slotA.contains(document.activeElement)).toBe(true);
+  return { a, b, slotA, slotB };
+};
+
+const prompts: [string, NonNullable<PaneState["prompt"]>][] = [
+  [
+    "SecretPrompt",
+    {
+      type: "SecretPrompt",
+      host: "h",
+      port: 22,
+      kind: { type: "Password" },
+      can_save: false,
+    },
+  ],
+  [
+    "HostKeyPrompt",
+    {
+      type: "HostKeyPrompt",
+      host: "h",
+      port: 22,
+      algo: "ssh-ed25519",
+      fingerprint: "SHA256:x",
+    },
+  ],
+];
+
+test.each(prompts)(
+  "a %s in a pane without the focus waits for it",
+  async (_, prompt) => {
+    const { a, b, slotA, slotB } = await twoPanes();
+    sessions.panes[1].prompt = prompt;
+    await tick();
+    const dialog = within(slotB).getByRole("dialog");
+    expect(slotA.contains(document.activeElement)).toBe(true);
+    expect(sessions.tabs[0].focus).toBe(a);
+
+    focusPane(b);
+    await tick();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    // Once answered, the keyboard goes to the pane's terminal.
+    sessions.panes[1].prompt = undefined;
+    await tick();
+    expect(document.activeElement).toBe(made.terms[1].textarea);
+  },
+);
+
+test("a prompt in the focused pane takes the focus at once", async () => {
+  const { slotA } = await twoPanes();
+  sessions.panes[0].prompt = prompts[0][1];
+  await tick();
+  const dialog = within(slotA).getByRole("dialog");
+  expect(dialog.contains(document.activeElement)).toBe(true);
+});
+
+test("a prompt closing in a pane the focus has left does not take it back", async () => {
+  const { b, slotB } = await twoPanes();
+  sessions.panes[0].prompt = prompts[0][1];
+  await tick();
+  moveFocus("right");
+  await tick();
+  expect(slotB.contains(document.activeElement)).toBe(true);
+  sessions.panes[0].prompt = undefined;
+  await tick();
+  expect(slotB.contains(document.activeElement)).toBe(true);
+  expect(sessions.tabs[0].focus).toBe(b);
 });
