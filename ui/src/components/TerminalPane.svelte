@@ -6,6 +6,7 @@
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
+  import type { Dir } from "../lib/layout";
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
   import type { PaneState } from "../lib/sessionReducer";
   import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
@@ -45,6 +46,8 @@
     onedit,
     onsave,
     onclose,
+    canSplit = false,
+    onsplit,
   }: {
     pane: PaneState;
     // Its tab is shown, and it is the tab's focused pane.
@@ -55,6 +58,9 @@
     onsave: (paneId: string) => void;
     // The parent decides whether closing needs confirmation.
     onclose: (paneId: string) => void;
+    // The tab has room for another pane; onsplit opens the picker for it.
+    canSplit?: boolean;
+    onsplit?: (paneId: string, dir: Dir) => void;
   } = $props();
 
   // The pane's own shortcuts and keyboard focus.
@@ -304,6 +310,8 @@
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
     else if (a === "snippets") toggleSnippets();
+    else if ((a === "splitRight" || a === "splitDown") && canSplit)
+      onsplit?.(pane.paneId, a === "splitRight" ? "row" : "column");
   }
 
   function onwindowkey(e: KeyboardEvent) {
@@ -350,6 +358,8 @@
       onsnippets={toggleSnippets}
       {snippetsOpen}
       onsave={pane.quick ? () => onsave(pane.paneId) : undefined}
+      onsplit={onsplit && ((dir) => onsplit(pane.paneId, dir))}
+      {canSplit}
     />
   </div>
 

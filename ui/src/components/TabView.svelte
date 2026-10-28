@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { rects } from "../lib/layout";
+  import { count, MAX_PANES, rects, type Dir } from "../lib/layout";
   import { paneOf, type Tab } from "../lib/stores/sessions.svelte";
   import TerminalPane from "./TerminalPane.svelte";
 
@@ -9,15 +9,18 @@
     onedit,
     onsave,
     onclose,
+    onsplit,
   }: {
     tab: Tab;
     visible: boolean;
     onedit: (connectionId: string) => void;
     onsave: (paneId: string) => void;
     onclose: (paneId: string) => void;
+    onsplit: (paneId: string, dir: Dir) => void;
   } = $props();
 
   const layout = $derived(rects(tab.root).panes);
+  const canSplit = $derived(count(tab.root) < MAX_PANES);
 </script>
 
 <!-- A flat list keyed by pane: a split or a close moves a pane without
@@ -41,6 +44,8 @@
           {onedit}
           {onsave}
           {onclose}
+          {canSplit}
+          {onsplit}
         />
       </div>
     {/if}

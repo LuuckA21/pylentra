@@ -3,7 +3,16 @@ import type { PromptAnswer } from "../bindings/PromptAnswer";
 import type { SessionEvent } from "../bindings/SessionEvent";
 import type { Connection } from "../bindings/Connection";
 import type { QuickTarget } from "../quickTarget";
-import { firstPane, rects, remove, type Node } from "../layout";
+import {
+  count,
+  firstPane,
+  MAX_PANES,
+  rects,
+  remove,
+  split,
+  type Dir,
+  type Node,
+} from "../layout";
 import { recordRecent } from "../recent";
 import { initialPane, reduce, type PaneState } from "../sessionReducer";
 import { isApiError, toastError } from "./toasts.svelte";
@@ -51,11 +60,11 @@ function addTab(pane: PaneState): string {
   return pane.paneId;
 }
 
-export function openTab(connectionId: string): string {
-  return addTab(initialPane(crypto.randomUUID(), connectionId));
-}
-
-export function openQuickTab({ user, host, port }: QuickTarget): string {
+// `target`: a saved connection's id, or a quick connection's target.
+function newPane(target: string | QuickTarget): PaneState {
+  if (typeof target === "string")
+    return initialPane(crypto.randomUUID(), target);
+  const { user, host, port } = target;
   const quick: Connection = {
     id: crypto.randomUUID(),
     name: `${user}@${host}`,
@@ -67,7 +76,28 @@ export function openQuickTab({ user, host, port }: QuickTarget): string {
     jump_via: null,
     forwards: [],
   };
-  return addTab(initialPane(crypto.randomUUID(), quick.id, quick));
+  return initialPane(crypto.randomUUID(), quick.id, quick);
+}
+
+export const openTab = (connectionId: string): string =>
+  addTab(newPane(connectionId));
+
+export const openQuickTab = (target: QuickTarget): string =>
+  addTab(newPane(target));
+
+// The new pane takes the focus; null, and nothing changes, when the tab is full.
+export function splitPane(
+  paneId: string,
+  dir: Dir,
+  target: string | QuickTarget,
+): string | null {
+  const tab = tabOf(paneId);
+  if (!tab || count(tab.root) >= MAX_PANES) return null;
+  const pane = newPane(target);
+  sessions.panes.push(pane);
+  tab.root = split(tab.root, paneId, dir, pane.paneId);
+  tab.focus = pane.paneId;
+  return pane.paneId;
 }
 
 // The open session keeps running; only the pane's identity changes.

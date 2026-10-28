@@ -81,3 +81,12 @@ test("Escape closes the suggestions", async () => {
   expect(screen.queryByRole("listbox")).toBeNull();
   expect(field().getAttribute("aria-expanded")).toBe("false");
 });
+
+test("with onquick, the typed target goes to onquick instead of a new tab", async () => {
+  const onquick = vi.fn();
+  render(QuickConnect, { onopen: vi.fn(), onquick });
+  await type("u@h");
+  await fireEvent.keyDown(field(), { key: "Enter" });
+  expect(onquick).toHaveBeenCalledWith({ user: "u", host: "h", port: 22 });
+  expect(sessions.tabs).toHaveLength(0);
+});

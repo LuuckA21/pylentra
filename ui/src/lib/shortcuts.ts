@@ -7,7 +7,9 @@ export type Action =
   | "prevTab"
   | "quickConnect"
   | "snippets"
-  | "fullscreen";
+  | "fullscreen"
+  | "splitRight"
+  | "splitDown";
 
 const WITH_SHIFT: Record<string, Action> = {
   C: "copy",
@@ -16,9 +18,11 @@ const WITH_SHIFT: Record<string, Action> = {
   F: "search",
   K: "quickConnect",
   P: "snippets",
+  D: "splitRight",
+  E: "splitDown",
 };
 
-// F11, Ctrl+Shift+C/V/W/F/K/P and Ctrl+(Shift+)Tab; everything else (Ctrl+C included) belongs to the shell.
+// F11, Ctrl+Shift+C/V/W/F/K/P/D/E and Ctrl+(Shift+)Tab; everything else (Ctrl+C included) belongs to the shell.
 export function shortcutFor(e: KeyboardEvent): Action | null {
   if (e.key === "F11" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey)
     return "fullscreen";

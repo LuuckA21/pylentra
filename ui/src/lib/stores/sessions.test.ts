@@ -23,6 +23,7 @@ import {
   openQuickTab,
   openTab,
   sessions,
+  splitPane,
   tabOf,
   write,
 } from "./sessions.svelte";
@@ -155,6 +156,51 @@ test("closeTab closes every pane of the tab", async () => {
     ["s1"],
     ["s2"],
   ]);
+});
+
+test("splitPane adds a focused pane beside the one split", () => {
+  const p = openTab("c1");
+  const id = splitPane(p, "row", "c2")!;
+  expect(sessions.panes.map((x) => x.paneId)).toEqual([p, id]);
+  expect(sessions.tabs).toHaveLength(1);
+  expect(sessions.tabs[0]).toMatchObject({
+    root: { dir: "row", ratio: 0.5, a: { pane: p }, b: { pane: id } },
+    focus: id,
+  });
+  connect(
+    id,
+    80,
+    24,
+    () => {},
+    () => {},
+  );
+  expect(api.sessionOpen).toHaveBeenLastCalledWith(
+    "c2",
+    80,
+    24,
+    expect.any(Function),
+    expect.any(Function),
+  );
+});
+
+test("splitPane with a quick target makes a quick pane", () => {
+  const p = openTab("c1");
+  const id = splitPane(p, "column", { user: "u", host: "h", port: 22 })!;
+  expect(sessions.panes[1]).toMatchObject({
+    paneId: id,
+    quick: { name: "u@h", username: "u", host: "h", port: 22 },
+  });
+  expect(sessions.tabs[0].root).toMatchObject({ dir: "column" });
+});
+
+test("splitPane refuses a fifth pane and changes nothing", () => {
+  const p = openTab("c1");
+  splitPane(p, "row", "c2");
+  splitPane(p, "column", "c3");
+  splitPane(p, "column", "c4");
+  const before = JSON.parse(JSON.stringify(sessions));
+  expect(splitPane(p, "row", "c5")).toBeNull();
+  expect(JSON.parse(JSON.stringify(sessions))).toEqual(before);
 });
 
 test("cycleTab wraps around", () => {

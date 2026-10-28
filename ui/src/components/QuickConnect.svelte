@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from "../lib/i18n";
-  import { parseTarget } from "../lib/quickTarget";
+  import { parseTarget, type QuickTarget } from "../lib/quickTarget";
   import { matches } from "../lib/search";
   import { fromOtherModal, shortcutFor } from "../lib/shortcuts";
   import { library } from "../lib/stores/library.svelte";
@@ -8,7 +8,14 @@
   import { quickDefaults } from "../lib/stores/settings.svelte";
   import TextField from "./ui/TextField.svelte";
 
-  let { onopen }: { onopen: (connectionId: string) => void } = $props();
+  let {
+    onopen,
+    onquick = openQuickTab,
+  }: {
+    onopen: (connectionId: string) => void;
+    // A typed target; a new tab by default.
+    onquick?: (target: QuickTarget) => void;
+  } = $props();
 
   const uid = $props.id();
   const listId = `${uid}-list`;
@@ -47,7 +54,7 @@
   function connectTyped() {
     const r = parseTarget(text, quickDefaults());
     if (!r.ok) return void (error = t(r.error));
-    openQuickTab(r.target);
+    onquick(r.target);
     reset();
   }
 

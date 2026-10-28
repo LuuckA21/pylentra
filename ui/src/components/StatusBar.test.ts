@@ -120,3 +120,23 @@ test("the snippets button is disabled outside ready and opens the palette", asyn
   await fireEvent.click(button);
   expect(onsnippets).toHaveBeenCalledTimes(1);
 });
+
+test("the split buttons split right and down, disabled without room", async () => {
+  const onsplit = vi.fn();
+  const { rerender } = render(StatusBar, {
+    pane: pane(Date.now()),
+    connection,
+    groups,
+    onforwards: vi.fn(),
+    onsplit,
+    canSplit: true,
+  });
+  const right = screen.getByRole("button", { name: "Split right" });
+  const down = screen.getByRole("button", { name: "Split down" });
+  await fireEvent.click(right);
+  await fireEvent.click(down);
+  expect(onsplit.mock.calls).toEqual([["row"], ["column"]]);
+  await rerender({ canSplit: false });
+  expect(right).toHaveProperty("disabled", true);
+  expect(down).toHaveProperty("disabled", true);
+});

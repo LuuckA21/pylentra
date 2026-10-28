@@ -3,7 +3,8 @@ const FOCUSABLE =
 
 // Svelte action for dialogs: moves focus in ([data-autofocus] or the first
 // control), keeps Tab inside, closes on Escape and gives focus back on destroy.
-export function modal(node: HTMLElement, onescape: () => void) {
+// Without `onescape` the dialog handles Escape itself.
+export function modal(node: HTMLElement, onescape?: () => void) {
   const previous = document.activeElement as HTMLElement | null;
   const controls = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
   (
@@ -11,7 +12,7 @@ export function modal(node: HTMLElement, onescape: () => void) {
   )?.focus();
 
   const onkeydown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
+    if (e.key === "Escape" && onescape) {
       e.stopPropagation();
       onescape();
     } else if (e.key === "Tab") {

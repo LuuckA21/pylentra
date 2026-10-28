@@ -28,6 +28,11 @@ test("shortcuts", () => {
   expect(shortcutFor(key("Tab", { ctrl: true, shift: true }))).toBe("prevTab");
 });
 
+test("Ctrl+Shift+D and Ctrl+Shift+E split the pane", () => {
+  expect(shortcutFor(key("D", { ctrl: true, shift: true }))).toBe("splitRight");
+  expect(shortcutFor(key("E", { ctrl: true, shift: true }))).toBe("splitDown");
+});
+
 test("F11 toggles fullscreen only without modifiers", () => {
   expect(shortcutFor(key("F11"))).toBe("fullscreen");
   expect(shortcutFor(key("F11", { ctrl: true }))).toBeNull();

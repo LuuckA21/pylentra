@@ -8,6 +8,7 @@
   import ImportDialog from "./components/ImportDialog.svelte";
   import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import SplitPicker from "./components/SplitPicker.svelte";
   import TabView from "./components/TabView.svelte";
   import Toasts from "./components/Toasts.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
@@ -17,6 +18,7 @@
   import { fromOtherModal, shortcutFor } from "./lib/shortcuts";
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
+  import type { Dir } from "./lib/layout";
   import { library, refresh } from "./lib/stores/library.svelte";
   import { loadSnippets } from "./lib/stores/snippets.svelte";
   import {
@@ -25,6 +27,7 @@
     openTab,
     paneOf,
     sessions,
+    splitPane,
   } from "./lib/stores/sessions.svelte";
   import { loadSettings, settings } from "./lib/stores/settings.svelte";
   import { toastError } from "./lib/stores/toasts.svelte";
@@ -45,6 +48,8 @@
   } | null>(null);
   let settingsOpen = $state(false);
   let importOpen = $state(false);
+  // The pane the picker will split; the picker goes away with the pane.
+  let splitting = $state<{ paneId: string; dir: Dir } | null>(null);
 
   // The one confirmation on screen; `action` runs if the user confirms.
   let confirming = $state<{
@@ -201,6 +206,7 @@
               onedit={edit}
               onsave={saveQuick}
               onclose={requestClose}
+              onsplit={(paneId, dir) => (splitting = { paneId, dir })}
             />
           {/each}
         </div>
@@ -224,6 +230,16 @@
       editing = null;
     }}
     oncancel={() => (editing = null)}
+  />
+{/if}
+{#if splitting && paneOf(splitting.paneId)}
+  <SplitPicker
+    onpick={(target) => {
+      const { paneId, dir } = splitting!;
+      splitting = null;
+      splitPane(paneId, dir, target);
+    }}
+    oncancel={() => (splitting = null)}
   />
 {/if}
 {#if importOpen}

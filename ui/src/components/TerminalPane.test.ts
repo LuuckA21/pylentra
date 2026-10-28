@@ -580,3 +580,32 @@ test("xterm leaves F11 to the window", () => {
     true,
   );
 });
+
+const splitKey = () =>
+  fireEvent.keyDown(document.body, { key: "D", ctrlKey: true, shiftKey: true });
+
+test("Ctrl+Shift+D asks to split the focused pane to the right", async () => {
+  const p = { ...props(readyPane), canSplit: true, onsplit: vi.fn() };
+  render(TerminalPane, p);
+  await splitKey();
+  await fireEvent.keyDown(document.body, {
+    key: "E",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  expect(p.onsplit.mock.calls).toEqual([
+    ["t1", "row"],
+    ["t1", "column"],
+  ]);
+});
+
+test.each([
+  ["not focused", { focused: false }],
+  ["hidden", { visible: false }],
+  ["full", { canSplit: false }],
+])("a pane that is %s does not split", async (_, extra) => {
+  const p = { ...props(readyPane), canSplit: true, onsplit: vi.fn(), ...extra };
+  render(TerminalPane, p);
+  await splitKey();
+  expect(p.onsplit).not.toHaveBeenCalled();
+});

@@ -1,5 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
-import { render } from "@testing-library/svelte";
+import { render, screen, within } from "@testing-library/svelte";
+import { tick } from "svelte";
 
 // xterm needs a real browser: a fake that records its options and listeners.
 const made = vi.hoisted(() => ({
@@ -59,12 +60,14 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
-import { openTab, sessions } from "../lib/stores/sessions.svelte";
+import { openTab, sessions, splitPane } from "../lib/stores/sessions.svelte";
 import TabView from "./TabView.svelte";
 
 beforeEach(() => {
   sessions.tabs.splice(0);
   sessions.panes.splice(0);
+  sessions.active = null;
+  made.terms.splice(0);
   vi.stubGlobal("matchMedia", () => ({
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -86,7 +89,13 @@ const show = (visible: boolean) => {
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
+    onsplit: vi.fn(),
   });
+};
+
+const box = (el: HTMLElement) => {
+  const { left, top, width, height } = el.style;
+  return { left, top, width, height };
 };
 
 test("a single pane fills the tab", () => {
@@ -106,4 +115,34 @@ test("a single pane fills the tab", () => {
 test("a tab that is not visible is hidden", () => {
   const { container } = show(false);
   expect((container.firstElementChild as HTMLElement).hidden).toBe(true);
+});
+
+test("a split shows both panes side by side without recreating the first", async () => {
+  const { container } = show(true);
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  const slots = container.querySelectorAll<HTMLElement>(".slot");
+  expect([...slots].map(box)).toEqual([
+    { left: "0%", top: "0%", width: "50%", height: "100%" },
+    { left: "50%", top: "0%", width: "50%", height: "100%" },
+  ]);
+  expect(made.terms).toHaveLength(2);
+});
+
+test("a prompt stays in the pane it belongs to after a split", async () => {
+  const { container } = show(true);
+  sessions.panes[0].prompt = {
+    type: "SecretPrompt",
+    host: "h",
+    port: 22,
+    kind: { type: "Password" },
+    can_save: false,
+  };
+  await tick();
+  const prompt = screen.getByRole("dialog");
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  await tick();
+  const slots = container.querySelectorAll<HTMLElement>(".slot");
+  expect(within(slots[0]).getByRole("dialog")).toBe(prompt);
+  expect(within(slots[1]).queryByRole("dialog")).toBeNull();
 });
