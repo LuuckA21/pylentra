@@ -14,7 +14,8 @@ use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
 use pylentra_core::ssh::{SessionId, SessionSink};
 use pylentra_core::ssh_config::{ScanResult, parse};
 use pylentra_core::store::Library;
-use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::http::HeaderMap;
+use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
@@ -377,13 +378,33 @@ pub fn do_session_open_quick(
     Ok(state.sessions.open(vec![connection], cols, rows, sink))
 }
 
+/// The bytes are the raw request body and the session id is the `id` header,
+/// so a big paste is not sent as a JSON array of numbers.
 #[tauri::command]
 pub async fn session_write(
     state: State<'_, AppState>,
-    id: SessionId,
-    data: Vec<u8>,
+    request: Request<'_>,
 ) -> Result<(), ApiError> {
+    let (id, data) = write_args(request.headers(), request.body())?;
     do_session_write(&state, id, data).await
+}
+
+fn write_args(headers: &HeaderMap, body: &InvokeBody) -> Result<(SessionId, Vec<u8>), CoreError> {
+    let invalid = |field: &str| CoreError::InvalidInput {
+        field: field.into(),
+        reason: "malformed".into(),
+    };
+    let id = headers
+        .get("id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| invalid("id"))?;
+    let data = match body {
+        InvokeBody::Raw(bytes) => bytes.clone(),
+        // The postMessage fallback (custom protocol blocked) sends the bytes as JSON.
+        InvokeBody::Json(v) => serde_json::from_value(v.clone()).map_err(|_| invalid("data"))?,
+    };
+    Ok((id, data))
 }
 
 pub async fn do_session_write(
@@ -1053,5 +1074,19 @@ mod tests {
             2
         );
         assert_eq!(do_library_get(&state).connections.len(), 2);
+    }
+
+    #[test]
+    fn write_args_reads_raw_body_and_id_header() {
+        let id = Uuid::new_v4();
+        let mut headers = HeaderMap::new();
+        headers.insert("id", id.to_string().parse().unwrap());
+        let raw = InvokeBody::Raw(vec![0xc3, 0xa8]);
+        assert_eq!(write_args(&headers, &raw).unwrap(), (id, vec![0xc3, 0xa8]));
+        let json = InvokeBody::Json(serde_json::json!([1, 2]));
+        assert_eq!(write_args(&headers, &json).unwrap(), (id, vec![1, 2]));
+        let bad = InvokeBody::Json(serde_json::json!([256]));
+        assert!(write_args(&headers, &bad).is_err());
+        assert!(write_args(&HeaderMap::new(), &raw).is_err());
     }
 }

@@ -96,7 +96,8 @@ export function sessionWrite(
 ): Promise<void> {
   const bytes =
     typeof data === "string" ? new TextEncoder().encode(data) : data;
-  return invoke<void>("session_write", { id, data: Array.from(bytes) });
+  // Raw body, not a JSON array of numbers: a big paste stays small.
+  return invoke<void>("session_write", bytes, { headers: { id } });
 }
 
 export const sessionResize = (id: string, cols: number, rows: number) =>

@@ -5,6 +5,7 @@ vi.mock("../api", () => ({
     sessionOpen: vi.fn(),
     sessionOpenQuick: vi.fn(),
     sessionClose: vi.fn(),
+    sessionWrite: vi.fn(),
     sessionAnswer: vi.fn(),
   },
 }));
@@ -21,6 +22,7 @@ import {
   openQuickTab,
   openTab,
   sessions,
+  write,
 } from "./sessions.svelte";
 
 const flush = () => new Promise((r) => setTimeout(r));
@@ -196,4 +198,32 @@ test("linkQuickTab points the tab at the saved connection", async () => {
   expect(sessions.tabs[0].connectionId).toBe("saved");
   expect(sessions.tabs[0].quick).toBeUndefined();
   expect(sessions.tabs[0].sessionId).toBe("q1");
+});
+
+test("a write waits for the one before it, even a failed one", async () => {
+  const id = openTab("c1");
+  connect(
+    id,
+    80,
+    24,
+    () => {},
+    () => {},
+  );
+  await flush();
+  emit({ type: "Status", stage: "Ready" });
+  let fail!: () => void;
+  vi.mocked(api.sessionWrite)
+    .mockReset()
+    .mockReturnValueOnce(new Promise((_, reject) => (fail = reject)))
+    .mockResolvedValue();
+  write(sessions.tabs[0], "ls");
+  write(sessions.tabs[0], "\r");
+  await flush();
+  expect(api.sessionWrite).toHaveBeenCalledTimes(1);
+  fail();
+  await flush();
+  expect(vi.mocked(api.sessionWrite).mock.calls).toEqual([
+    ["s1", "ls"],
+    ["s1", "\r"],
+  ]);
 });
