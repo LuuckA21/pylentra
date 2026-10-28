@@ -189,10 +189,12 @@ cover it.
    buttons and both shortcuts do nothing.
 2. Run `htop` in one pane and drag a divider: it redraws to the new size, and
    no pane gets smaller than 160x120 px.
-3. Start outside the terminal (click a status-bar button of a pane) and press
-   Tab or Shift+Tab until a divider is highlighted (Tab inside a terminal goes
-   to the shell): the arrow keys move it in 5% steps, Enter and double-click
-   split evenly.
+3. Click the Quick connect field at the top and press Tab: the first stops
+   are the dividers (a terminal swallows Tab, so they cannot be reached from
+   inside one). The arrow keys move the highlighted one in 5% steps, Enter and
+   double-click split evenly.
+   After dragging a divider with the mouse, typing still reaches the terminal
+   that had the keyboard.
 4. Alt+Left, Right, Up and Down move the focus between panes (accent border);
    clicking a pane focuses it. In zsh, Alt+B and Alt+F still move by word.
 5. Trigger a password prompt in a pane without focus (for example a
@@ -205,6 +207,8 @@ cover it.
    Closing the last pane closes the tab.
 7. With the same setting on, click the tab's x with several live sessions:
    one confirmation for all of them.
+8. On Linux, click a status-bar button (Split, Forward): the keyboard ends up
+   in the terminal, or in the dialog the button opens, never nowhere.
 
 ## Settings
 

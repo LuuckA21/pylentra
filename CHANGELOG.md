@@ -23,8 +23,10 @@ Nothing saved changes format: going back to 0.4.x loses nothing.
   focuses one too. With more than one pane, the focused one has an accent
   border.
 - Dividers between panes: drag them with the mouse (each pane keeps at least
-  160x120 px), or Tab to a divider and use the arrow keys (5% per step);
-  Enter or a double-click splits evenly.
+  160x120 px), or press Tab from a control above the panes (the Quick connect
+  field, say) to reach the dividers first and use the arrow keys (5% per
+  step); Enter or a double-click splits evenly. Dragging leaves the keyboard
+  in the terminal.
 - Closing: the tab's x asks once for all its live sessions.
 
 ### Changed
