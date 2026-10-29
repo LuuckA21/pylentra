@@ -17,6 +17,7 @@ const conn = (id: string, name: string) =>
 
 beforeEach(() => {
   sessions.tabs.splice(0);
+  sessions.panes.splice(0);
   sessions.active = null;
   library.groups = [];
   library.connections = Array.from({ length: 8 }, (_, i) =>
@@ -45,7 +46,7 @@ test("Enter without a selection connects to the typed target", async () => {
   await type("root@Host.example:2222");
   await fireEvent.keyDown(field(), { key: "Enter" });
   expect(onopen).not.toHaveBeenCalled();
-  expect(sessions.tabs[0].quick).toMatchObject({
+  expect(sessions.panes[0].quick).toMatchObject({
     username: "root",
     host: "Host.example",
     port: 2222,
@@ -79,4 +80,13 @@ test("Escape closes the suggestions", async () => {
   await fireEvent.keyDown(field(), { key: "Escape" });
   expect(screen.queryByRole("listbox")).toBeNull();
   expect(field().getAttribute("aria-expanded")).toBe("false");
+});
+
+test("with onquick, the typed target goes to onquick instead of a new tab", async () => {
+  const onquick = vi.fn();
+  render(QuickConnect, { onopen: vi.fn(), onquick });
+  await type("u@h");
+  await fireEvent.keyDown(field(), { key: "Enter" });
+  expect(onquick).toHaveBeenCalledWith({ user: "u", host: "h", port: 22 });
+  expect(sessions.tabs).toHaveLength(0);
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { warn } from "@tauri-apps/plugin-log";
   import QuickConnect from "./components/QuickConnect.svelte";
@@ -8,7 +8,8 @@
   import ImportDialog from "./components/ImportDialog.svelte";
   import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
-  import TerminalTab from "./components/TerminalTab.svelte";
+  import SplitPicker from "./components/SplitPicker.svelte";
+  import TabView from "./components/TabView.svelte";
   import Toasts from "./components/Toasts.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
@@ -17,13 +18,19 @@
   import { fromOtherModal, shortcutFor } from "./lib/shortcuts";
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
+  import { count, rects, type Dir } from "./lib/layout";
+  import type { PaneState } from "./lib/sessionReducer";
   import { library, refresh } from "./lib/stores/library.svelte";
   import { loadSnippets } from "./lib/stores/snippets.svelte";
   import {
+    closePane,
     closeTab,
-    linkQuickTab,
+    linkQuickPane,
     openTab,
+    paneOf,
     sessions,
+    splitPane,
+    type Tab,
   } from "./lib/stores/sessions.svelte";
   import { loadSettings, settings } from "./lib/stores/settings.svelte";
   import { toastError } from "./lib/stores/toasts.svelte";
@@ -31,18 +38,21 @@
 
   const openConnectionIds = $derived(
     new Set(
-      sessions.tabs
-        .filter((tab) => tab.phase !== "closed")
-        .map((tab) => tab.connectionId),
+      sessions.panes
+        .filter((pane) => pane.phase !== "closed")
+        .map((pane) => pane.connectionId),
     ),
   );
-  // `connection` undefined means a new connection. `quickTabId`: the form
-  // saves that quick tab's connection (pre-filled, created as new).
-  let editing = $state<{ connection?: Connection; quickTabId?: string } | null>(
-    null,
-  );
+  // `connection` undefined means a new connection. `quickPaneId`: the form
+  // saves that quick pane's connection (pre-filled, created as new).
+  let editing = $state<{
+    connection?: Connection;
+    quickPaneId?: string;
+  } | null>(null);
   let settingsOpen = $state(false);
   let importOpen = $state(false);
+  // The pane the picker will split; the picker is gone once that pane is.
+  let splitting = $state<{ paneId: string; dir: Dir } | null>(null);
 
   // The one confirmation on screen; `action` runs if the user confirms.
   let confirming = $state<{
@@ -52,24 +62,34 @@
   } | null>(null);
 
   const liveCount = () =>
-    sessions.tabs.filter((tab) => tab.phase === "ready").length;
+    sessions.panes.filter((pane) => pane.phase === "ready").length;
 
-  // Only a connected tab is worth asking about.
-  function requestClose(tabId: string) {
-    const tab = sessions.tabs.find((x) => x.tabId === tabId);
-    if (!tab || !settings.confirm_close_active || tab.phase !== "ready")
-      return closeTab(tabId);
+  // Only connected panes are worth asking about: one is named, more are counted.
+  function requestClose(paneIds: string[], action: () => void) {
+    const ready = paneIds
+      .map(paneOf)
+      .filter((pane): pane is PaneState => pane?.phase === "ready");
+    if (!settings.confirm_close_active || !ready.length) return action();
+    const one = ready.length === 1;
     confirming = {
-      title: t("confirm.tab.title"),
-      message: t("confirm.tab.body", {
-        name: tab.quick?.name ?? nameOf(tab.connectionId),
-      }),
-      action: () => closeTab(tabId),
+      title: t(one ? "confirm.tab.title" : "confirm.tabs.title"),
+      message: one
+        ? t("confirm.tab.body", { name: titleOf(ready[0]) })
+        : t("confirm.tabs.body", { n: ready.length }),
+      action,
     };
   }
 
+  const requestClosePane = (paneId: string) =>
+    requestClose([paneId], () => closePane(paneId));
+
+  const requestCloseTab = (tab: Tab) =>
+    requestClose(Object.keys(rects(tab.root).panes), () => closeTab(tab.tabId));
+
   const connOf = (id: string) => library.connections.find((c) => c.id === id);
   const nameOf = (id: string) => connOf(id)?.name ?? id;
+  const titleOf = (pane: PaneState) =>
+    pane.quick?.name ?? nameOf(pane.connectionId);
   const dotOf = (id: string) => {
     const c = connOf(id);
     return c ? colorOf(c, library.groups) : null;
@@ -80,13 +100,13 @@
     if (connection) editing = { connection };
   }
 
-  // Opens the new-connection form pre-filled from a quick tab, named after its host.
-  function saveQuick(tabId: string) {
-    const quick = sessions.tabs.find((tab) => tab.tabId === tabId)?.quick;
+  // Opens the new-connection form pre-filled from a quick pane, named after its host.
+  function saveQuick(paneId: string) {
+    const quick = paneOf(paneId)?.quick;
     if (quick)
       editing = {
         connection: { ...quick, name: quick.host },
-        quickTabId: tabId,
+        quickPaneId: paneId,
       };
   }
 
@@ -164,25 +184,32 @@
         <div class="topbar">
           <div class="tabbar" role="tablist" aria-label={t("tabs.label")}>
             {#each sessions.tabs as tab (tab.tabId)}
+              {@const pane = paneOf(tab.focus)!}
+              <!-- The tab is named after its focused pane. -->
               <div class="tab" class:active={tab.tabId === sessions.active}>
                 <button
                   type="button"
                   role="tab"
                   class="title"
-                  class:closed={tab.phase === "closed"}
+                  class:closed={pane.phase === "closed"}
                   aria-selected={tab.tabId === sessions.active}
                   onclick={() => (sessions.active = tab.tabId)}
                 >
-                  <span class="dot tag-{dotOf(tab.connectionId) ?? 'none'}"
+                  <span class="dot tag-{dotOf(pane.connectionId) ?? 'none'}"
                   ></span>
-                  {tab.quick?.name ?? nameOf(tab.connectionId)}
+                  <span class="name">{titleOf(pane)}</span>
+                  {#if count(tab.root) > 1}
+                    <span class="more"
+                      >{t("tabs.more", { n: count(tab.root) - 1 })}</span
+                    >
+                  {/if}
                 </button>
                 <button
                   type="button"
                   class="close"
                   aria-label={t("tabs.close")}
                   title={t("tabs.close")}
-                  onclick={() => requestClose(tab.tabId)}>×</button
+                  onclick={() => requestCloseTab(tab)}>×</button
                 >
               </div>
             {/each}
@@ -191,12 +218,13 @@
         </div>
         <div class="tabs">
           {#each sessions.tabs as tab (tab.tabId)}
-            <TerminalTab
+            <TabView
               {tab}
-              active={tab.tabId === sessions.active}
-              onedit={(id) => (tab.quick ? saveQuick(tab.tabId) : edit(id))}
+              visible={tab.tabId === sessions.active}
+              onedit={edit}
               onsave={saveQuick}
-              onclose={requestClose}
+              onclose={requestClosePane}
+              onsplit={(paneId, dir) => (splitting = { paneId, dir })}
             />
           {/each}
         </div>
@@ -214,12 +242,25 @@
 {#if editing}
   <ConnectionForm
     connection={editing.connection}
-    isNew={!!editing.quickTabId}
+    isNew={!!editing.quickPaneId}
     onsaved={(saved) => {
-      if (editing?.quickTabId) linkQuickTab(editing.quickTabId, saved);
+      if (editing?.quickPaneId) linkQuickPane(editing.quickPaneId, saved);
       editing = null;
     }}
     oncancel={() => (editing = null)}
+  />
+{/if}
+{#if splitting && paneOf(splitting.paneId)}
+  <SplitPicker
+    onpick={async (target) => {
+      const { paneId, dir } = splitting!;
+      splitting = null;
+      // Once the picker has given the focus back to the old pane, so the new
+      // pane keeps it.
+      await tick();
+      splitPane(paneId, dir, target);
+    }}
+    oncancel={() => (splitting = null)}
   />
 {/if}
 {#if importOpen}
@@ -320,9 +361,18 @@
     gap: var(--space-2);
     max-width: 200px;
     padding-right: var(--space-1);
+    white-space: nowrap;
+  }
+  /* The name shrinks, so a long one never hides the "+N". */
+  .name {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+  .more {
+    flex: none;
+    color: var(--fg-muted);
+    font-weight: 400;
   }
   .title.closed {
     color: var(--fg-muted);

@@ -57,17 +57,24 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
   answer: vi.fn(),
   connect: vi.fn(),
   cycleTab: vi.fn(),
+  focusPane: vi.fn(),
+  moveFocus: vi.fn(),
   resize: vi.fn(),
   write: vi.fn(),
 }));
 
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
-import { initialTab, type TabState } from "../lib/sessionReducer";
-import { connect, cycleTab } from "../lib/stores/sessions.svelte";
+import { initialPane, type PaneState } from "../lib/sessionReducer";
+import {
+  connect,
+  cycleTab,
+  focusPane,
+  moveFocus,
+} from "../lib/stores/sessions.svelte";
 import { settings } from "../lib/stores/settings.svelte";
 import { snippets } from "../lib/stores/snippets.svelte";
-import TerminalTab from "./TerminalTab.svelte";
+import TerminalPane from "./TerminalPane.svelte";
 
 beforeEach(() => {
   made.terms.length = 0;
@@ -93,9 +100,10 @@ beforeEach(() => {
 });
 
 const setup = () => {
-  render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
-    active: true,
+  render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -185,9 +193,10 @@ test("retries after 1, 2, 5, 10, 30 s and stops after 5", async () => {
 test("shows the attempt and Cancel stops the retries", async () => {
   vi.useFakeTimers();
   vi.mocked(connect).mockClear();
-  const { rerender } = render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
-    active: true,
+  const { rerender } = render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -199,11 +208,11 @@ test("shows the attempt and Cancel stops the retries", async () => {
   expect(document.activeElement).toBe(cancel);
   // The reducer would have stored the reason on the tab.
   await rerender({
-    tab: {
-      ...initialTab("t1", "c1"),
+    pane: {
+      ...initialPane("t1", "c1"),
       phase: "closed",
       closed: { type: "Error", error: { code: "network.timeout", params: {} } },
-    } satisfies TabState,
+    } satisfies PaneState,
   });
   await fireEvent.click(cancel);
   await vi.advanceTimersByTimeAsync(60000);
@@ -259,9 +268,10 @@ test.each([
 test("unmounting cancels the pending retry", async () => {
   vi.useFakeTimers();
   vi.mocked(connect).mockClear();
-  const { unmount } = render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
-    active: true,
+  const { unmount } = render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -277,9 +287,10 @@ test("unmounting cancels the pending retry", async () => {
 test("turning auto reconnect off during the wait stops the chain", async () => {
   vi.useFakeTimers();
   vi.mocked(connect).mockClear();
-  const { rerender } = render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
-    active: true,
+  const { rerender } = render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -287,11 +298,11 @@ test("turning auto reconnect off during the wait stops the chain", async () => {
   ready();
   drop();
   await rerender({
-    tab: {
-      ...initialTab("t1", "c1"),
+    pane: {
+      ...initialPane("t1", "c1"),
       phase: "closed",
       closed: { type: "Error", error: { code: "network.timeout", params: {} } },
-    } satisfies TabState,
+    } satisfies PaneState,
   });
   settings.auto_reconnect = false;
   await vi.advanceTimersByTimeAsync(1000);
@@ -313,11 +324,12 @@ test("a second Closed during the wait does not add a second retry", async () => 
   vi.useRealTimers();
 });
 
-test("Ctrl+Shift+W asks the parent to close the tab", async () => {
+test("Ctrl+Shift+W asks the parent to close the pane", async () => {
   const onclose = vi.fn();
-  render(TerminalTab, {
-    tab: initialTab("t1", "c1"),
-    active: true,
+  render(TerminalPane, {
+    pane: initialPane("t1", "c1"),
+    visible: true,
+    focused: true,
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose,
@@ -331,10 +343,11 @@ test("Ctrl+Shift+W asks the parent to close the tab", async () => {
 });
 
 // Snippet palette.
-const readyTab = { ...initialTab("t1", "c1"), phase: "ready" } as TabState;
-const props = (tab: TabState) => ({
-  tab,
-  active: true,
+const readyPane = { ...initialPane("t1", "c1"), phase: "ready" } as PaneState;
+const props = (pane: PaneState) => ({
+  pane,
+  visible: true,
+  focused: true,
   onedit: vi.fn(),
   onsave: vi.fn(),
   onclose: vi.fn(),
@@ -348,10 +361,10 @@ const pick = async (text: string, run: boolean) => {
 };
 
 test("Ctrl+Shift+P opens the palette on a ready tab only", async () => {
-  const { rerender } = render(TerminalTab, props(initialTab("t1", "c1")));
+  const { rerender } = render(TerminalPane, props(initialPane("t1", "c1")));
   await shortcut();
   expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
-  await rerender(props(readyTab));
+  await rerender(props(readyPane));
   await shortcut();
   expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
 });
@@ -397,7 +410,7 @@ test("the palette closes when the session drops, and nothing is sent", async () 
   const { rerender } = view;
   snippets.list = [{ id: "s1", name: "S", text: "ls", run: true }];
   await shortcut();
-  await rerender({ tab: { ...readyTab, phase: "closed" } });
+  await rerender({ pane: { ...readyPane, phase: "closed" } });
   expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
   expect(term.paste).not.toHaveBeenCalled();
   expect(term.input).not.toHaveBeenCalled();
@@ -407,7 +420,7 @@ test("a pending multi-line confirm goes away when the session drops", async () =
   const term = setup2();
   await pick("a\nb", false);
   expect(screen.getByRole("alertdialog")).toBeTruthy();
-  await view.rerender({ tab: { ...readyTab, phase: "closed" } });
+  await view.rerender({ pane: { ...readyPane, phase: "closed" } });
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(term.paste).not.toHaveBeenCalled();
 });
@@ -485,14 +498,14 @@ test("a filled multi-line snippet still asks for confirmation", async () => {
 test("the variables dialog goes away when the session drops", async () => {
   const term = setup2();
   await pick("tail {{s}}", false);
-  await view.rerender({ tab: { ...readyTab, phase: "closed" } });
+  await view.rerender({ pane: { ...readyPane, phase: "closed" } });
   expect(screen.queryByRole("dialog", { name: "Values for S" })).toBeNull();
   expect(term.paste).not.toHaveBeenCalled();
 });
 
 test("tab shortcuts do not act behind the variables dialog", async () => {
-  const p = props(readyTab);
-  render(TerminalTab, p);
+  const p = props(readyPane);
+  render(TerminalPane, p);
   await pick("tail {{s}}", false);
   await fireEvent.keyDown(document.body, {
     key: "W",
@@ -507,7 +520,7 @@ test("switching to another tab closes the palette", async () => {
   setup2();
   await shortcut();
   expect(screen.getByRole("dialog", { name: "Snippets" })).toBeTruthy();
-  await view.rerender({ active: false });
+  await view.rerender({ visible: false });
   expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
 });
 
@@ -521,8 +534,8 @@ test("Esc in the palette gives the focus back to the terminal", async () => {
 });
 
 test("tab shortcuts do not act behind the new-snippet form", async () => {
-  const p = props(readyTab);
-  render(TerminalTab, p);
+  const p = props(readyPane);
+  render(TerminalPane, p);
   await shortcut();
   await fireEvent.click(screen.getByText("New snippet"));
   expect(screen.getByRole("dialog", { name: "New snippet" })).toBeTruthy();
@@ -536,6 +549,20 @@ test("tab shortcuts do not act behind the new-snippet form", async () => {
   expect(p.onclose).not.toHaveBeenCalled();
 });
 
+test("a visible pane without the focus ignores pane shortcuts", async () => {
+  const p = { ...props(readyPane), focused: false };
+  render(TerminalPane, p);
+  await fireEvent.keyDown(document.body, {
+    key: "W",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  await shortcut();
+  expect(p.onclose).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "Snippets" })).toBeNull();
+  expect(made.terms[0].focus).not.toHaveBeenCalled();
+});
+
 test("opening the forwards panel closes the palette", async () => {
   setup2();
   await shortcut();
@@ -547,7 +574,7 @@ test("opening the forwards panel closes the palette", async () => {
 
 let view: ReturnType<typeof render>;
 function setup2() {
-  view = render(TerminalTab, props(readyTab));
+  view = render(TerminalPane, props(readyPane));
   return made.terms[0];
 }
 
@@ -559,4 +586,84 @@ test("xterm leaves F11 to the window", () => {
   expect(term.keyHandler?.(new KeyboardEvent("keydown", { key: "a" }))).toBe(
     true,
   );
+});
+
+const splitKey = () =>
+  fireEvent.keyDown(document.body, { key: "D", ctrlKey: true, shiftKey: true });
+
+test("Ctrl+Shift+D asks to split the focused pane to the right", async () => {
+  const p = { ...props(readyPane), canSplit: true, onsplit: vi.fn() };
+  render(TerminalPane, p);
+  await splitKey();
+  await fireEvent.keyDown(document.body, {
+    key: "E",
+    ctrlKey: true,
+    shiftKey: true,
+  });
+  expect(p.onsplit.mock.calls).toEqual([
+    ["t1", "row"],
+    ["t1", "column"],
+  ]);
+});
+
+test.each([
+  ["not focused", { focused: false }],
+  ["hidden", { visible: false }],
+  ["full", { canSplit: false }],
+])("a pane that is %s does not split", async (_, extra) => {
+  const p = { ...props(readyPane), canSplit: true, onsplit: vi.fn(), ...extra };
+  render(TerminalPane, p);
+  await splitKey();
+  expect(p.onsplit).not.toHaveBeenCalled();
+});
+
+test("Alt+arrows in the focused pane move the focus", async () => {
+  vi.mocked(moveFocus).mockClear();
+  render(TerminalPane, { ...props(readyPane), multi: true });
+  await fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  await fireEvent.keyDown(document.body, { key: "ArrowUp", altKey: true });
+  expect(vi.mocked(moveFocus).mock.calls).toEqual([["right"], ["up"]]);
+});
+
+test("with a single pane Alt+arrows stay with the shell", async () => {
+  vi.mocked(moveFocus).mockClear();
+  render(TerminalPane, props(readyPane));
+  const term = made.terms[0];
+  const key = { key: "ArrowLeft", altKey: true } as KeyboardEvent;
+  expect(term.keyHandler?.(key)).toBe(true);
+  await fireEvent.keyDown(document.body, key);
+  expect(moveFocus).not.toHaveBeenCalled();
+});
+
+test("with several panes xterm never sees Alt+arrows", () => {
+  render(TerminalPane, { ...props(readyPane), multi: true });
+  const key = { key: "ArrowLeft", altKey: true } as KeyboardEvent;
+  expect(made.terms[0].keyHandler?.(key)).toBe(false);
+});
+
+test("Alt+arrows in a pane without the focus do nothing", async () => {
+  vi.mocked(moveFocus).mockClear();
+  render(TerminalPane, { ...props(readyPane), focused: false });
+  await fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
+  expect(moveFocus).not.toHaveBeenCalled();
+});
+
+test("focusing or pressing inside the pane focuses it", async () => {
+  vi.mocked(focusPane).mockClear();
+  const { container } = render(TerminalPane, {
+    ...props(readyPane),
+    focused: false,
+  });
+  const terminal = container.querySelector(".terminal")!;
+  await fireEvent.focusIn(terminal);
+  await fireEvent.pointerDown(terminal);
+  expect(vi.mocked(focusPane).mock.calls).toEqual([["t1"], ["t1"]]);
+});
+
+test("the terminal takes the keyboard focus when its pane gets the focus", async () => {
+  const p = { ...props(readyPane), focused: false };
+  const { rerender } = render(TerminalPane, p);
+  expect(made.terms[0].focus).not.toHaveBeenCalled();
+  await rerender({ ...p, focused: true });
+  expect(made.terms[0].focus).toHaveBeenCalled();
 });

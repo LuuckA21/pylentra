@@ -2,11 +2,13 @@
   import type { Connection } from "../lib/bindings/Connection";
   import type { Group } from "../lib/bindings/Group";
   import { t } from "../lib/i18n";
-  import type { TabState } from "../lib/sessionReducer";
+  import type { Dir } from "../lib/layout";
+  import type { PaneState } from "../lib/sessionReducer";
+  import Icon from "./ui/Icon.svelte";
   import Pill from "./ui/Pill.svelte";
 
   let {
-    tab,
+    pane,
     connection,
     groups,
     onforwards,
@@ -14,21 +16,26 @@
     onsnippets,
     snippetsOpen = false,
     onsave,
+    onsplit,
+    canSplit = false,
   }: {
-    tab: TabState;
+    pane: PaneState;
     connection: Connection | undefined;
     groups: Group[];
     onforwards: () => void;
     forwardsOpen?: boolean;
     onsnippets?: () => void;
     snippetsOpen?: boolean;
-    /** Only for quick (unsaved) tabs. */
+    /** Only for quick (unsaved) panes. */
     onsave?: () => void;
+    onsplit?: (dir: Dir) => void;
+    // False when the tab holds as many panes as it can.
+    canSplit?: boolean;
   } = $props();
 
   const group = $derived(groups.find((g) => g.id === connection?.group_id));
   const active = $derived(
-    Object.entries(tab.forwards).filter(([, f]) => f.state.type === "Active"),
+    Object.entries(pane.forwards).filter(([, f]) => f.state.type === "Active"),
   );
 
   // The duration only changes by the minute, so one tick a minute is enough.
@@ -39,8 +46,8 @@
   });
 
   const connected = $derived.by(() => {
-    if (tab.phase !== "ready" || tab.readyAt === undefined) return null;
-    const min = Math.max(0, Math.floor((now - tab.readyAt) / 60_000));
+    if (pane.phase !== "ready" || pane.readyAt === undefined) return null;
+    const min = Math.max(0, Math.floor((now - pane.readyAt) / 60_000));
     if (min < 1) return t("status.lessThanMinute");
     return min < 60
       ? t("status.minutes", { n: min })
@@ -62,7 +69,7 @@
   <button
     type="button"
     class="fwd"
-    disabled={tab.phase !== "ready"}
+    disabled={pane.phase !== "ready"}
     aria-expanded={forwardsOpen}
     onclick={onforwards}>{t("status.forward")}</button
   >
@@ -70,13 +77,34 @@
     <button
       type="button"
       class="fwd"
-      disabled={tab.phase !== "ready"}
+      disabled={pane.phase !== "ready"}
       aria-expanded={snippetsOpen}
       onclick={onsnippets}>{t("snippet.button")}</button
     >
   {/if}
   {#if onsave}
     <button type="button" class="fwd" onclick={onsave}>{t("quick.save")}</button
+    >
+  {/if}
+  {#if onsplit}
+    <!-- Icons: a pane can be a quarter of the tab, the bar has little room. -->
+    <button
+      type="button"
+      class="fwd split"
+      disabled={!canSplit}
+      aria-label={t("pane.splitRight")}
+      title={t("pane.splitRight")}
+      onclick={() => onsplit("row")}
+      ><Icon name="split-right" size={14} /></button
+    >
+    <button
+      type="button"
+      class="fwd split"
+      disabled={!canSplit}
+      aria-label={t("pane.splitDown")}
+      title={t("pane.splitDown")}
+      onclick={() => onsplit("column")}
+      ><Icon name="split-down" size={14} /></button
     >
   {/if}
   <span class="gap"></span>
@@ -100,12 +128,21 @@
     flex: 1;
   }
   .fwd {
+    flex: none;
+    white-space: nowrap;
     padding: 2px var(--space-3);
     border-radius: 999px;
     font-size: 12px;
     color: var(--fg-muted);
   }
+  .split {
+    display: grid;
+    padding: 3px var(--space-2);
+  }
   .time {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 </style>

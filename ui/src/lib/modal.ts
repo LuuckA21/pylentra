@@ -1,21 +1,33 @@
 const FOCUSABLE =
   'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-// Svelte action for dialogs: moves focus in ([data-autofocus] or the first
-// control), keeps Tab inside, closes on Escape and gives focus back on destroy.
-export function modal(node: HTMLElement, onescape: () => void) {
-  const previous = document.activeElement as HTMLElement | null;
-  const controls = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)];
+const controls = (node: HTMLElement) => [
+  ...node.querySelectorAll<HTMLElement>(FOCUSABLE),
+];
+
+// [data-autofocus], or the first control.
+export function focusFirst(node: HTMLElement): void {
   (
-    node.querySelector<HTMLElement>("[data-autofocus]") ?? controls()[0]
+    node.querySelector<HTMLElement>("[data-autofocus]") ?? controls(node)[0]
   )?.focus();
+}
+
+// Svelte action for dialogs: moves focus in, keeps Tab inside, closes on
+// Escape and gives focus back on destroy. Without `onescape` the dialog handles
+// Escape itself. Inside a pane without the focus ([data-unfocused]) it leaves
+// the focus alone: the pane focuses it ([data-modal]) when it gets the focus.
+export function modal(node: HTMLElement, onescape?: () => void) {
+  node.dataset.modal = "";
+  const waits = !!node.closest("[data-unfocused]");
+  const previous = waits ? null : (document.activeElement as HTMLElement);
+  if (!waits) focusFirst(node);
 
   const onkeydown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
+    if (e.key === "Escape" && onescape) {
       e.stopPropagation();
       onescape();
     } else if (e.key === "Tab") {
-      const all = controls();
+      const all = controls(node);
       const [first, last] = [all[0], all[all.length - 1]];
       if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
@@ -30,7 +42,10 @@ export function modal(node: HTMLElement, onescape: () => void) {
   return {
     destroy() {
       node.removeEventListener("keydown", onkeydown);
-      if (previous?.isConnected) previous.focus();
+      // Not when the focus has moved on meanwhile (to another pane, say).
+      const now = document.activeElement;
+      const free = !now || now === document.body || node.contains(now);
+      if (free && previous?.isConnected) previous.focus();
     },
   };
 }

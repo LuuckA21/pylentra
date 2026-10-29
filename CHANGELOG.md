@@ -4,6 +4,41 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-28
+
+Nothing saved changes format: going back to 0.4.x loses nothing.
+
+### Added
+
+- Split screen: a tab can be divided into up to 4 panes, side by side or one
+  above the other, and a pane can be split again. Use Ctrl+Shift+D (side by
+  side) and Ctrl+Shift+E (one above the other), or the two buttons in a pane's
+  status bar ("Split right" and "Split down"; they turn off at 4 panes). A
+  Quick connect picker chooses the new pane's server: a saved connection or
+  `user@host`; Esc cancels.
+- Each pane has its own session, status bar, forwards, snippets, prompts and
+  reconnection. A prompt in a pane without focus is shown in that pane and
+  does not take the keyboard; click it (or move the focus there) to answer.
+- Alt+Left, Right, Up and Down move the focus between panes, and a click
+  focuses one too. With more than one pane, the focused one has an accent
+  border.
+- Dividers between panes: drag them with the mouse (each pane keeps at least
+  160x120 px), or press Tab from a control above the panes (the Quick connect
+  field, say) to reach the dividers first and use the arrow keys (5% per
+  step); Enter or a double-click splits evenly. Dragging leaves the keyboard
+  in the terminal.
+- Closing: the tab's x asks once for all its live sessions.
+
+### Changed
+
+- Ctrl+Shift+W closes the focused pane instead of the whole tab; closing the
+  last pane closes the tab. The usual confirmation for a live session still
+  applies.
+- In a tab with more than one pane, Alt+Left, Right, Up and Down no longer
+  reach the shell (they change pane). With a single pane they still do, and
+  Alt+B and Alt+F word moves always do.
+- The split layout is not remembered when the app restarts.
+
 ## [0.4.1] - 2026-10-27
 
 ### Fixed

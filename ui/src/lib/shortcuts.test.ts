@@ -15,7 +15,7 @@ const key = (
 test("shortcuts", () => {
   expect(shortcutFor(key("C", { ctrl: true, shift: true }))).toBe("copy");
   expect(shortcutFor(key("V", { ctrl: true, shift: true }))).toBe("paste");
-  expect(shortcutFor(key("W", { ctrl: true, shift: true }))).toBe("closeTab");
+  expect(shortcutFor(key("W", { ctrl: true, shift: true }))).toBe("closePane");
   expect(shortcutFor(key("F", { ctrl: true, shift: true }))).toBe("search");
   expect(shortcutFor(key("K", { ctrl: true, shift: true }))).toBe(
     "quickConnect",
@@ -26,6 +26,22 @@ test("shortcuts", () => {
   expect(shortcutFor(key("c", { ctrl: true }))).toBeNull(); // SIGINT stays with the shell
   expect(shortcutFor(key("Tab", { ctrl: true }))).toBe("nextTab");
   expect(shortcutFor(key("Tab", { ctrl: true, shift: true }))).toBe("prevTab");
+});
+
+test("Ctrl+Shift+D and Ctrl+Shift+E split the pane", () => {
+  expect(shortcutFor(key("D", { ctrl: true, shift: true }))).toBe("splitRight");
+  expect(shortcutFor(key("E", { ctrl: true, shift: true }))).toBe("splitDown");
+});
+
+test("Alt+arrows move the focus; other Alt combos reach the shell", () => {
+  expect(shortcutFor(key("ArrowLeft", { alt: true }))).toBe("focusLeft");
+  expect(shortcutFor(key("ArrowRight", { alt: true }))).toBe("focusRight");
+  expect(shortcutFor(key("ArrowUp", { alt: true }))).toBe("focusUp");
+  expect(shortcutFor(key("ArrowDown", { alt: true }))).toBe("focusDown");
+  expect(shortcutFor(key("ArrowLeft", { alt: true, shift: true }))).toBeNull();
+  expect(shortcutFor(key("ArrowLeft", { alt: true, ctrl: true }))).toBeNull();
+  expect(shortcutFor(key("b", { alt: true }))).toBeNull();
+  expect(shortcutFor(key("ArrowLeft"))).toBeNull();
 });
 
 test("F11 toggles fullscreen only without modifiers", () => {

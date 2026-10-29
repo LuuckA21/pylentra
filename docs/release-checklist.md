@@ -180,6 +180,37 @@ cover it.
    dialog asks first. Closing the window with live sessions asks as well.
 2. Turn the setting off: neither asks.
 
+## Split screen
+
+1. Open a tab and split it into a 2x2 grid with Ctrl+Shift+D and Ctrl+Shift+E
+   (or the "Split right"/"Split down" buttons in the status bar), choosing a
+   different server in each Quick connect picker (Esc cancels a split): four
+   panes, each with its own session and status bar. With 4 panes, both split
+   buttons and both shortcuts do nothing.
+2. Run `htop` in one pane and drag a divider: it redraws to the new size, and
+   no pane gets smaller than 160x120 px.
+3. Click the Quick connect field at the top and press Tab: the first stops
+   are the dividers (a terminal swallows Tab, so they cannot be reached from
+   inside one). The arrow keys move the highlighted one in 5% steps, Enter and
+   double-click split evenly.
+   After dragging a divider with the mouse, typing still reaches the terminal
+   that had the keyboard.
+4. Alt+Left, Right, Up and Down move the focus between panes (accent border);
+   clicking a pane focuses it. In zsh, Alt+B and Alt+F still move by word, and
+   in a tab with a single pane Alt+Left and Alt+Right reach the shell again.
+5. Trigger a password prompt in a pane without focus (for example a
+   reconnection): it appears in that pane without taking the focus from the
+   pane you are typing in; clicking it (or Alt+arrow to that pane) lets you
+   answer.
+6. With the confirmation setting on (Settings, the one that asks before
+   closing live sessions), Ctrl+Shift+W on a pane with a live session asks
+   for confirmation, then closes that pane and the others fill the space.
+   Closing the last pane closes the tab.
+7. With the same setting on, click the tab's x with several live sessions:
+   one confirmation for all of them.
+8. On Linux, click a status-bar button (Split, Forward): the keyboard ends up
+   in the terminal, or in the dialog the button opens, never nowhere.
+
 ## Settings
 
 1. Walk through every category in Settings (appearance, terminal, connection,

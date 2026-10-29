@@ -3,7 +3,7 @@
   import type { ForwardRule } from "../lib/bindings/ForwardRule";
   import type { ForwardState } from "../lib/bindings/ForwardState";
   import { errorMessage, t, type MessageKey } from "../lib/i18n";
-  import type { TabState } from "../lib/sessionReducer";
+  import type { PaneState } from "../lib/sessionReducer";
   import { api } from "../lib/api";
   import { library } from "../lib/stores/library.svelte";
   import { isApiError, toastError } from "../lib/stores/toasts.svelte";
@@ -12,10 +12,10 @@
 
   // Anchored above the status bar by the parent; closes itself on a failed start.
   let {
-    tab,
+    pane,
     open = $bindable(false),
     onclose,
-  }: { tab: TabState; open?: boolean; onclose: () => void } = $props();
+  }: { pane: PaneState; open?: boolean; onclose: () => void } = $props();
 
   type Row = { rule: ForwardRule; id?: number; state: ForwardState };
   const STOPPED: ForwardState = { type: "Stopped" };
@@ -34,10 +34,10 @@
   // stopped and started again has several ids: the highest (latest) one counts.
   const rows = $derived.by(() => {
     const known: Record<string, Row> = {};
-    for (const [id, f] of Object.entries(tab.forwards))
+    for (const [id, f] of Object.entries(pane.forwards))
       known[key(f.rule)] = { rule: f.rule, id: Number(id), state: f.state };
     const saved =
-      library.connections.find((c) => c.id === tab.connectionId)?.forwards ??
+      library.connections.find((c) => c.id === pane.connectionId)?.forwards ??
       [];
     const savedKeys = saved.map(key);
     return [
@@ -62,7 +62,7 @@
         ? `[${h}]`
         : h;
 
-  const usable = $derived(!!tab.sessionId && tab.phase === "ready");
+  const usable = $derived(!!pane.sessionId && pane.phase === "ready");
 
   // Opened by the user: focus moves in, and back to the opener on close. Opened by
   // a failing forward: focus stays where the user is typing.
@@ -109,11 +109,11 @@
     !(isApiError(e) && e.code.startsWith("forward.")) && toastError(e);
 
   async function toggle(row: Row) {
-    if (!tab.sessionId) return;
+    if (!pane.sessionId) return;
     try {
       if (row.state.type === "Active" && row.id !== undefined)
-        await api.forwardStop(tab.sessionId, row.id);
-      else await api.forwardStart(tab.sessionId, row.rule);
+        await api.forwardStop(pane.sessionId, row.id);
+      else await api.forwardStart(pane.sessionId, row.rule);
     } catch (e) {
       failed(e);
     }
@@ -158,7 +158,7 @@
     errors = Object.fromEntries(
       Object.entries(found).map(([k, v]) => [k, t(v)]),
     );
-    if (Object.keys(found).length || !tab.sessionId) return;
+    if (Object.keys(found).length || !pane.sessionId) return;
 
     const common = {
       bind_port: d.bind_port!,
@@ -168,7 +168,7 @@
     };
     try {
       await api.forwardStart(
-        tab.sessionId,
+        pane.sessionId,
         d.type === "Dynamic"
           ? {
               type: "Dynamic",

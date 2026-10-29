@@ -6,8 +6,10 @@
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
+  import { focusFirst } from "../lib/modal";
+  import type { Dir, Side } from "../lib/layout";
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
-  import type { TabState } from "../lib/sessionReducer";
+  import type { PaneState } from "../lib/sessionReducer";
   import { appTerminalTheme, terminalTheme } from "../lib/terminalThemes";
   import {
     body,
@@ -21,6 +23,8 @@
     answer,
     connect,
     cycleTab,
+    focusPane,
+    moveFocus,
     resize,
     write,
   } from "../lib/stores/sessions.svelte";
@@ -39,20 +43,34 @@
   import ConfirmDialog from "./ui/ConfirmDialog.svelte";
 
   let {
-    tab,
-    active,
+    pane,
+    visible,
+    focused,
     onedit,
     onsave,
     onclose,
+    canSplit = false,
+    onsplit,
+    multi = false,
   }: {
-    tab: TabState;
-    active: boolean;
+    pane: PaneState;
+    // Its tab is shown, and it is the tab's focused pane.
+    visible: boolean;
+    focused: boolean;
+    // A saved connection only: a quick pane's error offers onsave instead.
     onedit: (connectionId: string) => void;
-    onsave: (tabId: string) => void;
+    onsave: (paneId: string) => void;
     // The parent decides whether closing needs confirmation.
-    onclose: (tabId: string) => void;
+    onclose: (paneId: string) => void;
+    // The tab has room for another pane; onsplit opens the picker for it.
+    canSplit?: boolean;
+    onsplit?: (paneId: string, dir: Dir) => void;
+    // The tab holds other panes: the focused one shows an accent border.
+    multi?: boolean;
   } = $props();
 
+  // The pane's own shortcuts and keyboard focus.
+  const active = $derived(visible && focused);
   let el: HTMLDivElement;
   let root: HTMLDivElement;
   let forwardsOpen = $state(false);
@@ -78,10 +96,10 @@
   function launch() {
     const tm = term;
     if (!tm) return;
-    // Per session: tab.readyAt is not read here because connect resets it.
+    // Per session: pane.readyAt is not read here because connect resets it.
     let wasReady = false;
     connect(
-      tab.tabId,
+      pane.paneId,
       tm.cols,
       tm.rows,
       (bytes) => tm.write(bytes),
@@ -128,7 +146,7 @@
     launch();
   }
 
-  const onanswer = (a: PromptAnswer) => answer(tab.tabId, a);
+  const onanswer = (a: PromptAnswer) => answer(pane.paneId, a);
 
   onMount(() => {
     const tm = new Terminal({
@@ -147,20 +165,20 @@
     fit = fa;
 
     // Our shortcuts never reach the shell; the window handler below runs them.
-    tm.attachCustomKeyEventHandler((e) => !shortcutFor(e));
+    tm.attachCustomKeyEventHandler((e) => !shortcut(e));
     tm.onData((d) => {
-      if (tab.phase === "ready") write(tab, d);
-      else if (tab.phase === "closed" && tab.closed?.type !== "Error") {
+      if (pane.phase === "ready") write(pane, d);
+      else if (pane.phase === "closed" && pane.closed?.type !== "Error") {
         if (d === "\r") start();
       }
     });
     tm.onBinary((d) =>
       write(
-        tab,
+        pane,
         Uint8Array.from(d, (c) => c.charCodeAt(0)),
       ),
     );
-    tm.onResize(({ cols, rows }) => resize(tab, cols, rows));
+    tm.onResize(({ cols, rows }) => resize(pane, cols, rows));
     tm.onSelectionChange(() => {
       const text = settings.copy_on_select ? tm.getSelection() : "";
       // A clipboard error here would only be noise.
@@ -208,23 +226,43 @@
     fit?.fit();
   });
 
-  // Focus the terminal when the tab is shown, unless an overlay holds the focus.
+  // An overlay that opened while the pane waited takes the focus, as if just
+  // opened; else the terminal.
+  function focusInside() {
+    const overlay = root.querySelector<HTMLElement>("[data-modal]");
+    if (overlay) focusFirst(overlay);
+    else term?.focus();
+  }
+
+  // When the pane gets the focus, unless something in it (reached with Tab,
+  // say) already holds it.
   $effect(() => {
-    if (active && !untrack(() => tab.prompt || tab.closed?.type === "Error"))
-      term?.focus();
+    if (active && !root.contains(document.activeElement)) focusInside();
+  });
+
+  // A closed overlay, or a click on plain text, drops the focus to the body.
+  const free = () =>
+    !document.activeElement || document.activeElement === document.body;
+
+  // When an overlay opens or closes, only if the focus is free: a window
+  // dialog or field keeps it.
+  $effect(() => {
+    void [pane.prompt, pane.closed, waiting];
+    if (untrack(() => active) && free()) focusInside();
   });
 
   // A session that dropped under an open palette must not receive anything:
-  // the Enter would also restart a closed tab.
+  // the Enter would also restart a closed pane.
   $effect(() => {
-    if (tab.phase !== "ready") {
+    if (pane.phase !== "ready") {
       snippetsOpen = false;
       confirming = undefined;
       asking = undefined;
     }
   });
 
-  // A palette left open on a hidden tab would catch the keys of the next visit.
+  // A palette left open on a hidden or unfocused pane would catch the keys of
+  // the next visit.
   $effect(() => {
     if (!active) snippetsOpen = false;
   });
@@ -236,7 +274,7 @@
 
   function toggleSnippets() {
     if (snippetsOpen) return closeSnippets();
-    if (tab.phase !== "ready" || confirming || asking || newSnippet) return;
+    if (pane.phase !== "ready" || confirming || asking || newSnippet) return;
     selection = term?.getSelection() ?? "";
     forwardsOpen = false;
     snippetsOpen = true;
@@ -249,7 +287,7 @@
 
   function paste(s: Snippet) {
     confirming = undefined;
-    if (tab.phase === "ready") {
+    if (pane.phase === "ready") {
       term?.paste(body(s.text));
       // Through onData, like typing.
       if (s.run) term?.input("\r");
@@ -292,36 +330,64 @@
         .readText()
         .then((text) => term?.paste(text))
         .catch(toastError);
-    } else if (a === "closeTab") onclose(tab.tabId);
+    } else if (a === "closePane") onclose(pane.paneId);
     else if (a === "nextTab") cycleTab(1);
     else if (a === "prevTab") cycleTab(-1);
     else if (a === "snippets") toggleSnippets();
+    else if ((a === "splitRight" || a === "splitDown") && canSplit)
+      onsplit?.(pane.paneId, a === "splitRight" ? "row" : "column");
+    else if (SIDES[a]) moveFocus(SIDES[a]);
   }
+
+  const SIDES: Partial<Record<Action, Side>> = {
+    focusLeft: "left",
+    focusRight: "right",
+    focusUp: "up",
+    focusDown: "down",
+  };
+
+  // With a single pane there is nowhere to move: Alt+arrows stay with the
+  // shell (word moves in readline).
+  const shortcut = (e: KeyboardEvent) => {
+    const a = shortcutFor(e);
+    return a && SIDES[a] && !multi ? null : a;
+  };
 
   function onwindowkey(e: KeyboardEvent) {
     // Our own modals sit inside root, so fromOtherModal lets them through.
     if (confirming || asking || newSnippet || fromOtherModal(e, root)) return;
-    const a = active ? shortcutFor(e) : null;
+    const a = active ? shortcut(e) : null;
     if (a) run(a, e);
   }
 </script>
 
 <svelte:window onkeydown={onwindowkey} />
 
-<div class="tab" class:active bind:this={root}>
+<!-- A press or a focus anywhere in the pane makes it the tab's focused one;
+     the keyboard gets there with Alt+arrows and Tab. -->
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+<div
+  class="pane"
+  class:focused={focused && multi}
+  data-unfocused={!active || undefined}
+  bind:this={root}
+  onfocusin={() => focusPane(pane.paneId)}
+  onpointerdown={() => focusPane(pane.paneId)}
+  onclick={() => active && free() && focusInside()}
+>
   <div class="inset"><div class="terminal" bind:this={el}></div></div>
   <div class="anchor">
-    {#if tab.phase === "ready"}
+    {#if pane.phase === "ready"}
       <ForwardPanel
-        {tab}
+        {pane}
         bind:open={forwardsOpen}
         onclose={() => (forwardsOpen = false)}
       />
       {#if snippetsOpen}
         <SnippetPalette
-          connectionId={tab.quick ? null : tab.connectionId}
+          connectionId={pane.quick ? null : pane.connectionId}
           connectionName={library.connections.find(
-            (c) => c.id === tab.connectionId,
+            (c) => c.id === pane.connectionId,
           )?.name}
           {selection}
           onpick={pick}
@@ -334,35 +400,37 @@
       {/if}
     {/if}
     <StatusBar
-      {tab}
-      connection={library.connections.find((c) => c.id === tab.connectionId)}
+      {pane}
+      connection={library.connections.find((c) => c.id === pane.connectionId)}
       groups={library.groups}
       onforwards={() => (forwardsOpen = !forwardsOpen)}
       {forwardsOpen}
       onsnippets={toggleSnippets}
       {snippetsOpen}
-      onsave={tab.quick ? () => onsave(tab.tabId) : undefined}
+      onsave={pane.quick ? () => onsave(pane.paneId) : undefined}
+      onsplit={onsplit && ((dir) => onsplit(pane.paneId, dir))}
+      {canSplit}
     />
   </div>
 
-  {#if tab.phase === "connecting" || tab.phase === "authenticating"}
+  {#if pane.phase === "connecting" || pane.phase === "authenticating"}
     <p class="status" role="status">
       {t(
-        tab.phase === "connecting"
+        pane.phase === "connecting"
           ? "session.connecting"
           : "session.authenticating",
       )}
     </p>
   {/if}
 
-  {#key tab.prompt}
-    {#if tab.prompt?.type === "HostKeyPrompt"}
-      <HostKeyDialog prompt={tab.prompt} {onanswer} />
-    {:else if tab.prompt?.type === "SecretPrompt"}
+  {#key pane.prompt}
+    {#if pane.prompt?.type === "HostKeyPrompt"}
+      <HostKeyDialog prompt={pane.prompt} {onanswer} />
+    {:else if pane.prompt?.type === "SecretPrompt"}
       <SecretPrompt
-        prompt={tab.prompt}
-        connectionId={tab.connectionId}
-        quick={tab.quick}
+        prompt={pane.prompt}
+        connectionId={pane.connectionId}
+        quick={pane.quick}
         {onanswer}
       />
     {/if}
@@ -405,7 +473,7 @@
     <SnippetForm
       preset={{
         text: newSnippet.text,
-        connectionId: tab.quick ? null : tab.connectionId,
+        connectionId: pane.quick ? null : pane.connectionId,
       }}
       onclose={() => {
         newSnippet = undefined;
@@ -420,28 +488,36 @@
       max={RECONNECT_DELAYS.length}
       oncancel={cancelRetry}
     />
-  {:else if tab.closed?.type === "Error"}
+  {:else if pane.closed?.type === "Error"}
     <ErrorOverlay
-      error={tab.closed.error}
-      mismatch={tab.mismatch}
+      error={pane.closed.error}
+      mismatch={pane.mismatch}
       onretry={start}
-      onedit={() => onedit(tab.connectionId)}
+      onedit={() =>
+        pane.quick ? onsave(pane.paneId) : onedit(pane.connectionId)}
     />
   {/if}
 </div>
 
 <style>
-  .tab {
+  .pane {
     position: absolute;
     inset: 0;
-    display: none;
+    display: flex;
     flex-direction: column;
     overflow: hidden;
     background: var(--surface-1);
     border-radius: var(--radius-lg);
   }
-  .tab.active {
-    display: flex;
+  /* Inside the pane, so the terminal keeps its size; an overlay, so the status
+     bar does not paint over it. */
+  .pane.focused::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--accent);
+    border-radius: inherit;
+    pointer-events: none;
   }
   /* The fit addon measures its parent, so the padding sits one level above. */
   .inset {

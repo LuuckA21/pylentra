@@ -9,6 +9,8 @@ secrets stored in the OS keychain and signed automatic updates.
 - Import your servers from `~/.ssh/config` with a preview.
 - Colors and icons for connections and groups; a welcome screen with recent
   connections.
+- Split tabs: up to 4 panes per tab, each with its own session
+  (Ctrl+Shift+D / Ctrl+Shift+E to split, Alt+arrows to move between panes).
 - Terminal themes (Dracula, Nord, Solarized), automatic reconnection and
   confirmation before closing live sessions.
 

@@ -16,7 +16,9 @@
     | "terminal-ui"
     | "update"
     | "snippet"
-    | "note";
+    | "note"
+    | "split-right"
+    | "split-down";
 
   // 24x24 stroke paths drawn for this app.
   const PATHS: Record<ConnIcon | UiIcon, string[]> = {
@@ -74,6 +76,8 @@
     "terminal-ui": ["M5 8l4 4-4 4", "M12 17h7"],
     note: ["M6 3h9l3 3v15H6z", "M9 10h6M9 14h6M9 18h4"],
     update: ["M12 4v12", "M7 11l5 5 5-5", "M5 20h14"],
+    "split-right": ["M4 5h16v14H4z", "M12 5v14"],
+    "split-down": ["M4 5h16v14H4z", "M4 12h16"],
   };
 </script>
 

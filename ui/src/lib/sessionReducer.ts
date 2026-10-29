@@ -4,10 +4,10 @@ import type { ForwardRule } from "./bindings/ForwardRule";
 import type { ForwardState } from "./bindings/ForwardState";
 import type { SessionEvent } from "./bindings/SessionEvent";
 
-export type TabState = {
-  tabId: string;
+export type PaneState = {
+  paneId: string;
   connectionId: string;
-  /** Set while the tab runs an unsaved connection (`connectionId` is its throwaway id). */
+  /** Set while the pane runs an unsaved connection (`connectionId` is its throwaway id). */
   quick?: Connection;
   sessionId?: string;
   phase: "connecting" | "authenticating" | "ready" | "closed";
@@ -19,12 +19,12 @@ export type TabState = {
   forwards: Record<number, { rule: ForwardRule; state: ForwardState }>;
 };
 
-export const initialTab = (
-  tabId: string,
+export const initialPane = (
+  paneId: string,
   connectionId: string,
   quick?: Connection,
-): TabState => ({
-  tabId,
+): PaneState => ({
+  paneId,
   connectionId,
   ...(quick && { quick }),
   phase: "connecting",
@@ -39,7 +39,7 @@ const PHASE = {
 
 // The core waits for each answer before going on, so any later Status or
 // Closed means the pending prompt is settled.
-export function reduce(s: TabState, e: SessionEvent): TabState {
+export function reduce(s: PaneState, e: SessionEvent): PaneState {
   switch (e.type) {
     case "Status":
       return {
