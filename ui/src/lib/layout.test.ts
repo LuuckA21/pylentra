@@ -7,6 +7,7 @@ import {
   rects,
   remove,
   setRatio,
+  sibling,
   split,
   type Node,
 } from "./layout";
@@ -45,6 +46,13 @@ test("remove collapses the parent into the sibling", () => {
   expect(remove(tree, "C")).toEqual({ ...tree, b: B });
   expect(remove(A, "A")).toBeNull();
   expect(remove(tree, "Z")).toEqual(tree);
+});
+
+test("sibling is the node that takes the pane's place", () => {
+  expect(sibling(tree, "A")).toEqual(tree.b);
+  expect(sibling(tree, "C")).toEqual(B);
+  expect(sibling(A, "A")).toBeUndefined();
+  expect(sibling(tree, "Z")).toBeUndefined();
 });
 
 test("functions do not mutate the input", () => {

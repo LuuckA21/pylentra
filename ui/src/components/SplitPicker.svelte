@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { t } from "../lib/i18n";
   import { modal } from "../lib/modal";
   import type { QuickTarget } from "../lib/quickTarget";
@@ -15,9 +14,6 @@
   } = $props();
 
   const uid = $props.id();
-  let quick: QuickConnect;
-
-  onMount(() => quick.focus());
 </script>
 
 <!-- A press outside the dialog cancels; the keyboard has Escape. -->
@@ -43,7 +39,7 @@
     }}
   >
     <h2 id="{uid}-title">{t("pane.splitTitle")}</h2>
-    <QuickConnect bind:this={quick} onopen={onpick} onquick={onpick} />
+    <QuickConnect onopen={onpick} onquick={onpick} />
   </div>
 </div>
 
@@ -63,6 +59,10 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow);
+  }
+  /* The field fills the dialog (360 px is its cap in the top bar). */
+  .dialog :global(.quick) {
+    max-width: none;
   }
   h2 {
     margin: 0 0 12px;

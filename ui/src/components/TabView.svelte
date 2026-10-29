@@ -36,10 +36,11 @@
   // Smallest pane while dragging: 160 px wide, 120 px tall.
   const minPx = (d: Divider) => (d.dir === "row" ? 160 : 120);
   const pct = (d: Divider) => Math.round(d.ratio * 100);
-  let dragging = $state<Divider | null>(null);
+  // The path of the divider being dragged.
+  let dragging = $state<string | null>(null);
 
   function drag(e: PointerEvent, d: Divider) {
-    if (dragging?.path.join() !== d.path.join()) return;
+    if (dragging !== d.path.join()) return;
     const view = (e.currentTarget as HTMLElement).parentElement!;
     const box = view.getBoundingClientRect();
     const row = d.dir === "row";
@@ -97,7 +98,7 @@
       style:height={row ? `${d.area.h}%` : undefined}
       onmousedown={(e) => e.preventDefault()}
       onpointerdown={(e) => {
-        dragging = d;
+        dragging = d.path.join();
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       }}
       onpointermove={(e) => drag(e, d)}

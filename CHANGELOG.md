@@ -34,8 +34,9 @@ Nothing saved changes format: going back to 0.4.x loses nothing.
 - Ctrl+Shift+W closes the focused pane instead of the whole tab; closing the
   last pane closes the tab. The usual confirmation for a live session still
   applies.
-- Alt+Left, Right, Up and Down no longer reach the shell (they now change
-  pane). Alt+B and Alt+F word moves still do.
+- In a tab with more than one pane, Alt+Left, Right, Up and Down no longer
+  reach the shell (they change pane). With a single pane they still do, and
+  Alt+B and Alt+F word moves always do.
 - The split layout is not remembered when the app restarts.
 
 ## [0.4.1] - 2026-10-27

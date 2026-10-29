@@ -165,7 +165,7 @@
     fit = fa;
 
     // Our shortcuts never reach the shell; the window handler below runs them.
-    tm.attachCustomKeyEventHandler((e) => !shortcutFor(e));
+    tm.attachCustomKeyEventHandler((e) => !shortcut(e));
     tm.onData((d) => {
       if (pane.phase === "ready") write(pane, d);
       else if (pane.phase === "closed" && pane.closed?.type !== "Error") {
@@ -346,10 +346,17 @@
     focusDown: "down",
   };
 
+  // With a single pane there is nowhere to move: Alt+arrows stay with the
+  // shell (word moves in readline).
+  const shortcut = (e: KeyboardEvent) => {
+    const a = shortcutFor(e);
+    return a && SIDES[a] && !multi ? null : a;
+  };
+
   function onwindowkey(e: KeyboardEvent) {
     // Our own modals sit inside root, so fromOtherModal lets them through.
     if (confirming || asking || newSnippet || fromOtherModal(e, root)) return;
-    const a = active ? shortcutFor(e) : null;
+    const a = active ? shortcut(e) : null;
     if (a) run(a, e);
   }
 </script>

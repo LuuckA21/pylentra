@@ -35,6 +35,14 @@ export function remove(root: Node, paneId: string): Node | null {
   return { ...root, a, b };
 }
 
+// The node that takes the pane's place when it is removed.
+export function sibling(root: Node, paneId: string): Node | undefined {
+  if ("pane" in root) return undefined;
+  if ("pane" in root.a && root.a.pane === paneId) return root.b;
+  if ("pane" in root.b && root.b.pane === paneId) return root.a;
+  return sibling(root.a, paneId) ?? sibling(root.b, paneId);
+}
+
 export function setRatio(root: Node, path: Path, ratio: number): Node {
   if ("pane" in root) return root;
   if (path.length === 0) return { ...root, ratio: clampRatio(ratio, 0, 0) };
@@ -80,6 +88,14 @@ export function rects(root: Node): {
   return { panes, dividers };
 }
 
+// Per side: the pane's edge and the coordinate a neighbor must have there.
+const EDGES: Record<Side, [(r: Rect) => number, (r: Rect) => number]> = {
+  right: [(r) => r.x + r.w, (r) => r.x],
+  left: [(r) => r.x, (r) => r.x + r.w],
+  down: [(r) => r.y + r.h, (r) => r.y],
+  up: [(r) => r.y, (r) => r.y + r.h],
+};
+
 export function neighbor(
   panes: Record<string, Rect>,
   paneId: string,
@@ -91,22 +107,9 @@ export function neighbor(
   let best: { id: string; q: Rect; overlap: number } | null = null;
   for (const [id, q] of Object.entries(panes)) {
     if (id === paneId) continue;
-    const edge =
-      side === "right"
-        ? p.x + p.w
-        : side === "left"
-          ? p.x
-          : side === "down"
-            ? p.y + p.h
-            : p.y;
-    const opposite =
-      side === "right"
-        ? q.x
-        : side === "left"
-          ? q.x + q.w
-          : side === "down"
-            ? q.y
-            : q.y + q.h;
+    const [edgeOf, oppositeOf] = EDGES[side];
+    const edge = edgeOf(p);
+    const opposite = oppositeOf(q);
     if (Math.abs(edge - opposite) > EPS) continue;
     const overlap = horizontal
       ? Math.min(p.y + p.h, q.y + q.h) - Math.max(p.y, q.y)
@@ -117,7 +120,7 @@ export function neighbor(
       overlap > best.overlap + EPS ||
       (Math.abs(overlap - best.overlap) <= EPS &&
         (q.y < best.q.y - EPS ||
-          (Math.abs(q.y - best.q.y) <= EPS && q.x < best.q.x)));
+          (Math.abs(q.y - best.q.y) <= EPS && q.x < best.q.x - EPS)));
     if (better) best = { id, q, overlap };
   }
   return best?.id ?? null;

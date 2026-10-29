@@ -619,10 +619,26 @@ test.each([
 
 test("Alt+arrows in the focused pane move the focus", async () => {
   vi.mocked(moveFocus).mockClear();
-  render(TerminalPane, props(readyPane));
+  render(TerminalPane, { ...props(readyPane), multi: true });
   await fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
   await fireEvent.keyDown(document.body, { key: "ArrowUp", altKey: true });
   expect(vi.mocked(moveFocus).mock.calls).toEqual([["right"], ["up"]]);
+});
+
+test("with a single pane Alt+arrows stay with the shell", async () => {
+  vi.mocked(moveFocus).mockClear();
+  render(TerminalPane, props(readyPane));
+  const term = made.terms[0];
+  const key = { key: "ArrowLeft", altKey: true } as KeyboardEvent;
+  expect(term.keyHandler?.(key)).toBe(true);
+  await fireEvent.keyDown(document.body, key);
+  expect(moveFocus).not.toHaveBeenCalled();
+});
+
+test("with several panes xterm never sees Alt+arrows", () => {
+  render(TerminalPane, { ...props(readyPane), multi: true });
+  const key = { key: "ArrowLeft", altKey: true } as KeyboardEvent;
+  expect(made.terms[0].keyHandler?.(key)).toBe(false);
 });
 
 test("Alt+arrows in a pane without the focus do nothing", async () => {

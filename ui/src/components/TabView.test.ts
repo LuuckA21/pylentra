@@ -317,7 +317,9 @@ test("a double click recenters the divider", async () => {
   expect(separator().getAttribute("aria-valuenow")).toBe("50");
 });
 
-test("dragging follows the pointer but keeps 160 px on each side", async () => {
+// A 1000×600 tab with pointer capture, which jsdom lacks (defined so spyOn
+// can wrap and restore it).
+const pointerBox = () => {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
     left: 0,
     top: 0,
@@ -329,13 +331,18 @@ test("dragging follows the pointer but keeps 160 px on each side", async () => {
     y: 0,
     toJSON: () => ({}),
   });
-  // jsdom has no pointer capture; define it so spyOn can wrap and restore it.
   Object.assign(HTMLElement.prototype, {
     setPointerCapture() {},
     releasePointerCapture() {},
   });
-  const capture = vi.spyOn(HTMLElement.prototype, "setPointerCapture");
-  const release = vi.spyOn(HTMLElement.prototype, "releasePointerCapture");
+  return {
+    capture: vi.spyOn(HTMLElement.prototype, "setPointerCapture"),
+    release: vi.spyOn(HTMLElement.prototype, "releasePointerCapture"),
+  };
+};
+
+test("dragging follows the pointer but keeps 160 px on each side", async () => {
+  const { capture, release } = pointerBox();
   show(true);
   splitPane(sessions.panes[0].paneId, "row", "c2");
   await tick();
@@ -351,6 +358,39 @@ test("dragging follows the pointer but keeps 160 px on each side", async () => {
   // Released: further movement is ignored.
   await fireEvent.pointerMove(sep, { clientX: 750, pointerId: 1 });
   expect(sep.getAttribute("aria-valuenow")).toBe("16");
+});
+
+test("a nested divider measures from its own area", async () => {
+  pointerBox();
+  show(true);
+  // A | (B / C): the inner divider spans the right half, top to bottom.
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  splitPane(sessions.panes[1].paneId, "column", "c3");
+  await tick();
+  const [, inner] = screen.getAllByRole("separator");
+  expect(inner.getAttribute("aria-orientation")).toBe("horizontal");
+  await fireEvent.pointerDown(inner, { clientY: 300, pointerId: 1 });
+  await fireEvent.pointerMove(inner, { clientY: 450, pointerId: 1 });
+  expect(inner.getAttribute("aria-valuenow")).toBe("75");
+  // 120 px of 600 is the floor for stacked panes.
+  await fireEvent.pointerMove(inner, { clientY: 30, pointerId: 1 });
+  expect(inner.getAttribute("aria-valuenow")).toBe("20");
+});
+
+test("a divider inside the right half starts from that half", async () => {
+  pointerBox();
+  show(true);
+  // A | (B | C): the inner divider covers x 500..1000.
+  splitPane(sessions.panes[0].paneId, "row", "c2");
+  splitPane(sessions.panes[1].paneId, "row", "c3");
+  await tick();
+  const [, inner] = screen.getAllByRole("separator");
+  await fireEvent.pointerDown(inner, { clientX: 750, pointerId: 1 });
+  await fireEvent.pointerMove(inner, { clientX: 800, pointerId: 1 });
+  expect(inner.getAttribute("aria-valuenow")).toBe("60");
+  // 160 px of the 500 px half stays for C.
+  await fireEvent.pointerMove(inner, { clientX: 990, pointerId: 1 });
+  expect(inner.getAttribute("aria-valuenow")).toBe("68");
 });
 
 test("a divider between stacked panes is horizontal and answers up and down", async () => {

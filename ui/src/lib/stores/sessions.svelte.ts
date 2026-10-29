@@ -11,6 +11,7 @@ import {
   rects,
   remove,
   setRatio,
+  sibling,
   split,
   type Dir,
   type Node,
@@ -200,22 +201,15 @@ export async function answer(paneId: string, a: PromptAnswer): Promise<void> {
 }
 
 // The node that takes a pane's place when it is removed.
-function siblingOf(n: Node, paneId: string): Node | undefined {
-  if ("pane" in n) return undefined;
-  if ("pane" in n.a && n.a.pane === paneId) return n.b;
-  if ("pane" in n.b && n.b.pane === paneId) return n.a;
-  return siblingOf(n.a, paneId) ?? siblingOf(n.b, paneId);
-}
-
 // Closes the pane's session if it is live; the focus goes to the sibling's
 // first pane, and the last pane takes its tab along.
 export function closePane(paneId: string): void {
   const t = tabIndexOf(paneId);
   if (t >= 0) {
     const tab = sessions.tabs[t];
-    const sibling = siblingOf(tab.root, paneId);
-    if (sibling) {
-      if (tab.focus === paneId) tab.focus = firstPane(sibling);
+    const rest = sibling(tab.root, paneId);
+    if (rest) {
+      if (tab.focus === paneId) tab.focus = firstPane(rest);
       tab.root = remove(tab.root, paneId)!;
     } else {
       sessions.tabs.splice(t, 1);

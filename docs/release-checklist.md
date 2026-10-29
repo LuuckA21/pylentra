@@ -196,7 +196,8 @@ cover it.
    After dragging a divider with the mouse, typing still reaches the terminal
    that had the keyboard.
 4. Alt+Left, Right, Up and Down move the focus between panes (accent border);
-   clicking a pane focuses it. In zsh, Alt+B and Alt+F still move by word.
+   clicking a pane focuses it. In zsh, Alt+B and Alt+F still move by word, and
+   in a tab with a single pane Alt+Left and Alt+Right reach the shell again.
 5. Trigger a password prompt in a pane without focus (for example a
    reconnection): it appears in that pane without taking the focus from the
    pane you are typing in; clicking it (or Alt+arrow to that pane) lets you
