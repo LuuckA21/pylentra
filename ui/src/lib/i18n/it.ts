@@ -250,6 +250,19 @@ export const it: Record<MessageKey, string> = {
   "library.newerVersion":
     "Il file è stato creato da una versione più recente di Pylentra.",
   "library.notExport": "Il file non è un export di Pylentra.",
+  "library.importTitle": "Importa libreria",
+  "library.duplicate": "già presente",
+  "library.missingKey": "chiave non trovata: {path}",
+  "library.via": "tramite {name}",
+  "library.viaExisting": "tramite {name} (già presente)",
+  "library.jumpDropped": "resterà senza jump host ({name} non importato)",
+  "library.summary":
+    "Gruppi nel file: {new} nuovi, {reused} già presenti. Snippet: {global} globali, {perConnection} legati alle connessioni.",
+  "library.importN": "Importa ({n})",
+  "library.imported":
+    "Importate {connections} connessioni, {groups} gruppi, {snippets} snippet",
+  "library.partial":
+    "Importate {connections} connessioni; gli snippet no: {reason}",
   "settings.openLogs": "Apri cartella log",
 
   "error.auth.agent_unavailable": "Agente SSH non disponibile: {reason}",

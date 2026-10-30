@@ -246,6 +246,19 @@ export const en = {
   "library.newerVersion":
     "The file was created by a newer version of Pylentra.",
   "library.notExport": "The file is not a Pylentra export.",
+  "library.importTitle": "Import library",
+  "library.duplicate": "already present",
+  "library.missingKey": "key not found: {path}",
+  "library.via": "via {name}",
+  "library.viaExisting": "via {name} (already present)",
+  "library.jumpDropped": "will have no jump host ({name} not imported)",
+  "library.summary":
+    "Groups in the file: {new} new, {reused} already present. Snippets: {global} global, {perConnection} tied to connections.",
+  "library.importN": "Import ({n})",
+  "library.imported":
+    "Imported {connections} connections, {groups} groups, {snippets} snippets",
+  "library.partial":
+    "Imported {connections} connections; snippets were not: {reason}",
   "settings.openLogs": "Open log folder",
 
   "error.auth.agent_unavailable": "SSH agent unavailable: {reason}",

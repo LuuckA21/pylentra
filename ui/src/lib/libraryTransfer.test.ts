@@ -6,7 +6,8 @@ vi.mock("./api", () => ({
 
 import { api } from "./api";
 import { setLang } from "./i18n";
-import { exportLibrary, pickImport } from "./libraryTransfer";
+import { exportLibrary, jumpText, pickImport } from "./libraryTransfer";
+import type { ImportRow } from "./bindings/ImportRow";
 import { toasts } from "./stores/toasts.svelte";
 
 beforeEach(() => {
@@ -87,4 +88,32 @@ test("pickImport shows other errors as they are", async () => {
   });
   expect(await pickImport()).toBeNull();
   expect(toasts[0].message).toBe("Invalid value for groups: dup");
+});
+
+const row = (jump: ImportRow["jump"]): ImportRow => ({
+  id: "r",
+  name: "app",
+  target: "u@app:22",
+  group: null,
+  duplicate: false,
+  missing_key: null,
+  jump,
+});
+
+test("jumpText words the jump host note from the selection", () => {
+  const in_file = { name: "bastion", in_file: "b", existing: true };
+  expect(jumpText(row(null), new Set())).toBeNull();
+  expect(jumpText(row(in_file), new Set(["b"]))).toBe("via bastion");
+  expect(jumpText(row(in_file), new Set())).toBe(
+    "via bastion (already present)",
+  );
+  expect(
+    jumpText(
+      row({ name: "bastion", in_file: "b", existing: false }),
+      new Set(),
+    ),
+  ).toBe("will have no jump host (bastion not imported)");
+  expect(
+    jumpText(row({ name: "old", in_file: null, existing: true }), new Set()),
+  ).toBe("via old (already present)");
 });

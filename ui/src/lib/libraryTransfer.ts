@@ -1,4 +1,5 @@
 import { api } from "./api";
+import type { ImportRow } from "./bindings/ImportRow";
 import type { ImportPick } from "./bindings/ImportPick";
 import { t } from "./i18n";
 import { isApiError, toast, toastError } from "./stores/toasts.svelte";
@@ -30,4 +31,15 @@ export async function pickImport(): Promise<ImportPick | null> {
     else toastError(e);
     return null;
   }
+}
+
+/** The jump host note of a row, worded from what is selected; null without one. */
+export function jumpText(row: ImportRow, selected: Set<string>): string | null {
+  const j = row.jump;
+  if (!j) return null;
+  if (j.in_file && selected.has(j.in_file))
+    return t("library.via", { name: j.name });
+  return t(j.existing ? "library.viaExisting" : "library.jumpDropped", {
+    name: j.name,
+  });
 }

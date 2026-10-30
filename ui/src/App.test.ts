@@ -1,5 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest";
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -14,6 +15,7 @@ vi.mock("./lib/api", () => ({
     startupWarnings: vi.fn().mockResolvedValue([]),
     settingsGet: vi.fn().mockResolvedValue({}),
     snippetsGet: vi.fn().mockResolvedValue([]),
+    libraryImportPreview: vi.fn(),
   },
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
@@ -356,4 +358,46 @@ test("a failed fullscreen toggle shows an error", async () => {
   render(App);
   await fireEvent.keyDown(document.body, { key: "F11" });
   await waitFor(() => expect(toasts.at(-1)).toMatchObject({ kind: "error" }));
+});
+
+const importLibraryItem = async () => {
+  render(App);
+  await fireEvent.click(screen.getByRole("button", { name: "More" }));
+  await fireEvent.click(
+    screen.getByRole("menuitem", { name: "Import library…" }),
+  );
+};
+
+test("Import library opens the preview of the picked file; cancelling opens nothing", async () => {
+  vi.mocked(api.libraryImportPreview).mockResolvedValueOnce({
+    path: "/x/e.toml",
+    preview: {
+      rows: [],
+      groups_new: 0,
+      groups_reused: 0,
+      snippets_global: 0,
+      snippets_per_connection: 0,
+    },
+  });
+  await importLibraryItem();
+  const dialog = await screen.findByRole("dialog", { name: "Import library" });
+  expect(dialog.textContent).toContain("/x/e.toml");
+  cleanup();
+
+  vi.mocked(api.libraryImportPreview).mockResolvedValueOnce(null);
+  await importLibraryItem();
+  await waitFor(() =>
+    expect(api.libraryImportPreview).toHaveBeenCalledTimes(2),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("Import library on a read-only library explains and does not ask for a file", async () => {
+  vi.mocked(api.libraryImportPreview).mockClear();
+  vi.mocked(api.startupWarnings).mockResolvedValueOnce([
+    { code: "config.read_only", params: { file: "connections.toml" } },
+  ]);
+  await importLibraryItem();
+  await waitFor(() => expect(toasts).toHaveLength(1));
+  expect(api.libraryImportPreview).not.toHaveBeenCalled();
 });
