@@ -17,6 +17,7 @@ vi.mock("../lib/api", () => ({
     snippetDelete: vi.fn(),
   },
 }));
+vi.mock("../lib/libraryTransfer", () => ({ exportLibrary: vi.fn() }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn() }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn() }));
@@ -26,6 +27,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { check } from "@tauri-apps/plugin-updater";
 import { api } from "../lib/api";
 import { setLang, t } from "../lib/i18n";
+import { exportLibrary } from "../lib/libraryTransfer";
 import type { ApiError } from "../lib/bindings/ApiError";
 import type { Snippet } from "../lib/bindings/Snippet";
 import { library } from "../lib/stores/library.svelte";
@@ -43,6 +45,7 @@ beforeEach(() => {
   localStorage.clear();
   toasts.splice(0);
   updates.available = null;
+  library.warnings = [];
   updates.checking = false;
   updates.installing = false;
   Object.assign(settings, {
@@ -59,7 +62,8 @@ beforeEach(() => {
   setLang("en");
 });
 
-const setup = () => render(Settings, { onclose: vi.fn() });
+const setup = (onimportlibrary = vi.fn()) =>
+  render(Settings, { onclose: vi.fn(), onimportlibrary });
 const goTo = (name: string) =>
   fireEvent.click(screen.getByRole("button", { name }));
 const saved = () => vi.mocked(api.settingsSave).mock.calls.at(-1)?.[0];
@@ -433,3 +437,30 @@ test.each(["config.read_only", "config.unreadable"])(
       ).toBe(true);
   },
 );
+
+test("library section runs the export and import flows", async () => {
+  const onimportlibrary = vi.fn();
+  setup(onimportlibrary);
+  await goTo("Library");
+  await fireEvent.click(screen.getByRole("button", { name: "Export…" }));
+  expect(exportLibrary).toHaveBeenCalledOnce();
+  await fireEvent.click(screen.getByRole("button", { name: "Import…" }));
+  expect(onimportlibrary).toHaveBeenCalledOnce();
+});
+
+test("read-only library disables Import… with the reason, not Export…", async () => {
+  library.warnings = [
+    { code: "config.read_only", params: { file: "connections.toml" } },
+  ];
+  setup();
+  await goTo("Library");
+  expect(
+    (screen.getByRole("button", { name: "Import…" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole("button", { name: "Export…" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
+  expect(screen.getByText(t("error.config.read_only"))).toBeTruthy();
+});

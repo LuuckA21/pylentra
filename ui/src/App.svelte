@@ -18,6 +18,7 @@
   import { fromOtherModal, shortcutFor } from "./lib/shortcuts";
   import type { Connection } from "./lib/bindings/Connection";
   import { t } from "./lib/i18n";
+  import { exportLibrary, pickImport } from "./lib/libraryTransfer";
   import { count, rects, type Dir } from "./lib/layout";
   import type { PaneState } from "./lib/sessionReducer";
   import { library, refresh } from "./lib/stores/library.svelte";
@@ -51,6 +52,8 @@
   } | null>(null);
   let settingsOpen = $state(false);
   let importOpen = $state(false);
+  // Task 6 shows the preview dialog for the picked file; until then it is dropped.
+  const importLibrary = async () => void (await pickImport());
   // The pane the picker will split; the picker is gone once that pane is.
   let splitting = $state<{ paneId: string; dir: Dir } | null>(null);
 
@@ -178,6 +181,8 @@
       onedit={(connection) => (editing = { connection })}
       onsettings={() => (settingsOpen = true)}
       onimport={() => (importOpen = true)}
+      onexportlibrary={exportLibrary}
+      onimportlibrary={importLibrary}
     />
     <main>
       {#if sessions.tabs.length}
@@ -267,7 +272,10 @@
   <ImportDialog onclose={() => (importOpen = false)} />
 {/if}
 {#if settingsOpen}
-  <Settings onclose={() => (settingsOpen = false)} />
+  <Settings
+    onclose={() => (settingsOpen = false)}
+    onimportlibrary={importLibrary}
+  />
 {/if}
 {#if confirming}
   <ConfirmDialog

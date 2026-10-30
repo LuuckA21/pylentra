@@ -11,19 +11,24 @@
   import { isApiError, toastError } from "../lib/stores/toasts.svelte";
   import AppearanceSection from "./settings/AppearanceSection.svelte";
   import ConnectionsSection from "./settings/ConnectionsSection.svelte";
+  import LibrarySection from "./settings/LibrarySection.svelte";
   import SnippetsSection from "./settings/SnippetsSection.svelte";
   import SecuritySection from "./settings/SecuritySection.svelte";
   import TerminalSection from "./settings/TerminalSection.svelte";
   import UpdatesSection from "./settings/UpdatesSection.svelte";
   import Icon, { type UiIcon } from "./ui/Icon.svelte";
 
-  let { onclose }: { onclose: () => void } = $props();
+  let {
+    onclose,
+    onimportlibrary,
+  }: { onclose: () => void; onimportlibrary: () => void } = $props();
 
   const SECTIONS = [
     { id: "appearance", icon: "palette" },
     { id: "terminal", icon: "terminal-ui" },
     { id: "connections", icon: "bolt" },
     { id: "snippets", icon: "snippet" },
+    { id: "library", icon: "forward" },
     { id: "security", icon: "shield" },
     { id: "updates", icon: "update" },
   ] as const satisfies readonly { id: string; icon: UiIcon }[];
@@ -136,6 +141,8 @@
           <ConnectionsSection {save} {errors} />
         {:else if section === "snippets"}
           <SnippetsSection />
+        {:else if section === "library"}
+          <LibrarySection {onimportlibrary} />
         {:else if section === "security"}
           <SecuritySection {save} {errors} />
         {:else}

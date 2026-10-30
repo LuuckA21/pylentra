@@ -25,6 +25,8 @@ export const it: Record<MessageKey, string> = {
   "sidebar.import": "Importa da ~/.ssh/config",
   "sidebar.collapse": "Riduci la barra laterale",
   "sidebar.expand": "Espandi la barra laterale",
+  "sidebar.exportLibrary": "Esporta libreria…",
+  "sidebar.importLibrary": "Importa libreria…",
   "sidebar.newGroup": "Nuovo gruppo",
   "menu.rename": "Rinomina",
   "group.name": "Nome del gruppo",
@@ -195,6 +197,7 @@ export const it: Record<MessageKey, string> = {
   "settings.section.connections": "Connessioni",
   "settings.section.snippets": "Snippet",
   "settings.section.security": "Sicurezza",
+  "settings.section.library": "Libreria",
   "settings.section.updates": "Aggiornamenti",
   "settings.version": "Pylentra {version}",
   "settings.terminalTheme": "Tema colori",
@@ -237,6 +240,16 @@ export const it: Record<MessageKey, string> = {
   "settings.language.system": "Sistema",
   "settings.language.en": "English",
   "settings.language.it": "Italiano",
+  "library.export": "Esporta…",
+  "library.import": "Importa…",
+  "library.hint":
+    "Un file con connessioni, gruppi, note e snippet. Nessuna password viene esportata.",
+  "library.exported": "Libreria esportata in {path}",
+  "library.exportedNoSnippets":
+    "Gli snippet non sono disponibili e non sono stati esportati.",
+  "library.newerVersion":
+    "Il file è stato creato da una versione più recente di Pylentra.",
+  "library.notExport": "Il file non è un export di Pylentra.",
   "settings.openLogs": "Apri cartella log",
 
   "error.auth.agent_unavailable": "Agente SSH non disponibile: {reason}",

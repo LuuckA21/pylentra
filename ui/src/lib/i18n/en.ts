@@ -23,6 +23,8 @@ export const en = {
   "sidebar.import": "Import from ~/.ssh/config",
   "sidebar.collapse": "Collapse sidebar",
   "sidebar.expand": "Expand sidebar",
+  "sidebar.exportLibrary": "Export library…",
+  "sidebar.importLibrary": "Import library…",
   "sidebar.newGroup": "New group",
   "menu.rename": "Rename",
   "group.name": "Group name",
@@ -192,6 +194,7 @@ export const en = {
   "settings.section.connections": "Connections",
   "settings.section.snippets": "Snippets",
   "settings.section.security": "Security",
+  "settings.section.library": "Library",
   "settings.section.updates": "Updates",
   "settings.version": "Pylentra {version}",
   "settings.terminalTheme": "Color theme",
@@ -233,6 +236,16 @@ export const en = {
   "settings.language.system": "System",
   "settings.language.en": "English",
   "settings.language.it": "Italiano",
+  "library.export": "Export…",
+  "library.import": "Import…",
+  "library.hint":
+    "One file with connections, groups, notes and snippets. No password is exported.",
+  "library.exported": "Library exported to {path}",
+  "library.exportedNoSnippets":
+    "Snippets are unavailable and were not exported.",
+  "library.newerVersion":
+    "The file was created by a newer version of Pylentra.",
+  "library.notExport": "The file is not a Pylentra export.",
   "settings.openLogs": "Open log folder",
 
   "error.auth.agent_unavailable": "SSH agent unavailable: {reason}",

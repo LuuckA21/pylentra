@@ -30,6 +30,8 @@
     onedit,
     onsettings,
     onimport,
+    onexportlibrary,
+    onimportlibrary,
   }: {
     openConnectionIds: Set<string>;
     onopen: (connectionId: string) => void;
@@ -37,6 +39,8 @@
     onedit: (connection?: Connection) => void;
     onsettings: () => void;
     onimport: () => void;
+    onexportlibrary: () => void;
+    onimportlibrary: () => void;
   } = $props();
 
   type Menu = {
@@ -580,7 +584,7 @@
           onclick={(e) => {
             const el = e.currentTarget;
             const r = el.getBoundingClientRect();
-            openMenu({}, el, r.left, Math.max(8, r.top - 88));
+            openMenu({}, el, r.left, Math.max(8, r.top - 176));
           }}
         >
           <Icon name="more" />
@@ -667,6 +671,26 @@
         }}
       >
         {t("sidebar.import")}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => {
+          closeMenu(false);
+          onexportlibrary();
+        }}
+      >
+        {t("sidebar.exportLibrary")}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onclick={() => {
+          closeMenu(false);
+          onimportlibrary();
+        }}
+      >
+        {t("sidebar.importLibrary")}
       </button>
     {/if}
   </div>
