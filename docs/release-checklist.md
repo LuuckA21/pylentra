@@ -127,6 +127,43 @@ cover it.
    Settings → Snippets says they are read-only, the file is not modified, and
    deleting a connection still works. Restore the permissions afterwards.
 
+## Export and import
+
+1. Settings → Library → "Export…" (and the sidebar "⋯" menu, "Export library…")
+   opens the system "Save as" dialog proposing `pylentra-export-YYYY-MM-DD.toml`.
+   Save it: a notice shows where the library was exported.
+2. Open the file in a text editor and search for the password and passphrase
+   of a saved connection: they are not there. A key connection has only its
+   path. Groups, notes, colors, icons, forwards and snippets are there.
+3. Copy the file to the other system (Linux to Windows, then Windows to
+   Linux) and import it there ("Import…"): the system "Open" dialog appears,
+   then the preview lists every connection with its group.
+4. In the preview, connections already in the library are unticked with an
+   "already present" pill; ticking or unticking changes the "Import (N)"
+   count, and at 0 it is disabled.
+5. A connection whose key file does not exist on this computer shows "key not
+   found" with the path. A connection with a jump host says "via" the
+   imported one, "via" the existing one with the same name, or that it will
+   have no jump host (jump host not selected and not present).
+6. Import: the connections arrive with their groups (a group with the same
+   name is reused, not duplicated), jump hosts and per-connection snippets
+   linked; global snippets arrive too. The notice reports connections,
+   groups and snippets.
+7. Import the same file again, with everything ticked: nothing clashes (the
+   copies get new ids) and nothing is duplicated by default, since the
+   connections are already present and unticked.
+8. Edit a copy of the file so it says `version = 2`: importing it is refused
+   with a message about a newer version, and the preview does not open. A
+   file that is not a Pylentra export (a random `.toml`) is refused too.
+9. Cancel the "Save as" dialog, and cancel the "Open" dialog: nothing happens
+   (no notice, no preview, no file written).
+10. Make `snippets.toml` unreadable (Linux: `chmod 000 snippets.toml`) and
+    start the app: "Export…" still works and warns that snippets were not
+    exported. Restore the permissions afterwards.
+11. Make `connections.toml` unreadable the same way and start the app:
+    "Import…" is off, with the reason, in Settings and in the "⋯" menu;
+    "Export…" still works. Restore the permissions afterwards.
+
 ## SOCKS forward
 
 1. On a connection add a SOCKS forward on the default `127.0.0.1:1080` ("+

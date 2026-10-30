@@ -7,6 +7,8 @@ secrets stored in the OS keychain and signed automatic updates.
 
 - Quick connect: type `user@host` and go, then save it if you like.
 - Import your servers from `~/.ssh/config` with a preview.
+- Export the whole library to one TOML file (no passwords) and import it on
+  another computer, with a preview.
 - Colors and icons for connections and groups; a welcome screen with recent
   connections.
 - Split tabs: up to 4 panes per tab, each with its own session
@@ -103,7 +105,7 @@ One-time setup of the updater signing key:
 3. Store the key file content as `TAURI_SIGNING_PRIVATE_KEY` and its password
    as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Best as secrets of an environment
    named `release` (Settings → Environments → New environment `release` →
-   Deployment branches: *Selected branches*, add `main` → add the two
+   Deployment branches: _Selected branches_, add `main` → add the two
    secrets), so workflows on other branches cannot read them; then delete
    any repository-level copies. Plain repository secrets also work.
 
