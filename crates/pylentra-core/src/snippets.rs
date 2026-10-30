@@ -75,6 +75,8 @@ pub struct SnippetStore {
     /// Unknown top-level keys of the file, written back on every save.
     extra: toml::Table,
     read_only: bool,
+    /// The file could not be read: the list is empty, not the file's.
+    unavailable: bool,
 }
 
 impl SnippetStore {
@@ -84,6 +86,7 @@ impl SnippetStore {
             snippets: vec![],
             extra: toml::Table::new(),
             read_only: false,
+            unavailable: false,
         };
         let bytes = match fs::read(&store.path) {
             Ok(b) => b,
@@ -126,7 +129,12 @@ impl SnippetStore {
             snippets: vec![],
             extra: toml::Table::new(),
             read_only: true,
+            unavailable: true,
         }
+    }
+
+    pub fn is_unavailable(&self) -> bool {
+        self.unavailable
     }
 
     pub fn list(&self) -> &[Snippet] {

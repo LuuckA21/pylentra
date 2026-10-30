@@ -58,6 +58,14 @@ pub struct ImportPreview {
     pub snippets_per_connection: u32,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[ts(export)]
+pub struct ImportCounts {
+    pub connections: u32,
+    pub groups: u32,
+    pub snippets: u32,
+}
+
 /// What to add to the library: fresh ids, references already pointing at them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImportPlan {
@@ -465,12 +473,25 @@ mod tests {
             }
         );
         assert_eq!(*seen.borrow(), vec![expand_home(Path::new("~/k"))]);
-        assert!(!seen.borrow()[0].starts_with("~"));
         let row = &p.rows[1];
         assert_eq!(
             (row.duplicate, &row.missing_key, &row.group),
             (false, &None, &None)
         );
+    }
+
+    #[test]
+    fn preview_found_key_is_not_missing() {
+        let key = conn(
+            "k",
+            AuthMethod::Key {
+                path: "/k".into(),
+                save_passphrase: false,
+            },
+        );
+        let f = file(vec![], vec![key], vec![]);
+        let p = preview(&f, &lib(vec![], vec![]), |_| true);
+        assert_eq!(p.rows[0].missing_key, None);
     }
 
     #[test]

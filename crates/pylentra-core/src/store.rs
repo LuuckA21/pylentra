@@ -47,7 +47,7 @@ pub enum LoadOutcome {
 
 /// Writes `<path>.tmp`, syncs it and renames it over `path`, so readers never
 /// see a half-written file.
-pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
+pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }

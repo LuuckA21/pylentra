@@ -44,6 +44,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let openssh = dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"));
@@ -80,6 +81,9 @@ fn main() {
             commands::snippet_delete,
             commands::ssh_config_scan,
             commands::connections_import,
+            commands::library_export,
+            commands::library_import_preview,
+            commands::library_import,
             commands::settings_get,
             commands::settings_save,
             commands::session_open,
