@@ -27,8 +27,9 @@ Nothing saved changes format: going back to 0.5.x loses nothing.
   shows the groups and snippets that will arrive. Everything is imported with
   new ids, so importing the same file twice does not clash.
 - A file made by a newer version of Pylentra, or that is not a Pylentra
-  export, is refused with a clear message. With a read-only library, import
-  is turned off; export still works.
+  export, is refused with a clear message. With a read-only library, the
+  Import button in Settings is disabled with the reason and the menu item
+  shows the same message; export still works.
 
 ## [0.5.0] - 2026-10-28
 

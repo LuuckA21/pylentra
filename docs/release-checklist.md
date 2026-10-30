@@ -149,9 +149,10 @@ cover it.
    name is reused, not duplicated), jump hosts and per-connection snippets
    linked; global snippets arrive too. The notice reports connections,
    groups and snippets.
-7. Import the same file again, with everything ticked: nothing clashes (the
-   copies get new ids) and nothing is duplicated by default, since the
-   connections are already present and unticked.
+7. Import the same file again: with the default selection every connection
+   is already present and unticked, so the preview offers nothing new and
+   "Import (0)" is disabled (unless some were deleted in between). Ticking
+   them anyway imports copies with new ids, with no clash.
 8. Edit a copy of the file so it says `version = 2`: importing it is refused
    with a message about a newer version, and the preview does not open. A
    file that is not a Pylentra export (a random `.toml`) is refused too.
@@ -160,9 +161,11 @@ cover it.
 10. Make `snippets.toml` unreadable (Linux: `chmod 000 snippets.toml`) and
     start the app: "Export…" still works and warns that snippets were not
     exported. Restore the permissions afterwards.
-11. Make `connections.toml` unreadable the same way and start the app:
-    "Import…" is off, with the reason, in Settings and in the "⋯" menu;
-    "Export…" still works. Restore the permissions afterwards.
+11. Back up `connections.toml`, set `version = 99` in it and start the app
+    (the library is then read-only). In Settings → Library "Import…" is
+    disabled with the read-only reason and "Export…" works; in the sidebar
+    "⋯" menu "Import library…" shows the same read-only message. Restore the
+    backup afterwards.
 
 ## SOCKS forward
 
