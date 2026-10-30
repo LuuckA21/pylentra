@@ -108,7 +108,7 @@ test("warns about a missing key, notes the summary", async () => {
   expect(screen.getByText("key not found: /home/u/.ssh/id_app")).toBeTruthy();
   expect(
     screen.getByText(
-      "Groups in the file: 2 new, 1 already present. Snippets: 3 global, 4 tied to connections.",
+      "Groups in the file: 2 new, 1 already present. Snippets: 3 new global, 4 tied to connections.",
     ),
   ).toBeTruthy();
 });

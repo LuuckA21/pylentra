@@ -19,7 +19,7 @@ use pylentra_core::ssh_config::{ScanResult, parse};
 use pylentra_core::store::{Library, atomic_write};
 use tauri::http::HeaderMap;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use uuid::Uuid;
 
@@ -291,6 +291,22 @@ fn export_file_name(exported_at: &str) -> String {
     }
 }
 
+/// GTK saves a name typed without `.toml` as is, which the Open filter would hide.
+fn with_toml(path: PathBuf) -> PathBuf {
+    if path.extension().is_none() {
+        path.with_extension("toml")
+    } else {
+        path
+    }
+}
+
+/// A network path (`\\host\share`, `//host/share`) is not checked: on Windows
+/// that alone contacts the host (SMB, NTLM) as soon as the preview opens.
+fn key_found_or_unchecked(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with(r"\\") || s.starts_with("//") || path.exists()
+}
+
 fn picked_path(picked: FilePath) -> Result<PathBuf, CoreError> {
     picked
         .into_path()
@@ -301,20 +317,21 @@ fn picked_path(picked: FilePath) -> Result<PathBuf, CoreError> {
 // The dialogs open here so no path ever comes from the webview.
 #[tauri::command(async)]
 pub fn library_export(
-    app: AppHandle,
+    window: WebviewWindow,
     state: State<'_, AppState>,
     exported_at: String,
 ) -> Result<Option<ExportDone>, ApiError> {
-    let Some(picked) = app
+    let Some(picked) = window
         .dialog()
         .file()
+        .set_parent(&window)
         .add_filter("TOML", &["toml"])
         .set_file_name(export_file_name(&exported_at))
         .blocking_save_file()
     else {
         return Ok(None);
     };
-    let path = picked_path(picked)?;
+    let path = with_toml(picked_path(picked)?);
     let snippets = do_library_export(&state, &path, &exported_at)?;
     Ok(Some(ExportDone {
         path: path.display().to_string(),
@@ -354,16 +371,26 @@ fn read_export(path: &Path) -> Result<ExportFile, CoreError> {
     export::parse(&text)
 }
 
+/// The file without the global snippets already saved, for preview and import alike.
+fn read_import(state: &AppState, path: &Path) -> Result<ExportFile, CoreError> {
+    let mut file = read_export(path)?;
+    export::drop_saved_globals(&mut file.snippets, state.snippets().list());
+    Ok(file)
+}
+
 // Async: the dialog blocks, and must not run on the main thread.
 #[tauri::command(async)]
 pub fn library_import_preview(
-    app: AppHandle,
+    window: WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<Option<ImportPick>, ApiError> {
-    let Some(picked) = app
+    let Some(picked) = window
         .dialog()
         .file()
+        .set_parent(&window)
         .add_filter("TOML", &["toml"])
+        // shortcut: GTK turns "*" into "*.*", hiding names without a dot; new exports always get `.toml`.
+        .add_filter("All files", &["*"])
         .blocking_pick_file()
     else {
         return Ok(None);
@@ -383,10 +410,10 @@ pub fn do_library_import_pick(state: &AppState, path: PathBuf) -> Result<ImportP
 }
 
 pub fn do_library_import_preview(state: &AppState, path: &Path) -> Result<ImportPreview, ApiError> {
-    let file = read_export(path)?;
-    // A copy: the key checks may be slow (network paths) and must not hold the store.
+    let file = read_import(state, path)?;
+    // A copy: the key checks may be slow and must not hold the store.
     let library = state.store().library().clone();
-    Ok(export::preview(&file, &library, Path::exists))
+    Ok(export::preview(&file, &library, key_found_or_unchecked))
 }
 
 // Async so the file read runs off the main thread.
@@ -427,7 +454,7 @@ pub fn do_library_import(
     path: &Path,
     selected: &[Uuid],
 ) -> Result<ImportCounts, ApiError> {
-    let file = read_export(path)?;
+    let file = read_import(state, path)?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     // Held throughout, so the snippets' connections cannot vanish first.
     let mut store = state.store();
@@ -1448,9 +1475,64 @@ mod tests {
             export_file_name("2026-10-30T12:00:00Z"),
             "pylentra-export-2026-10-30.toml"
         );
+        // Local time from the UI: just after midnight is already the new day.
+        assert_eq!(
+            export_file_name("2026-10-30T00:30:00+01:00"),
+            "pylentra-export-2026-10-30.toml"
+        );
         for odd in ["", "2026", "../../etc/x.toml"] {
             assert_eq!(export_file_name(odd), "pylentra-export.toml");
         }
+    }
+
+    #[test]
+    fn export_path_gets_toml_when_it_has_no_extension() {
+        let cases = [
+            ("/d/backup", "/d/backup.toml"),
+            ("/d/backup.toml", "/d/backup.toml"),
+            ("/d/backup.txt", "/d/backup.txt"),
+        ];
+        for (picked, saved) in cases {
+            assert_eq!(with_toml(PathBuf::from(picked)), PathBuf::from(saved));
+        }
+    }
+
+    #[test]
+    fn key_check_skips_network_paths() {
+        let d = TempDir::new().unwrap();
+        let key = d.path().join("id");
+        std::fs::write(&key, "k").unwrap();
+        assert!(key_found_or_unchecked(&key));
+        assert!(!key_found_or_unchecked(&d.path().join("missing")));
+        for unc in [r"\\host\share\id", "//host/share/id"] {
+            assert!(key_found_or_unchecked(Path::new(unc)));
+        }
+    }
+
+    #[test]
+    fn library_import_again_skips_saved_global_snippets() {
+        let (d, src) = state_with(Arc::new(MemorySecretStore::default()));
+        let a = conn("a");
+        do_connection_save(&src, a.clone(), None, None).unwrap();
+        do_snippet_save(&src, snippet("g", None)).unwrap();
+        do_snippet_save(&src, snippet("on a", Some(a.id))).unwrap();
+        let path = d.path().join("export.toml");
+        do_library_export(&src, &path, "2026-10-30").unwrap();
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        // The second time the global snippet is already there; the one on
+        // `a` follows its new connection.
+        for (global, added) in [(1, 2), (0, 1)] {
+            let p = do_library_import_preview(&state, &path).unwrap();
+            assert_eq!((p.snippets_global, p.snippets_per_connection), (global, 1));
+            let selected = all_rows(&state, &path);
+            let counts = do_library_import(&state, &path, &selected).unwrap();
+            assert_eq!(counts.snippets, added);
+        }
+        let globals = do_snippets_get(&state)
+            .iter()
+            .filter(|s| s.connection_id.is_none())
+            .count();
+        assert_eq!((globals, do_snippets_get(&state).len()), (1, 3));
     }
 
     #[test]

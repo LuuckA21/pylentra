@@ -253,7 +253,7 @@ export const en = {
   "library.viaExisting": "via {name} (already present)",
   "library.jumpDropped": "will have no jump host ({name} not imported)",
   "library.summary":
-    "Groups in the file: {new} new, {reused} already present. Snippets: {global} global, {perConnection} tied to connections.",
+    "Groups in the file: {new} new, {reused} already present. Snippets: {global} new global, {perConnection} tied to connections.",
   "library.importN": "Import ({n})",
   "library.imported":
     "Imported {connections} connections, {groups} groups, {snippets} snippets",

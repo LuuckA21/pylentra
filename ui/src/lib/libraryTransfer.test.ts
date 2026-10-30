@@ -18,12 +18,39 @@ beforeEach(() => {
 
 const messages = () => toasts.map((x) => [x.kind, x.message]);
 
-test("export passes an ISO date and stays silent when cancelled", async () => {
-  vi.mocked(api.libraryExport).mockResolvedValue(null);
-  await exportLibrary();
-  const [at] = vi.mocked(api.libraryExport).mock.calls[0];
-  expect(new Date(at).toISOString()).toBe(at);
-  expect(toasts).toHaveLength(0);
+test("export passes the local time with its offset and stays silent when cancelled", async () => {
+  const tz = process.env.TZ;
+  process.env.TZ = "Europe/Rome";
+  vi.useFakeTimers({ toFake: ["Date"] });
+  // 00:30 in Italy is still the day before in UTC; the file name takes this date.
+  vi.setSystemTime(new Date("2026-10-29T23:30:00Z"));
+  try {
+    vi.mocked(api.libraryExport).mockResolvedValue(null);
+    await exportLibrary();
+    const [at] = vi.mocked(api.libraryExport).mock.calls[0];
+    expect(at).toBe("2026-10-30T00:30:00+01:00");
+    expect(toasts).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+    process.env.TZ = tz;
+  }
+});
+
+test("a second export or import while one is open does nothing", async () => {
+  let finish!: (v: null) => void;
+  vi.mocked(api.libraryExport).mockReturnValue(
+    new Promise((r) => (finish = r)),
+  );
+  const first = exportLibrary();
+  const second = exportLibrary();
+  expect(await pickImport()).toBeNull();
+  expect(api.libraryExport).toHaveBeenCalledTimes(1);
+  expect(api.libraryImportPreview).not.toHaveBeenCalled();
+  finish(null);
+  await Promise.all([first, second]);
+  vi.mocked(api.libraryImportPreview).mockResolvedValue(null);
+  await pickImport();
+  expect(api.libraryImportPreview).toHaveBeenCalledTimes(1);
 });
 
 test("export reports the path", async () => {

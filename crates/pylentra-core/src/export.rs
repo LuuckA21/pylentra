@@ -154,7 +154,17 @@ pub fn parse(text: &str) -> Result<ExportFile, CoreError> {
         }
         _ => {}
     }
-    table.try_into().map_err(invalid_file)
+    let file: ExportFile = table.try_into().map_err(invalid_file)?;
+    // The preview keys its rows by id: a repeat would tie two rows together.
+    let mut ids: Vec<Uuid> = file.connections.iter().map(|c| c.id).collect();
+    ids.sort_unstable();
+    if ids.windows(2).any(|w| w[0] == w[1]) {
+        return Err(CoreError::InvalidInput {
+            field: "id".into(),
+            reason: "repeated in the file".into(),
+        });
+    }
+    Ok(file)
 }
 
 fn count(n: usize) -> u32 {
@@ -213,6 +223,17 @@ pub fn preview(
         snippets_global: count(global.count()),
         snippets_per_connection: count(per_connection.count()),
     }
+}
+
+/// Drops the global snippets a saved global one already has (same name and
+/// text), so importing a newer export does not add them twice.
+pub fn drop_saved_globals(snippets: &mut Vec<Snippet>, saved: &[Snippet]) {
+    snippets.retain(|s| {
+        s.connection_id.is_some()
+            || !saved
+                .iter()
+                .any(|o| o.connection_id.is_none() && o.name == s.name && o.text == s.text)
+    });
 }
 
 /// Does not validate the connections: the store does when it adds them.
@@ -398,6 +419,42 @@ mod tests {
             parse(text),
             Err(CoreError::UnsupportedVersion { found: 2 })
         ));
+    }
+
+    #[test]
+    fn rejects_repeated_connection_ids() {
+        let a = conn("a", AuthMethod::Agent);
+        let b = Connection {
+            name: "b".into(),
+            ..a.clone()
+        };
+        let text = export(&lib(vec![], vec![a, b]), &[], "now").unwrap();
+        assert!(matches!(
+            parse(&text),
+            Err(CoreError::InvalidInput { field, reason })
+                if field == "id" && reason == "repeated in the file"
+        ));
+    }
+
+    #[test]
+    fn saved_global_snippets_are_not_added_again() {
+        let c = Uuid::new_v4();
+        let mut same_name_other_text = snippet("ls", None);
+        same_name_other_text.text = "ls -la".into();
+        let mut snippets = vec![
+            snippet("ls", None),
+            same_name_other_text.clone(),
+            snippet("ls", Some(c)),
+            snippet("new", None),
+        ];
+        let saved = vec![snippet("ls", None), snippet("new", Some(c))];
+        drop_saved_globals(&mut snippets, &saved);
+        let kept: Vec<_> = snippets
+            .iter()
+            .map(|s| (s.text.as_str(), s.connection_id))
+            .collect();
+        assert_eq!(kept, [("ls -la", None), ("ls", Some(c)), ("ls", None)]);
+        assert_eq!(snippets[2].name, "new");
     }
 
     #[test]

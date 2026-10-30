@@ -392,6 +392,39 @@ test("Import library opens the preview of the picked file; cancelling opens noth
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
+test("Import from Settings opens the preview above Settings", async () => {
+  vi.mocked(api.libraryImportPreview).mockResolvedValueOnce({
+    path: "/x/e.toml",
+    preview: {
+      rows: [],
+      groups_new: 0,
+      groups_reused: 0,
+      snippets_global: 0,
+      snippets_per_connection: 0,
+    },
+  });
+  render(App);
+  await fireEvent.click(screen.getAllByRole("button", { name: "Settings" })[0]);
+  const settingsDialog = screen.getByRole("dialog", { name: "Settings" });
+  await fireEvent.click(
+    within(settingsDialog).getByRole("button", { name: "Library" }),
+  );
+  await fireEvent.click(
+    within(settingsDialog).getByRole("button", { name: "Import…" }),
+  );
+  const preview = await screen.findByRole("dialog", { name: "Import library" });
+  // Same z-index: the later backdrop paints on top, so the preview must follow Settings.
+  const backdrops = [...document.querySelectorAll(".backdrop")];
+  expect(backdrops.at(-1)).toBe(preview.parentElement);
+  expect(preview.contains(document.activeElement)).toBe(true);
+  // Closing the preview leaves Settings usable.
+  await fireEvent.click(
+    within(preview).getByRole("button", { name: "Cancel" }),
+  );
+  expect(screen.queryByRole("dialog", { name: "Import library" })).toBeNull();
+  expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+});
+
 test("Import library on a read-only library explains and does not ask for a file", async () => {
   vi.mocked(api.libraryImportPreview).mockClear();
   vi.mocked(api.startupWarnings).mockResolvedValueOnce([

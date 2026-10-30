@@ -276,16 +276,17 @@
 {#if importOpen}
   <ImportDialog onclose={() => (importOpen = false)} />
 {/if}
-{#if importingLibrary}
-  <LibraryImportDialog
-    pick={importingLibrary}
-    onclose={() => (importingLibrary = null)}
-  />
-{/if}
 {#if settingsOpen}
   <Settings
     onclose={() => (settingsOpen = false)}
     onimportlibrary={importLibrary}
+  />
+{/if}
+<!-- After Settings: it opens from there and must paint on top. -->
+{#if importingLibrary}
+  <LibraryImportDialog
+    pick={importingLibrary}
+    onclose={() => (importingLibrary = null)}
   />
 {/if}
 {#if confirming}

@@ -4,19 +4,37 @@ import type { ImportPick } from "./bindings/ImportPick";
 import { t } from "./i18n";
 import { isApiError, toast, toastError } from "./stores/toasts.svelte";
 
+// A file dialog is open: a second click must not open another.
+let busy = false;
+
+/** Local time with its offset, e.g. 2026-10-30T00:30:00+01:00: the file name takes its date. */
+function localTime(d = new Date()): string {
+  const off = -d.getTimezoneOffset();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const local = new Date(d.getTime() + off * 60_000).toISOString().slice(0, 19);
+  const abs = Math.abs(off);
+  return `${local}${off < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
 export async function exportLibrary(): Promise<void> {
+  if (busy) return;
+  busy = true;
   try {
-    const done = await api.libraryExport(new Date().toISOString());
+    const done = await api.libraryExport(localTime());
     if (!done) return;
     toast(t("library.exported", { path: done.path }), "success");
     if (!done.snippets) toast(t("library.exportedNoSnippets"), "warning");
   } catch (e) {
     toastError(e);
+  } finally {
+    busy = false;
   }
 }
 
-/** The file the user picked and its preview, or null if cancelled or unreadable. */
+/** The file the user picked and its preview, or null if cancelled, unreadable or already picking. */
 export async function pickImport(): Promise<ImportPick | null> {
+  if (busy) return null;
+  busy = true;
   try {
     return await api.libraryImportPreview();
   } catch (e) {
@@ -30,6 +48,8 @@ export async function pickImport(): Promise<ImportPick | null> {
       toast(t("library.notExport"));
     else toastError(e);
     return null;
+  } finally {
+    busy = false;
   }
 }
 
