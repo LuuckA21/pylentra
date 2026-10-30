@@ -66,6 +66,22 @@ pub struct ImportCounts {
     pub snippets: u32,
 }
 
+/// `snippets` is false if `snippets.toml` was unavailable and none were written.
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[ts(export)]
+pub struct ExportDone {
+    pub path: String,
+    pub snippets: bool,
+}
+
+/// `path` is only shown: `library_import` reads the file the app remembered.
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[ts(export)]
+pub struct ImportPick {
+    pub path: String,
+    pub preview: ImportPreview,
+}
+
 /// What to add to the library: fresh ids, references already pointing at them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImportPlan {

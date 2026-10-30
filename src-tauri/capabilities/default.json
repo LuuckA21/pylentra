@@ -10,8 +10,6 @@
     "process:allow-restart",
     "core:window:allow-destroy",
     "core:window:allow-set-fullscreen",
-    "dialog:allow-save",
-    "dialog:allow-open",
     {
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$APPLOG" }, { "path": "$APPLOG/**" }]

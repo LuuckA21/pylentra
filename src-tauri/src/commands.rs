@@ -2,11 +2,13 @@
 //! directly, so the logic is testable without a Tauri runtime.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pylentra_core::error::{ApiError, CoreError};
-use pylentra_core::export::{self, ExportFile, ImportCounts, ImportPreview};
+use pylentra_core::export::{
+    self, ExportDone, ExportFile, ImportCounts, ImportPick, ImportPreview,
+};
 use pylentra_core::known_hosts::KnownHostEntry;
 use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
 use pylentra_core::secrets::SecretKind;
@@ -18,6 +20,7 @@ use pylentra_core::store::{Library, atomic_write};
 use tauri::http::HeaderMap;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use uuid::Uuid;
 
 use crate::sink::ChannelSink;
@@ -278,14 +281,45 @@ pub fn do_ssh_config_scan(state: &AppState, path: &Path) -> Result<ScanResult, A
 const MAX_EXPORT_BYTES: usize = 5 * 1024 * 1024;
 const MAX_EXPORTED_AT_CHARS: usize = 64;
 
-// Async so the file write runs off the main thread.
+/// The date part of `exported_at`, or none if it does not look like one.
+fn export_file_name(exported_at: &str) -> String {
+    match exported_at.get(..10) {
+        Some(d) if d.bytes().all(|b| b.is_ascii_digit() || b == b'-') => {
+            format!("pylentra-export-{d}.toml")
+        }
+        _ => "pylentra-export.toml".into(),
+    }
+}
+
+fn picked_path(picked: FilePath) -> Result<PathBuf, CoreError> {
+    picked
+        .into_path()
+        .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))
+}
+
+// Async: the dialog blocks, and must not run on the main thread.
+// The dialogs open here so no path ever comes from the webview.
 #[tauri::command(async)]
 pub fn library_export(
+    app: AppHandle,
     state: State<'_, AppState>,
-    path: String,
     exported_at: String,
-) -> Result<bool, ApiError> {
-    do_library_export(&state, Path::new(&path), &exported_at)
+) -> Result<Option<ExportDone>, ApiError> {
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .add_filter("TOML", &["toml"])
+        .set_file_name(export_file_name(&exported_at))
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = picked_path(picked)?;
+    let snippets = do_library_export(&state, &path, &exported_at)?;
+    Ok(Some(ExportDone {
+        path: path.display().to_string(),
+        snippets,
+    }))
 }
 
 /// `false`: `snippets.toml` could not be read, so the file has no snippets.
@@ -320,32 +354,69 @@ fn read_export(path: &Path) -> Result<ExportFile, CoreError> {
     export::parse(&text)
 }
 
-// Async so the file read runs off the main thread.
+// Async: the dialog blocks, and must not run on the main thread.
 #[tauri::command(async)]
 pub fn library_import_preview(
+    app: AppHandle,
     state: State<'_, AppState>,
-    path: String,
-) -> Result<ImportPreview, ApiError> {
-    do_library_import_preview(&state, Path::new(&path))
+) -> Result<Option<ImportPick>, ApiError> {
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .add_filter("TOML", &["toml"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    do_library_import_pick(&state, picked_path(picked)?).map(Some)
+}
+
+/// Previews `path` and remembers it for `library_import`.
+pub fn do_library_import_pick(state: &AppState, path: PathBuf) -> Result<ImportPick, ApiError> {
+    let preview = do_library_import_preview(state, &path);
+    // A failed pick forgets the previous file: a confirm only reads the one just shown.
+    *state.pending_import() = preview.is_ok().then(|| path.clone());
+    Ok(ImportPick {
+        path: path.display().to_string(),
+        preview: preview?,
+    })
 }
 
 pub fn do_library_import_preview(state: &AppState, path: &Path) -> Result<ImportPreview, ApiError> {
     let file = read_export(path)?;
-    Ok(export::preview(
-        &file,
-        state.store().library(),
-        Path::exists,
-    ))
+    // A copy: the key checks may be slow (network paths) and must not hold the store.
+    let library = state.store().library().clone();
+    Ok(export::preview(&file, &library, Path::exists))
 }
 
 // Async so the file read runs off the main thread.
 #[tauri::command(async)]
 pub fn library_import(
     state: State<'_, AppState>,
-    path: String,
     selected: Vec<Uuid>,
 ) -> Result<ImportCounts, ApiError> {
-    do_library_import(&state, Path::new(&path), &selected)
+    do_library_import_pending(&state, &selected)
+}
+
+/// Imports the file remembered by the last pick.
+pub fn do_library_import_pending(
+    state: &AppState,
+    selected: &[Uuid],
+) -> Result<ImportCounts, ApiError> {
+    // Held throughout, so a second confirm waits and then finds nothing.
+    let mut pending = state.pending_import();
+    let path = pending
+        .as_deref()
+        .ok_or(CoreError::Io(std::io::ErrorKind::NotFound.into()))?;
+    let result = do_library_import(state, path, selected);
+    // Once the library is written, a retry would add the connections again.
+    if result
+        .as_ref()
+        .map_or_else(|e| e.params.contains_key("connections_imported"), |_| true)
+    {
+        *pending = None;
+    }
+    result
 }
 
 /// Rereads the file: `selected` holds its ids, the same the preview showed.
@@ -367,7 +438,14 @@ pub fn do_library_import(
     let snippets = if plan.snippets.is_empty() {
         0
     } else {
-        count(state.snippets().import(plan.snippets)?)
+        let imported = state.snippets().import(plan.snippets).map_err(|e| {
+            let mut e = ApiError::from(e);
+            // Tells "snippets failed" apart from "nothing imported".
+            e.params
+                .insert("connections_imported".into(), connections.to_string());
+            e
+        })?;
+        count(imported)
     };
     Ok(ImportCounts {
         connections,
@@ -624,6 +702,7 @@ mod tests {
     use super::*;
     use pylentra_core::secrets::{FailingSecretStore, MemorySecretStore, SecretStore};
     use pylentra_core::snippets::SnippetStore;
+    use pylentra_core::store::ConnectionStore;
     use secrecy::ExposeSecret;
     use tempfile::TempDir;
 
@@ -1280,6 +1359,7 @@ mod tests {
         let selected = all_rows(&state, &path);
         let err = do_library_import(&state, &path, &selected).unwrap_err();
         assert_eq!(err.code, CoreError::ReadOnly.code());
+        assert!(!err.params.contains_key("connections_imported"));
         assert_eq!(file_text(&conns).as_deref(), Some("version = 9\n"));
         assert_eq!(file_text(&snips).as_deref(), Some("version = 1\n"));
     }
@@ -1295,8 +1375,82 @@ mod tests {
         let selected = all_rows(&state, &path);
         let err = do_library_import(&state, &path, &selected).unwrap_err();
         assert_eq!(err.code, CoreError::ReadOnly.code());
-        assert_eq!(do_library_get(&state).connections.len(), 2);
+        assert_eq!(err.params["connections_imported"], "2");
         assert!(do_snippets_get(&state).is_empty());
+        let (on_disk, _) = ConnectionStore::load(dir.path().join("connections.toml")).unwrap();
+        assert_eq!(on_disk.library().connections.len(), 2);
+    }
+
+    #[test]
+    fn library_import_pick_remembers_the_file_until_imported() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = do_library_import_pending(&state, &[]).unwrap_err();
+        assert_eq!(err.code, "io");
+        let pick = do_library_import_pick(&state, path.clone()).unwrap();
+        assert_eq!(pick.path, path.display().to_string());
+        let selected: Vec<Uuid> = pick.preview.rows.iter().map(|r| r.id).collect();
+        assert_eq!(
+            do_library_import_pending(&state, &selected)
+                .unwrap()
+                .connections,
+            2
+        );
+        // Imported once: a second confirm must not add the same connections again.
+        assert_eq!(
+            do_library_import_pending(&state, &selected)
+                .unwrap_err()
+                .code,
+            "io"
+        );
+        assert_eq!(do_library_get(&state).connections.len(), 2);
+    }
+
+    #[test]
+    fn library_import_pick_of_a_bad_file_forgets_the_previous_one() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        do_library_import_pick(&state, path).unwrap();
+        assert!(do_library_import_pick(&state, files.path().to_path_buf()).is_err());
+        assert!(do_library_import_pending(&state, &[]).is_err());
+    }
+
+    #[test]
+    fn library_import_partly_done_is_not_repeated() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let selected = do_library_import_pick(&state, path)
+            .unwrap()
+            .preview
+            .rows
+            .iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>();
+        do_library_import_pending(&state, &selected).unwrap_err();
+        assert_eq!(
+            do_library_import_pending(&state, &selected)
+                .unwrap_err()
+                .code,
+            "io"
+        );
+        assert_eq!(do_library_get(&state).connections.len(), 2);
+    }
+
+    #[test]
+    fn export_file_name_uses_the_date() {
+        assert_eq!(
+            export_file_name("2026-10-30T12:00:00Z"),
+            "pylentra-export-2026-10-30.toml"
+        );
+        for odd in ["", "2026", "../../etc/x.toml"] {
+            assert_eq!(export_file_name(odd), "pylentra-export.toml");
+        }
     }
 
     #[test]
