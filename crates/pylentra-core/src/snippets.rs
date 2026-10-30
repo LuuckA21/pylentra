@@ -2,6 +2,7 @@ use crate::error::CoreError;
 use crate::model::lenient_extra;
 use crate::store::{LoadOutcome, VersionOnly, atomic_write, parse, quarantine};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -173,6 +174,30 @@ impl SnippetStore {
             }
         }
         self.commit(candidate)
+    }
+
+    /// Adds `snippets` with a single write; any invalid one cancels them all.
+    pub fn import(&mut self, snippets: Vec<Snippet>) -> Result<usize, CoreError> {
+        self.writable()?;
+        if snippets.is_empty() {
+            return Ok(0);
+        }
+        let n = snippets.len();
+        let mut candidate = self.snippets.clone();
+        let mut seen: HashSet<Uuid> = candidate.iter().map(|x| x.id).collect();
+        for mut s in snippets {
+            s.validate()?;
+            if !seen.insert(s.id) {
+                return Err(CoreError::InvalidInput {
+                    field: "id".into(),
+                    reason: "already exists".into(),
+                });
+            }
+            s.extra = toml::Table::new();
+            candidate.push(s);
+        }
+        self.commit(candidate)?;
+        Ok(n)
     }
 
     pub fn delete(&mut self, id: Uuid) -> Result<(), CoreError> {
@@ -425,5 +450,72 @@ mod tests {
         s.upsert(snip("b", "2")).unwrap();
         s.delete(a.id).unwrap();
         assert_eq!(reload(&d).list().len(), 1);
+    }
+
+    #[test]
+    fn import_adds_and_writes_once() {
+        let (d, mut s) = store();
+        let old = snip("old", "1");
+        s.upsert(old.clone()).unwrap();
+        let (a, b) = (snip("a", "2"), snip("b", "3"));
+        assert_eq!(s.import(vec![a.clone(), b.clone()]).unwrap(), 2);
+        assert_eq!(s.list(), [old.clone(), a.clone(), b.clone()]);
+        assert_eq!(reload(&d).list(), [old, a, b]);
+    }
+
+    #[test]
+    fn import_starts_with_empty_extra() {
+        let (_d, mut s) = store();
+        let mut a = snip("a", "1");
+        a.extra.insert("futuro".into(), 1.into());
+        s.import(vec![a]).unwrap();
+        assert!(s.list()[0].extra.is_empty());
+    }
+
+    #[test]
+    fn import_with_one_invalid_snippet_changes_nothing() {
+        let (d, mut s) = store();
+        s.upsert(snip("old", "1")).unwrap();
+        let path = d.path().join("snippets.toml");
+        let before = fs::read_to_string(&path).unwrap();
+        let r = s.import(vec![snip("ok", "1"), snip("", "2")]);
+        assert_invalid(r.map(|_| ()), "name");
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(s.list().len(), 1);
+    }
+
+    #[test]
+    fn import_rejects_taken_and_repeated_ids() {
+        let (d, mut s) = store();
+        let a = snip("a", "1");
+        s.upsert(a.clone()).unwrap();
+        let before = fs::read_to_string(d.path().join("snippets.toml")).unwrap();
+        assert_invalid(s.import(vec![a]).map(|_| ()), "id");
+        let b = snip("b", "2");
+        assert_invalid(s.import(vec![b.clone(), b]).map(|_| ()), "id");
+        assert_eq!(
+            fs::read_to_string(d.path().join("snippets.toml")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn import_empty_writes_nothing() {
+        let (d, mut s) = store();
+        assert_eq!(s.import(vec![]).unwrap(), 0);
+        assert!(!d.path().join("snippets.toml").exists());
+    }
+
+    #[test]
+    fn import_into_unavailable_or_read_only_store_fails() {
+        let d = TempDir::new().unwrap();
+        let path = d.path().join("snippets.toml");
+        let mut s = SnippetStore::unavailable(path.clone());
+        assert!(matches!(
+            s.import(vec![snip("a", "1")]),
+            Err(CoreError::ReadOnly)
+        ));
+        assert!(matches!(s.import(vec![]), Err(CoreError::ReadOnly)));
+        assert!(!path.exists());
     }
 }
