@@ -103,7 +103,7 @@ test("one row per connection; duplicates start unchecked and are marked", async 
   expect(screen.getByText(/Prod/)).toBeTruthy();
 });
 
-test("warns about a missing key, notes the summary", async () => {
+test("flags a missing key and shows the summary", async () => {
   await open();
   expect(screen.getByText("key not found: /home/u/.ssh/id_app")).toBeTruthy();
   expect(
@@ -137,7 +137,7 @@ test("import sends the selection in file order, reports, reloads and closes", as
   await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
   expect(api.libraryImport).toHaveBeenCalledWith(["b", "a", "d"]);
   expect(toasts.map((x) => [x.kind, x.message])).toEqual([
-    ["success", "Imported 2 connections, 1 groups, 5 snippets"],
+    ["success", "Imported — connections: 2, groups: 1, snippets: 5"],
   ]);
   expect(api.libraryGet).toHaveBeenCalled();
   expect(api.snippetsGet).toHaveBeenCalled();
@@ -176,4 +176,37 @@ test("Escape closes without importing", async () => {
   await fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   expect(onclose).toHaveBeenCalledOnce();
   expect(api.libraryImport).not.toHaveBeenCalled();
+});
+
+test("while importing, Cancel is off and Escape does nothing", async () => {
+  let fail!: (e: unknown) => void;
+  vi.mocked(api.libraryImport).mockReturnValue(
+    new Promise((_, reject) => (fail = reject)),
+  );
+  const onclose = await open();
+  const cancel = screen.getByRole("button", {
+    name: "Cancel",
+  }) as HTMLButtonElement;
+  await fireEvent.click(importBtn(2));
+  expect(cancel.disabled).toBe(true);
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(onclose).not.toHaveBeenCalled();
+  fail({ code: "config.read_only", params: {} });
+  await waitFor(() => expect(cancel.disabled).toBe(false));
+  await fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(onclose).toHaveBeenCalledOnce();
+});
+
+test("a failed reload after the import is shown too", async () => {
+  vi.mocked(api.snippetsGet).mockRejectedValue({
+    code: "io",
+    params: { reason: "gone" },
+  });
+  const onclose = await open();
+  await fireEvent.click(importBtn(2));
+  await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+  expect(toasts.map((x) => [x.kind, x.message])).toEqual([
+    ["success", "Imported — connections: 2, groups: 1, snippets: 5"],
+    ["error", "I/O error: gone"],
+  ]);
 });

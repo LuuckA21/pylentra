@@ -9,7 +9,9 @@
 
 <p class="hint">{t("library.hint")}</p>
 <div class="actions">
-  <button type="button" onclick={exportLibrary}>{t("library.export")}</button>
+  <button type="button" onclick={() => exportLibrary()}
+    >{t("library.export")}</button
+  >
   <button
     type="button"
     disabled={readOnly}

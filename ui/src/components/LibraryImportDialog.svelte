@@ -7,7 +7,7 @@
   import { modal } from "../lib/modal";
   import { refresh } from "../lib/stores/library.svelte";
   import { loadSnippets } from "../lib/stores/snippets.svelte";
-  import { isApiError, toast } from "../lib/stores/toasts.svelte";
+  import { isApiError, toast, toastError } from "../lib/stores/toasts.svelte";
   import Avatar from "./ui/Avatar.svelte";
   import Pill from "./ui/Pill.svelte";
 
@@ -46,7 +46,7 @@
       // The connections are in and the backend forgot the file: retrying would duplicate them.
       toast(t("library.partial", { connections: done, reason }));
     }
-    await Promise.all([refresh(), loadSnippets()]).catch(() => {});
+    await Promise.all([refresh(), loadSnippets()]).catch(toastError);
     onclose();
   }
 </script>
@@ -57,7 +57,9 @@
     role="dialog"
     aria-modal="true"
     aria-labelledby="library-import-title"
-    use:modal={onclose}
+    use:modal={() => {
+      if (!busy) onclose();
+    }}
   >
     <h2 id="library-import-title">{t("library.importTitle")}</h2>
     <p class="hint path">{pick.path}</p>
@@ -113,7 +115,9 @@
       <p class="note error" role="alert">{error}</p>
     {/if}
     <div class="actions">
-      <button type="button" onclick={onclose}>{t("common.cancel")}</button>
+      <button type="button" disabled={busy} onclick={onclose}
+        >{t("common.cancel")}</button
+      >
       <button
         type="button"
         class="primary"

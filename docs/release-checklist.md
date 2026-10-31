@@ -131,7 +131,10 @@ cover it.
 
 1. Settings → Library → "Export…" (and the sidebar "⋯" menu, "Export library…")
    opens the system "Save as" dialog proposing `pylentra-export-YYYY-MM-DD.toml`.
-   Save it: a notice shows where the library was exported.
+   Save it: a notice shows where the library was exported. Export again and
+   type `backup` (no extension): `backup.toml` is written. Export once more,
+   typing `backup` again: nothing is written and an error says a file named
+   `backup.toml` already exists.
 2. Open the file in a text editor and search for the password and passphrase
    of a saved connection: they are not there. A key connection has only its
    path. Groups, notes, colors, icons, forwards and snippets are there.
@@ -148,7 +151,9 @@ cover it.
 6. Import: the connections arrive with their groups (a group with the same
    name is reused, not duplicated), jump hosts and per-connection snippets
    linked; global snippets arrive too. The notice reports connections,
-   groups and snippets.
+   groups and snippets ("Imported — connections: …, groups: …, snippets: …").
+   While the import runs, Cancel is disabled and Esc does not close the
+   preview.
 7. Import the same file again: with the default selection every connection
    is already present and unticked, so the preview offers nothing new and
    "Import (0)" is disabled (unless some were deleted in between). Ticking

@@ -84,6 +84,22 @@ test("export failure is a toast", async () => {
   expect(toasts[0].kind).toBe("error");
 });
 
+test("export never replaces an existing file: the reason is a toast", async () => {
+  vi.mocked(api.libraryExport).mockRejectedValue({
+    code: "export.file_exists",
+    params: { name: "backup.toml" },
+  });
+  await exportLibrary();
+  expect(messages()).toEqual([
+    ["error", "A file named backup.toml already exists: choose another name."],
+  ]);
+  setLang("it");
+  await exportLibrary();
+  expect(toasts[1].message).toBe(
+    "Esiste già un file backup.toml: scegli un altro nome.",
+  );
+});
+
 test("pickImport returns the pick, or null when cancelled", async () => {
   const pick = { path: "/x/a.toml", preview: {} };
   vi.mocked(api.libraryImportPreview).mockResolvedValueOnce(pick as never);

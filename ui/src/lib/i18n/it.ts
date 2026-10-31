@@ -260,7 +260,7 @@ export const it: Record<MessageKey, string> = {
     "Gruppi nel file: {new} nuovi, {reused} già presenti. Snippet: {global} globali nuovi, {perConnection} legati alle connessioni.",
   "library.importN": "Importa ({n})",
   "library.imported":
-    "Importate {connections} connessioni, {groups} gruppi, {snippets} snippet",
+    "Importati — connessioni: {connections}, gruppi: {groups}, snippet: {snippets}",
   "library.partial":
     "Importate {connections} connessioni; gli snippet no: {reason}",
   "settings.openLogs": "Apri cartella log",
@@ -281,6 +281,8 @@ export const it: Record<MessageKey, string> = {
     "Il file non si può leggere ({reason}). Resta intatto e in sola lettura fino al prossimo avvio.",
   "error.config.recovered_corrupt":
     "Il file di configurazione era illeggibile. È stato conservato come {backup} e ne è stato creato uno nuovo.",
+  "error.export.file_exists":
+    "Esiste già un file {name}: scegli un altro nome.",
   "error.forward.permission_denied": "Permesso negato per la porta {port}.",
   "error.forward.port_in_use": "La porta {port} è già in uso.",
   "error.forward.rejected": "Il server ha rifiutato l'inoltro di porta.",

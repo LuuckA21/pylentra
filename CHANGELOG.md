@@ -18,7 +18,9 @@ Nothing saved changes format: going back to 0.5.x loses nothing.
   notes, colors and icons included) and snippets. No password or passphrase
   is ever written: keys are saved only as paths, and the app settings are not
   exported. If the snippets file cannot be read, the library is exported
-  without snippets and a warning says so.
+  without snippets and a warning says so. A name typed without an extension
+  gets `.toml`; if that file already exists, nothing is written and a message
+  asks for another name.
 - Import opens the system "Open" dialog and then a preview: connections that
   are already in the library (same name) are unticked and marked "already
   present", missing key files are flagged, and each jump host is shown as

@@ -292,11 +292,41 @@ fn export_file_name(exported_at: &str) -> String {
 }
 
 /// GTK saves a name typed without `.toml` as is, which the Open filter would hide.
-fn with_toml(path: PathBuf) -> PathBuf {
-    if path.extension().is_none() {
-        path.with_extension("toml")
+/// The dialog asked about overwriting only the typed name, so an existing
+/// `<name>.toml` is never replaced.
+fn export_target(picked: &Path) -> Result<PathBuf, ApiError> {
+    if picked.extension().is_some() {
+        return Ok(picked.to_path_buf());
+    }
+    let path = picked.with_extension("toml");
+    // `symlink_metadata`: a dangling link is taken too.
+    if std::fs::symlink_metadata(&path).is_ok() {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        return Err(ApiError {
+            code: "export.file_exists".into(),
+            params: [("name".into(), name.into_owned())].into(),
+        });
+    }
+    Ok(path)
+}
+
+fn check_exported_at(exported_at: &str) -> Result<(), ApiError> {
+    if exported_at.chars().count() > MAX_EXPORTED_AT_CHARS {
+        return Err(CoreError::InvalidInput {
+            field: "exported_at".into(),
+            reason: "too long".into(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// The dialogs are native: their filter label follows the app language.
+fn all_files_label(language: Option<&str>) -> &'static str {
+    if language == Some("it") {
+        "Tutti i file"
     } else {
-        path
+        "All files"
     }
 }
 
@@ -321,6 +351,7 @@ pub fn library_export(
     state: State<'_, AppState>,
     exported_at: String,
 ) -> Result<Option<ExportDone>, ApiError> {
+    check_exported_at(&exported_at)?;
     let Some(picked) = window
         .dialog()
         .file()
@@ -331,35 +362,28 @@ pub fn library_export(
     else {
         return Ok(None);
     };
-    let path = with_toml(picked_path(picked)?);
-    let snippets = do_library_export(&state, &path, &exported_at)?;
-    Ok(Some(ExportDone {
-        path: path.display().to_string(),
-        snippets,
-    }))
+    do_library_export(&state, &picked_path(picked)?, &exported_at).map(Some)
 }
 
-/// `false`: `snippets.toml` could not be read, so the file has no snippets.
+/// Writes to `picked` (with `.toml` added if it has no extension).
+/// `snippets: false`: `snippets.toml` could not be read, so the file has none.
 pub fn do_library_export(
     state: &AppState,
-    path: &Path,
+    picked: &Path,
     exported_at: &str,
-) -> Result<bool, ApiError> {
-    if exported_at.chars().count() > MAX_EXPORTED_AT_CHARS {
-        return Err(CoreError::InvalidInput {
-            field: "exported_at".into(),
-            reason: "too long".into(),
-        }
-        .into());
-    }
+) -> Result<ExportDone, ApiError> {
+    let path = export_target(picked)?;
     let (text, with_snippets) = {
         let store = state.store();
         let snippets = state.snippets();
         let text = export::export(store.library(), snippets.list(), exported_at)?;
         (text, !snippets.is_unavailable())
     };
-    atomic_write(path, &text)?;
-    Ok(with_snippets)
+    atomic_write(&path, &text)?;
+    Ok(ExportDone {
+        path: path.display().to_string(),
+        snippets: with_snippets,
+    })
 }
 
 fn read_export(path: &Path) -> Result<ExportFile, CoreError> {
@@ -390,7 +414,10 @@ pub fn library_import_preview(
         .set_parent(&window)
         .add_filter("TOML", &["toml"])
         // shortcut: GTK turns "*" into "*.*", hiding names without a dot; new exports always get `.toml`.
-        .add_filter("All files", &["*"])
+        .add_filter(
+            all_files_label(state.settings().get().language.as_deref()),
+            &["*"],
+        )
         .blocking_pick_file()
     else {
         return Ok(None);
@@ -1304,7 +1331,11 @@ mod tests {
         do_connection_save(&state, conn("b"), None, None).unwrap();
         do_snippet_save(&state, snippet("s", Some(a.id))).unwrap();
         let path = dir.path().join("export.toml");
-        assert!(do_library_export(&state, &path, "2026-10-30").unwrap());
+        assert!(
+            do_library_export(&state, &path, "2026-10-30")
+                .unwrap()
+                .snippets
+        );
         path
     }
 
@@ -1346,7 +1377,11 @@ mod tests {
         do_connection_save(&state, conn("a"), None, None).unwrap();
         *state.snippets() = SnippetStore::unavailable(d.path().join("snippets.toml"));
         let path = d.path().join("export.toml");
-        assert!(!do_library_export(&state, &path, "2026-10-30").unwrap());
+        assert!(
+            !do_library_export(&state, &path, "2026-10-30")
+                .unwrap()
+                .snippets
+        );
         let file = pylentra_core::export::parse(&file_text(&path).unwrap()).unwrap();
         assert_eq!((file.connections.len(), file.snippets.len()), (1, 0));
     }
@@ -1365,7 +1400,11 @@ mod tests {
         let state =
             AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
         let path = dir.path().join("export.toml");
-        assert!(do_library_export(&state, &path, "2026-10-30").unwrap());
+        assert!(
+            do_library_export(&state, &path, "2026-10-30")
+                .unwrap()
+                .snippets
+        );
         let file = pylentra_core::export::parse(&file_text(&path).unwrap()).unwrap();
         assert_eq!(file.snippets.len(), 1);
     }
@@ -1487,13 +1526,44 @@ mod tests {
 
     #[test]
     fn export_path_gets_toml_when_it_has_no_extension() {
-        let cases = [
-            ("/d/backup", "/d/backup.toml"),
-            ("/d/backup.toml", "/d/backup.toml"),
-            ("/d/backup.txt", "/d/backup.txt"),
-        ];
-        for (picked, saved) in cases {
-            assert_eq!(with_toml(PathBuf::from(picked)), PathBuf::from(saved));
+        let d = TempDir::new().unwrap();
+        for (picked, saved) in [
+            ("backup", "backup.toml"),
+            ("backup.toml", "backup.toml"),
+            ("backup.txt", "backup.txt"),
+        ] {
+            let picked = d.path().join(picked);
+            assert_eq!(export_target(&picked).unwrap(), d.path().join(saved));
+        }
+        // The dialog confirmed the name as typed, not the one with `.toml`.
+        std::fs::write(d.path().join("backup.toml"), "old").unwrap();
+        let err = export_target(&d.path().join("backup")).unwrap_err();
+        assert_eq!(err.code, "export.file_exists");
+        assert_eq!(err.params["name"], "backup.toml");
+        let typed = d.path().join("backup.toml");
+        assert_eq!(export_target(&typed).unwrap(), typed);
+    }
+
+    #[test]
+    fn library_export_never_replaces_the_toml_it_appends() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        do_connection_save(&state, conn("a"), None, None).unwrap();
+        let existing = d.path().join("backup.toml");
+        std::fs::write(&existing, "old").unwrap();
+        let err = do_library_export(&state, &d.path().join("backup"), "2026-10-30").unwrap_err();
+        assert_eq!(err.code, "export.file_exists");
+        assert_eq!(file_text(&existing).unwrap(), "old");
+        assert!(!d.path().join("backup").exists());
+        let done = do_library_export(&state, &d.path().join("other"), "2026-10-30").unwrap();
+        assert_eq!(done.path, d.path().join("other.toml").display().to_string());
+        assert!(file_text(&d.path().join("other.toml")).is_some());
+    }
+
+    #[test]
+    fn dialog_filter_label_follows_the_language() {
+        assert_eq!(all_files_label(Some("it")), "Tutti i file");
+        for other in [Some("en"), None] {
+            assert_eq!(all_files_label(other), "All files");
         }
     }
 
@@ -1574,13 +1644,10 @@ mod tests {
 
     #[test]
     fn library_export_rejects_long_exported_at() {
-        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
-        let path = d.path().join("export.toml");
-        let err = do_library_export(&state, &path, &"x".repeat(65)).unwrap_err();
+        let err = check_exported_at(&"x".repeat(65)).unwrap_err();
         assert_eq!(err.code, "config.invalid");
         assert_eq!(err.params["field"], "exported_at");
-        assert!(!path.exists());
-        assert!(do_library_export(&state, &path, &"x".repeat(64)).is_ok());
+        assert!(check_exported_at(&"x".repeat(64)).is_ok());
     }
 
     #[test]

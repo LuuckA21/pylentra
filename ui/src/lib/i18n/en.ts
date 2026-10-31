@@ -256,7 +256,7 @@ export const en = {
     "Groups in the file: {new} new, {reused} already present. Snippets: {global} new global, {perConnection} tied to connections.",
   "library.importN": "Import ({n})",
   "library.imported":
-    "Imported {connections} connections, {groups} groups, {snippets} snippets",
+    "Imported — connections: {connections}, groups: {groups}, snippets: {snippets}",
   "library.partial":
     "Imported {connections} connections; snippets were not: {reason}",
   "settings.openLogs": "Open log folder",
@@ -276,6 +276,8 @@ export const en = {
     "The file could not be read ({reason}). It stays untouched and read-only until the next start.",
   "error.config.recovered_corrupt":
     "The configuration file was unreadable. It was kept as {backup} and a new one was started.",
+  "error.export.file_exists":
+    "A file named {name} already exists: choose another name.",
   "error.forward.permission_denied": "Permission denied for port {port}.",
   "error.forward.port_in_use": "Port {port} is already in use.",
   "error.forward.rejected": "The server rejected the port forward.",

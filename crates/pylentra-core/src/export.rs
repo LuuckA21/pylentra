@@ -97,6 +97,17 @@ fn invalid_file(e: impl ToString) -> CoreError {
     }
 }
 
+fn without_extra<T: Clone>(items: &[T], extra: fn(&mut T) -> &mut toml::Table) -> Vec<T> {
+    items
+        .iter()
+        .cloned()
+        .map(|mut x| {
+            extra(&mut x).clear();
+            x
+        })
+        .collect()
+}
+
 /// Serializes the library and snippets; unknown (`extra`) fields are never written.
 pub fn export(
     library: &Library,
@@ -107,34 +118,14 @@ pub fn export(
         format: EXPORT_FORMAT.into(),
         version: EXPORT_VERSION,
         exported_at: exported_at.into(),
-        groups: library
-            .groups
-            .iter()
-            .cloned()
-            .map(|mut g| {
-                g.extra.clear();
-                g
-            })
-            .collect(),
-        connections: library
-            .connections
-            .iter()
-            .cloned()
-            .map(|mut c| {
-                c.extra.clear();
-                c
-            })
-            .collect(),
-        snippets: snippets
-            .iter()
-            .cloned()
-            .map(|mut s| {
-                s.extra.clear();
-                s
-            })
-            .collect(),
+        groups: without_extra(&library.groups, |g| &mut g.extra),
+        connections: without_extra(&library.connections, |c| &mut c.extra),
+        snippets: without_extra(snippets, |s| &mut s.extra),
     };
-    toml::to_string_pretty(&file).map_err(invalid_file)
+    toml::to_string_pretty(&file).map_err(|e| CoreError::InvalidInput {
+        field: "export".into(),
+        reason: e.to_string(),
+    })
 }
 
 /// Checks `format` and `version` on the raw table before the full parse, so a newer file reports its version.
@@ -196,10 +187,18 @@ pub fn preview(
                 }
                 _ => None,
             },
-            jump: c.jump_via.and_then(in_file).map(|j| JumpRef {
-                name: j.name.clone(),
-                in_file: Some(j.id),
-                existing: saved(&j.name),
+            // A jump host missing from the file is shown by its id, as dropped.
+            jump: c.jump_via.map(|id| match in_file(id) {
+                Some(j) => JumpRef {
+                    name: j.name.clone(),
+                    in_file: Some(j.id),
+                    existing: saved(&j.name),
+                },
+                None => JumpRef {
+                    name: id.to_string(),
+                    in_file: None,
+                    existing: false,
+                },
             }),
         })
         .collect();
@@ -413,6 +412,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_or_non_integer_version() {
+        for text in [
+            "format = \"pylentra-export\"\nexported_at = \"now\"",
+            "format = \"pylentra-export\"\nversion = \"1\"\nexported_at = \"now\"",
+        ] {
+            assert!(matches!(
+                parse(text),
+                Err(CoreError::InvalidInput { field, .. }) if field == "file"
+            ));
+        }
+    }
+
+    #[test]
     fn version_is_checked_before_the_rest() {
         let text = "format = \"pylentra-export\"\nversion = 2\n[[connections]]\nfuturo = 1\n";
         assert!(matches!(
@@ -589,7 +601,8 @@ mod tests {
         let mut web = conn("web", AuthMethod::Agent);
         web.jump_via = Some(bastion.id);
         let mut lone = conn("lone", AuthMethod::Agent);
-        lone.jump_via = Some(Uuid::new_v4());
+        let elsewhere = Uuid::new_v4();
+        lone.jump_via = Some(elsewhere);
         let f = file(vec![], vec![bastion.clone(), web, lone], vec![]);
         for existing in [false, true] {
             let saved = if existing {
@@ -606,7 +619,15 @@ mod tests {
                     existing,
                 })
             );
-            assert_eq!(p.rows[2].jump, None);
+            // Not in the file: shown as dropped, by its id.
+            assert_eq!(
+                p.rows[2].jump,
+                Some(JumpRef {
+                    name: elsewhere.to_string(),
+                    in_file: None,
+                    existing: false,
+                })
+            );
         }
     }
 
