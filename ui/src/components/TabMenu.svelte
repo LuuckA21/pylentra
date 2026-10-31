@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { t } from "../lib/i18n";
+  import { menuItems, menuKeydown } from "../lib/menu";
   import { count, MAX_PANES } from "../lib/layout";
   import {
     detachPane,
@@ -30,26 +31,7 @@
   const others = $derived(sessions.tabs.filter((o) => o !== tab));
   const n = $derived(count(tab.root));
 
-  const items = () => [
-    ...menuEl.querySelectorAll<HTMLElement>("button:not(:disabled)"),
-  ];
-
-  onMount(() => (items()[0] ?? menuEl).focus());
-
-  function onkeydown(e: KeyboardEvent) {
-    const list = items();
-    const i = list.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onclose(true);
-    } else if (e.key === "Tab") {
-      onclose(false);
-    } else if (list.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-      e.preventDefault();
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      list[(i + step + list.length) % list.length].focus();
-    }
-  }
+  onMount(() => (menuItems(menuEl)[0] ?? menuEl).focus());
 </script>
 
 <svelte:window
@@ -66,7 +48,7 @@
   bind:this={menuEl}
   style:left="{Math.min(x, window.innerWidth - 260)}px"
   style:top="{Math.min(y, window.innerHeight - 200)}px"
-  {onkeydown}
+  onkeydown={(e) => menuKeydown(e, menuEl, onclose)}
 >
   {#each others as o (o.tabId)}
     {@const full = n + count(o.root) > MAX_PANES}
@@ -99,30 +81,3 @@
     <button type="button" role="menuitem" disabled>{t("tabs.nothing")}</button>
   {/if}
 </div>
-
-<style>
-  .menu {
-    position: fixed;
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    min-width: 200px;
-    padding: 4px;
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow);
-  }
-  button {
-    border: 0;
-    background: none;
-    text-align: left;
-  }
-  button:hover:not(:disabled),
-  button:focus-visible {
-    background: var(--surface-3);
-  }
-  button:disabled {
-    color: var(--fg-muted);
-  }
-</style>
