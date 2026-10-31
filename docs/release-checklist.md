@@ -255,6 +255,14 @@ cover it.
    one confirmation for all of them.
 8. On Linux, click a status-bar button (Split, Forward): the keyboard ends up
    in the terminal, or in the dialog the button opens, never nowhere.
+9. Open two tabs, run `htop` in the second, right-click its tab and choose
+   "Merge into …": the two sessions sit side by side in one tab, `htop` keeps
+   running without reconnecting, and the tab title shows "+1". With 4 panes
+   in total already, the item is greyed out with the reason.
+10. Focus a tab and press Shift+F10 (or the Menu key): the same menu opens,
+    arrows move through it, Escape closes it and the tab keeps the focus.
+11. On a split tab choose "Move … to a new tab": the focused pane becomes its
+    own tab, still connected.
 
 ## Settings
 

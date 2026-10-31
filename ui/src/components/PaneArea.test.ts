@@ -67,12 +67,15 @@ vi.mock("../lib/api", () => ({
 import type { PaneState } from "../lib/sessionReducer";
 import {
   focusPane,
+  detachPane,
+  mergeTab,
   moveFocus,
   openTab,
   sessions,
   splitPane,
+  tabOf,
 } from "../lib/stores/sessions.svelte";
-import TabView from "./TabView.svelte";
+import PaneArea from "./PaneArea.svelte";
 
 beforeEach(() => {
   sessions.tabs.splice(0);
@@ -101,9 +104,8 @@ afterEach(() => {
 
 const show = (visible: boolean) => {
   openTab("c1");
-  return render(TabView, {
-    tab: sessions.tabs[0],
-    visible,
+  if (!visible) sessions.active = null;
+  return render(PaneArea, {
     onedit: vi.fn(),
     onsave: vi.fn(),
     onclose: vi.fn(),
@@ -132,7 +134,8 @@ test("a single pane fills the tab", () => {
 
 test("a tab that is not visible is hidden", () => {
   const { container } = show(false);
-  expect((container.firstElementChild as HTMLElement).hidden).toBe(true);
+  const slot = container.querySelector<HTMLElement>(".slot")!;
+  expect(slot.hidden).toBe(true);
 });
 
 test("a split shows both panes side by side without recreating the first", async () => {
@@ -425,4 +428,39 @@ test("dragging a divider leaves the keyboard where it was", async () => {
   const pressed = await fireEvent.mouseDown(separator());
   expect(pressed).toBe(false);
   expect(document.activeElement).toBe(made.terms[0].textarea);
+});
+
+test("merging and detaching tabs move panes without recreating them", async () => {
+  const { container } = show(true);
+  const a = sessions.panes[0].paneId;
+  const b = openTab("c2");
+  // Connecting (on mount) resets the pane: the prompt comes after.
+  await tick();
+  sessions.panes[1].prompt = {
+    type: "SecretPrompt",
+    host: "h",
+    port: 22,
+    kind: { type: "Password" },
+    can_save: false,
+  };
+  await tick();
+  const prompt = screen.getByRole("dialog");
+  expect(made.terms).toHaveLength(2);
+
+  mergeTab(tabOf(b)!.tabId, tabOf(a)!.tabId);
+  await tick();
+  const slots = [...container.querySelectorAll<HTMLElement>(".slot")];
+  expect(slots.map((x) => [x.hidden, box(x)])).toEqual([
+    [false, { left: "0%", top: "0%", width: "50%", height: "100%" }],
+    [false, { left: "50%", top: "0%", width: "50%", height: "100%" }],
+  ]);
+  expect(made.terms).toHaveLength(2);
+  expect(screen.getByRole("dialog")).toBe(prompt);
+
+  detachPane(b);
+  await tick();
+  expect(made.terms).toHaveLength(2);
+  expect(screen.getByRole("dialog")).toBe(prompt);
+  // The detached pane's tab is active: the other pane is hidden.
+  expect(slots.map((x) => x.hidden)).toEqual([true, false]);
 });

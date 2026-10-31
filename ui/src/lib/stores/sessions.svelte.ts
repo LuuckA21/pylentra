@@ -4,6 +4,7 @@ import type { SessionEvent } from "../bindings/SessionEvent";
 import type { Connection } from "../bindings/Connection";
 import type { QuickTarget } from "../quickTarget";
 import {
+  attach,
   count,
   firstPane,
   MAX_PANES,
@@ -103,6 +104,38 @@ export function splitPane(
   tab.root = split(tab.root, paneId, dir, pane.paneId);
   tab.focus = pane.paneId;
   return pane.paneId;
+}
+
+// Moves every pane of tab `from` beside the focused pane of tab `to`, without
+// touching their sessions; false, and nothing changes, past MAX_PANES.
+export function mergeTab(from: string, to: string): boolean {
+  const src = sessions.tabs.find((t) => t.tabId === from);
+  const dst = sessions.tabs.find((t) => t.tabId === to);
+  if (!src || !dst || src === dst) return false;
+  if (count(src.root) + count(dst.root) > MAX_PANES) return false;
+  dst.root = attach(dst.root, dst.focus, "row", src.root);
+  dst.focus = src.focus;
+  sessions.tabs.splice(sessions.tabs.indexOf(src), 1);
+  sessions.active = dst.tabId;
+  return true;
+}
+
+// Moves a pane out of its split into a new tab right after its own; its
+// session stays. A pane alone in its tab stays where it is.
+export function detachPane(paneId: string): void {
+  const t = tabIndexOf(paneId);
+  const tab = sessions.tabs[t];
+  const rest = tab && sibling(tab.root, paneId);
+  if (!rest) return;
+  if (tab.focus === paneId) tab.focus = firstPane(rest);
+  tab.root = remove(tab.root, paneId)!;
+  const tabId = crypto.randomUUID();
+  sessions.tabs.splice(t + 1, 0, {
+    tabId,
+    root: { pane: paneId },
+    focus: paneId,
+  });
+  sessions.active = tabId;
 }
 
 export function setTabRatio(tabId: string, path: Path, ratio: number): void {

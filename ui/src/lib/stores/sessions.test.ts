@@ -20,8 +20,10 @@ import {
   closeTab,
   connect,
   cycleTab,
+  detachPane,
   focusPane,
   linkQuickPane,
+  mergeTab,
   moveFocus,
   openQuickTab,
   openTab,
@@ -428,4 +430,66 @@ test("setTabRatio sets the ratio at a path, clamped, and ignores an unknown tab"
   );
   setTabRatio("nope", [], 0.2);
   expect((tab.root as { ratio: number }).ratio).toBe(0.7);
+});
+
+const tabIdOf = (paneId: string) => tabOf(paneId)!.tabId;
+
+test("mergeTab puts the whole tab beside the target's focused pane and removes it", () => {
+  const a = openTab("c1");
+  const b = openTab("c2");
+  const c = splitPane(b, "column", "c3")!;
+  const from = tabIdOf(b);
+  expect(mergeTab(from, tabIdOf(a))).toBe(true);
+  expect(sessions.tabs).toHaveLength(1);
+  const tab = sessions.tabs[0];
+  expect(tab.root).toEqual({
+    dir: "row",
+    ratio: 0.5,
+    a: { pane: a },
+    b: { dir: "column", ratio: 0.5, a: { pane: b }, b: { pane: c } },
+  });
+  // The moved tab's focused pane keeps the focus; the panes and sessions stay.
+  expect(tab.focus).toBe(c);
+  expect(sessions.active).toBe(tab.tabId);
+  expect(sessions.panes.map((p) => p.paneId)).toEqual([a, b, c]);
+  expect(api.sessionClose).not.toHaveBeenCalled();
+});
+
+test("mergeTab refuses more than 4 panes, the same tab or an unknown one", () => {
+  const a = openTab("c1");
+  splitPane(a, "row", "c2");
+  splitPane(a, "row", "c3");
+  const b = openTab("c4");
+  splitPane(b, "row", "c5");
+  const before = JSON.parse(JSON.stringify(sessions));
+  expect(mergeTab(tabIdOf(b), tabIdOf(a))).toBe(false);
+  expect(mergeTab(tabIdOf(a), tabIdOf(a))).toBe(false);
+  expect(mergeTab("nope", tabIdOf(a))).toBe(false);
+  expect(JSON.parse(JSON.stringify(sessions))).toEqual(before);
+});
+
+test("detachPane moves a pane to a new tab after its own, focused and active", () => {
+  const a = openTab("c1");
+  const b = splitPane(a, "row", "c2")!;
+  const other = openTab("c3");
+  const from = tabIdOf(a);
+  focusPane(b);
+  detachPane(b);
+  expect(sessions.tabs.map((t) => Object.keys(rects(t.root).panes))).toEqual([
+    [a],
+    [b],
+    [other],
+  ]);
+  expect(tabOf(a)!.focus).toBe(a);
+  expect(tabOf(a)!.tabId).toBe(from);
+  expect(sessions.active).toBe(tabIdOf(b));
+  expect(tabOf(b)!.focus).toBe(b);
+  expect(api.sessionClose).not.toHaveBeenCalled();
+});
+
+test("detachPane leaves a lone pane alone", () => {
+  const a = openTab("c1");
+  const before = JSON.parse(JSON.stringify(sessions));
+  detachPane(a);
+  expect(JSON.parse(JSON.stringify(sessions))).toEqual(before);
 });

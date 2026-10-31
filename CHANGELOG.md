@@ -4,6 +4,19 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-10-31
+
+Nothing saved changes format: going back to 0.6.x loses nothing.
+
+### Added
+
+- Merge tabs into a split screen: right-click a tab (or press the Menu key,
+  or Shift+F10, on it) and choose "Merge into …" to put its sessions beside
+  the other tab's focused pane, up to 4 panes per tab. "Move … to a new tab"
+  takes the focused pane of a split tab back out. Sessions are not
+  reconnected: terminal, scrollback, forwards and open prompts stay as they
+  are.
+
 ## [0.6.0] - 2026-10-30
 
 Nothing saved changes format: going back to 0.5.x loses nothing.
