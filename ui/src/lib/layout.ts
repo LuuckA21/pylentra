@@ -10,22 +10,23 @@ export const MAX_PANES = 4;
 
 const EPS = 0.01;
 
-export function split(
+// The leaf `paneId` becomes a split with `node` beside it (on the right, or below).
+export function attach(root: Node, paneId: string, dir: Dir, node: Node): Node {
+  if ("pane" in root)
+    return root.pane === paneId ? { dir, ratio: 0.5, a: root, b: node } : root;
+  return {
+    ...root,
+    a: attach(root.a, paneId, dir, node),
+    b: attach(root.b, paneId, dir, node),
+  };
+}
+
+export const split = (
   root: Node,
   paneId: string,
   dir: Dir,
   newId: string,
-): Node {
-  if ("pane" in root)
-    return root.pane === paneId
-      ? { dir, ratio: 0.5, a: root, b: { pane: newId } }
-      : root;
-  return {
-    ...root,
-    a: split(root.a, paneId, dir, newId),
-    b: split(root.b, paneId, dir, newId),
-  };
-}
+): Node => attach(root, paneId, dir, { pane: newId });
 
 export function remove(root: Node, paneId: string): Node | null {
   if ("pane" in root) return root.pane === paneId ? null : root;

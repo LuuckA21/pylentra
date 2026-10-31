@@ -434,3 +434,30 @@ test("Import library on a read-only library explains and does not ask for a file
   await waitFor(() => expect(toasts).toHaveLength(1));
   expect(api.libraryImportPreview).not.toHaveBeenCalled();
 });
+
+test("right-click on a tab opens its menu, which merges it into another tab", async () => {
+  openTab("c1");
+  openTab("c2");
+  render(App);
+  await fireEvent.contextMenu(screen.getByRole("tab", { name: /c2/ }));
+  await fireEvent.click(
+    screen.getByRole("menuitem", { name: "Merge into c1" }),
+  );
+  expect(sessions.tabs).toHaveLength(1);
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+test("Shift+F10 opens the tab menu from the keyboard; Escape gives the focus back", async () => {
+  openTab("c1");
+  openTab("c2");
+  render(App);
+  const tab = screen.getByRole("tab", { name: /c1/ });
+  await fireEvent.keyDown(tab, { key: "F10", shiftKey: true });
+  const menu = screen.getByRole("menu", { name: "Tab" });
+  expect(document.activeElement).toBe(
+    screen.getByRole("menuitem", { name: "Merge into c2" }),
+  );
+  await fireEvent.keyDown(menu, { key: "Escape" });
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(document.activeElement).toBe(tab);
+});

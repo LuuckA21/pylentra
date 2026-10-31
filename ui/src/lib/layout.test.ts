@@ -9,6 +9,7 @@ import {
   setRatio,
   sibling,
   split,
+  attach,
   type Node,
 } from "./layout";
 
@@ -22,6 +23,15 @@ const tree: Node = {
   a: A,
   b: { dir: "column", ratio: 0.5, a: B, b: C },
 };
+
+test("attach puts a whole subtree beside the target leaf", () => {
+  const sub: Node = { dir: "column", ratio: 0.3, a: B, b: C };
+  expect(attach(tree, "A", "row", sub)).toEqual({
+    ...tree,
+    a: { dir: "row", ratio: 0.5, a: A, b: sub },
+  });
+  expect(attach(A, "Z", "row", sub)).toEqual(A);
+});
 
 test("split replaces only the target leaf", () => {
   expect(split(A, "A", "row", "B")).toEqual({

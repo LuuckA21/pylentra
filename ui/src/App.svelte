@@ -10,7 +10,8 @@
   import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import SplitPicker from "./components/SplitPicker.svelte";
-  import TabView from "./components/TabView.svelte";
+  import TabMenu from "./components/TabMenu.svelte";
+  import PaneArea from "./components/PaneArea.svelte";
   import Toasts from "./components/Toasts.svelte";
   import UpdateBanner from "./components/UpdateBanner.svelte";
   import ConfirmDialog from "./components/ui/ConfirmDialog.svelte";
@@ -61,6 +62,18 @@
   }
   // The pane the picker will split; the picker is gone once that pane is.
   let splitting = $state<{ paneId: string; dir: Dir } | null>(null);
+  // The tab whose menu is open, where, and the tab button to refocus.
+  let tabMenu = $state<{
+    tab: Tab;
+    x: number;
+    y: number;
+    el: HTMLElement;
+  } | null>(null);
+  function closeTabMenu(refocus: boolean) {
+    const el = tabMenu?.el;
+    tabMenu = null;
+    if (refocus) el?.focus();
+  }
 
   // The one confirmation on screen; `action` runs if the user confirms.
   let confirming = $state<{
@@ -203,7 +216,32 @@
                   class="title"
                   class:closed={pane.phase === "closed"}
                   aria-selected={tab.tabId === sessions.active}
+                  aria-haspopup="menu"
                   onclick={() => (sessions.active = tab.tabId)}
+                  oncontextmenu={(e) => {
+                    e.preventDefault();
+                    tabMenu = {
+                      tab,
+                      x: e.clientX,
+                      y: e.clientY,
+                      el: e.currentTarget,
+                    };
+                  }}
+                  onkeydown={(e) => {
+                    if (
+                      e.key !== "ContextMenu" &&
+                      !(e.shiftKey && e.key === "F10")
+                    )
+                      return;
+                    e.preventDefault();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    tabMenu = {
+                      tab,
+                      x: r.left,
+                      y: r.bottom,
+                      el: e.currentTarget,
+                    };
+                  }}
                 >
                   <span class="dot tag-{dotOf(pane.connectionId) ?? 'none'}"
                   ></span>
@@ -227,16 +265,12 @@
           <div class="quick"><QuickConnect onopen={openTab} /></div>
         </div>
         <div class="tabs">
-          {#each sessions.tabs as tab (tab.tabId)}
-            <TabView
-              {tab}
-              visible={tab.tabId === sessions.active}
-              onedit={edit}
-              onsave={saveQuick}
-              onclose={requestClosePane}
-              onsplit={(paneId, dir) => (splitting = { paneId, dir })}
-            />
-          {/each}
+          <PaneArea
+            onedit={edit}
+            onsave={saveQuick}
+            onclose={requestClosePane}
+            onsplit={(paneId, dir) => (splitting = { paneId, dir })}
+          />
         </div>
       {:else}
         <div class="home">
@@ -258,6 +292,15 @@
       editing = null;
     }}
     oncancel={() => (editing = null)}
+  />
+{/if}
+{#if tabMenu && sessions.tabs.includes(tabMenu.tab)}
+  <TabMenu
+    tab={tabMenu.tab}
+    x={tabMenu.x}
+    y={tabMenu.y}
+    titleOf={(paneId) => titleOf(paneOf(paneId)!)}
+    onclose={closeTabMenu}
   />
 {/if}
 {#if splitting && paneOf(splitting.paneId)}
