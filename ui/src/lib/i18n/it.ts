@@ -25,6 +25,8 @@ export const it: Record<MessageKey, string> = {
   "sidebar.import": "Importa da ~/.ssh/config",
   "sidebar.collapse": "Riduci la barra laterale",
   "sidebar.expand": "Espandi la barra laterale",
+  "sidebar.exportLibrary": "Esporta libreria…",
+  "sidebar.importLibrary": "Importa libreria…",
   "sidebar.newGroup": "Nuovo gruppo",
   "menu.rename": "Rinomina",
   "group.name": "Nome del gruppo",
@@ -195,6 +197,7 @@ export const it: Record<MessageKey, string> = {
   "settings.section.connections": "Connessioni",
   "settings.section.snippets": "Snippet",
   "settings.section.security": "Sicurezza",
+  "settings.section.library": "Libreria",
   "settings.section.updates": "Aggiornamenti",
   "settings.version": "Pylentra {version}",
   "settings.terminalTheme": "Tema colori",
@@ -237,6 +240,29 @@ export const it: Record<MessageKey, string> = {
   "settings.language.system": "Sistema",
   "settings.language.en": "English",
   "settings.language.it": "Italiano",
+  "library.export": "Esporta…",
+  "library.import": "Importa…",
+  "library.hint":
+    "Un file con connessioni, gruppi, note e snippet. Nessuna password viene esportata.",
+  "library.exported": "Libreria esportata in {path}",
+  "library.exportedNoSnippets":
+    "Gli snippet non sono disponibili e non sono stati esportati.",
+  "library.newerVersion":
+    "Il file è stato creato da una versione più recente di Pylentra.",
+  "library.notExport": "Il file non è un export di Pylentra.",
+  "library.importTitle": "Importa libreria",
+  "library.duplicate": "già presente",
+  "library.missingKey": "chiave non trovata: {path}",
+  "library.via": "tramite {name}",
+  "library.viaExisting": "tramite {name} (già presente)",
+  "library.jumpDropped": "resterà senza jump host ({name} non importato)",
+  "library.summary":
+    "Gruppi nel file: {new} nuovi, {reused} già presenti. Snippet: {global} globali nuovi, {perConnection} legati alle connessioni.",
+  "library.importN": "Importa ({n})",
+  "library.imported":
+    "Importati — connessioni: {connections}, gruppi: {groups}, snippet: {snippets}",
+  "library.partial":
+    "Importate {connections} connessioni; gli snippet no: {reason}",
   "settings.openLogs": "Apri cartella log",
 
   "error.auth.agent_unavailable": "Agente SSH non disponibile: {reason}",
@@ -255,6 +281,8 @@ export const it: Record<MessageKey, string> = {
     "Il file non si può leggere ({reason}). Resta intatto e in sola lettura fino al prossimo avvio.",
   "error.config.recovered_corrupt":
     "Il file di configurazione era illeggibile. È stato conservato come {backup} e ne è stato creato uno nuovo.",
+  "error.export.file_exists":
+    "Esiste già un file {name}: scegli un altro nome.",
   "error.forward.permission_denied": "Permesso negato per la porta {port}.",
   "error.forward.port_in_use": "La porta {port} è già in uso.",
   "error.forward.rejected": "Il server ha rifiutato l'inoltro di porta.",

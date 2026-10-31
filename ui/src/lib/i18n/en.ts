@@ -23,6 +23,8 @@ export const en = {
   "sidebar.import": "Import from ~/.ssh/config",
   "sidebar.collapse": "Collapse sidebar",
   "sidebar.expand": "Expand sidebar",
+  "sidebar.exportLibrary": "Export library…",
+  "sidebar.importLibrary": "Import library…",
   "sidebar.newGroup": "New group",
   "menu.rename": "Rename",
   "group.name": "Group name",
@@ -192,6 +194,7 @@ export const en = {
   "settings.section.connections": "Connections",
   "settings.section.snippets": "Snippets",
   "settings.section.security": "Security",
+  "settings.section.library": "Library",
   "settings.section.updates": "Updates",
   "settings.version": "Pylentra {version}",
   "settings.terminalTheme": "Color theme",
@@ -233,6 +236,29 @@ export const en = {
   "settings.language.system": "System",
   "settings.language.en": "English",
   "settings.language.it": "Italiano",
+  "library.export": "Export…",
+  "library.import": "Import…",
+  "library.hint":
+    "One file with connections, groups, notes and snippets. No password is exported.",
+  "library.exported": "Library exported to {path}",
+  "library.exportedNoSnippets":
+    "Snippets are unavailable and were not exported.",
+  "library.newerVersion":
+    "The file was created by a newer version of Pylentra.",
+  "library.notExport": "The file is not a Pylentra export.",
+  "library.importTitle": "Import library",
+  "library.duplicate": "already present",
+  "library.missingKey": "key not found: {path}",
+  "library.via": "via {name}",
+  "library.viaExisting": "via {name} (already present)",
+  "library.jumpDropped": "will have no jump host ({name} not imported)",
+  "library.summary":
+    "Groups in the file: {new} new, {reused} already present. Snippets: {global} new global, {perConnection} tied to connections.",
+  "library.importN": "Import ({n})",
+  "library.imported":
+    "Imported — connections: {connections}, groups: {groups}, snippets: {snippets}",
+  "library.partial":
+    "Imported {connections} connections; snippets were not: {reason}",
   "settings.openLogs": "Open log folder",
 
   "error.auth.agent_unavailable": "SSH agent unavailable: {reason}",
@@ -250,6 +276,8 @@ export const en = {
     "The file could not be read ({reason}). It stays untouched and read-only until the next start.",
   "error.config.recovered_corrupt":
     "The configuration file was unreadable. It was kept as {backup} and a new one was started.",
+  "error.export.file_exists":
+    "A file named {name} already exists: choose another name.",
   "error.forward.permission_denied": "Permission denied for port {port}.",
   "error.forward.port_in_use": "Port {port} is already in use.",
   "error.forward.rejected": "The server rejected the port forward.",

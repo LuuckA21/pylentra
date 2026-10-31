@@ -47,6 +47,8 @@ function setup() {
     onedit: vi.fn(),
     onsettings: vi.fn(),
     onimport: vi.fn(),
+    onexportlibrary: vi.fn(),
+    onimportlibrary: vi.fn(),
   };
   render(Sidebar, props);
   return props;
@@ -361,6 +363,8 @@ test("a collapsed group stays collapsed after a reload", async () => {
     onedit: vi.fn(),
     onsettings: vi.fn(),
     onimport: vi.fn(),
+    onexportlibrary: vi.fn(),
+    onimportlibrary: vi.fn(),
   });
   await fireEvent.click(
     screen.getByRole("button", { name: /Servers/, expanded: true }),
@@ -385,6 +389,21 @@ test("more menu offers New group and Import from ~/.ssh/config", async () => {
   expect(screen.queryByRole("menu")).toBeNull();
 });
 
+test("more menu offers export and import of the library", async () => {
+  const { onexportlibrary, onimportlibrary } = setup();
+  await openMore();
+  await fireEvent.click(
+    screen.getByRole("menuitem", { name: "Export library…" }),
+  );
+  expect(onexportlibrary).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("menu")).toBeNull();
+  await openMore();
+  await fireEvent.click(
+    screen.getByRole("menuitem", { name: "Import library…" }),
+  );
+  expect(onimportlibrary).toHaveBeenCalledOnce();
+});
+
 test("empty library offers new connection and import", async () => {
   library.connections = [];
   const { onedit, onimport } = setup();
@@ -407,6 +426,8 @@ test("row shows initials avatar, name, user@host and the open label", () => {
     onedit: vi.fn(),
     onsettings: vi.fn(),
     onimport: vi.fn(),
+    onexportlibrary: vi.fn(),
+    onimportlibrary: vi.fn(),
   });
   const row = screen.getByRole("option", { name: /web/ });
   expect(row.textContent).toContain("WE");

@@ -2,10 +2,13 @@
 //! directly, so the logic is testable without a Tauri runtime.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pylentra_core::error::{ApiError, CoreError};
+use pylentra_core::export::{
+    self, ExportDone, ExportFile, ImportCounts, ImportPick, ImportPreview,
+};
 use pylentra_core::known_hosts::KnownHostEntry;
 use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
 use pylentra_core::secrets::SecretKind;
@@ -13,10 +16,11 @@ use pylentra_core::snippets::Snippet;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
 use pylentra_core::ssh::{SessionId, SessionSink};
 use pylentra_core::ssh_config::{ScanResult, parse};
-use pylentra_core::store::Library;
+use pylentra_core::store::{Library, atomic_write};
 use tauri::http::HeaderMap;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 use uuid::Uuid;
 
 use crate::sink::ChannelSink;
@@ -235,50 +239,272 @@ fn missing_scan(path: String) -> ScanResult {
 
 const MAX_SSH_CONFIG_BYTES: usize = 1024 * 1024;
 
-/// Reads `path` (never writes it) and marks the candidates already saved.
-pub fn do_ssh_config_scan(state: &AppState, path: &Path) -> Result<ScanResult, ApiError> {
-    let shown = path.display().to_string();
+/// Reads a regular file of at most `max` bytes; `Io(NotFound)` passes through.
+fn read_limited(path: &Path, max: usize, field: &str) -> Result<Vec<u8>, CoreError> {
+    let invalid = |reason: &str| CoreError::InvalidInput {
+        field: field.into(),
+        reason: reason.into(),
+    };
     // Checked before opening: a directory errors and a FIFO would block the read.
-    match std::fs::metadata(path) {
-        Ok(meta) if meta.is_file() => {}
-        Ok(_) => {
-            return Err(CoreError::InvalidInput {
-                field: "ssh_config".into(),
-                reason: "not a regular file".into(),
-            }
-            .into());
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(missing_scan(shown));
-        }
-        Err(e) => return Err(CoreError::from(e).into()),
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(invalid("not a regular file"));
     }
     let mut bytes = Vec::new();
     // One byte past the limit is enough to reject, without reading the rest.
-    let read = std::fs::File::open(path).and_then(|f| {
-        f.take(MAX_SSH_CONFIG_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-    });
-    match read {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    std::fs::File::open(path)?
+        .take(max as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > max {
+        return Err(invalid("file too large"));
+    }
+    Ok(bytes)
+}
+
+/// Reads `path` (never writes it) and marks the candidates already saved.
+pub fn do_ssh_config_scan(state: &AppState, path: &Path) -> Result<ScanResult, ApiError> {
+    let shown = path.display().to_string();
+    let bytes = match read_limited(path, MAX_SSH_CONFIG_BYTES, "ssh_config") {
+        Ok(bytes) => bytes,
+        Err(CoreError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(missing_scan(shown));
         }
-        Err(e) => return Err(CoreError::from(e).into()),
-    }
-    if bytes.len() > MAX_SSH_CONFIG_BYTES {
-        return Err(CoreError::InvalidInput {
-            field: "ssh_config".into(),
-            reason: "file too large".into(),
-        }
-        .into());
-    }
+        Err(e) => return Err(e.into()),
+    };
     let mut result = parse(
         &String::from_utf8_lossy(&bytes),
         &state.store().library().connections,
     );
     result.path = shown;
     Ok(result)
+}
+
+const MAX_EXPORT_BYTES: usize = 5 * 1024 * 1024;
+const MAX_EXPORTED_AT_CHARS: usize = 64;
+
+/// The date part of `exported_at`, or none if it does not look like one.
+fn export_file_name(exported_at: &str) -> String {
+    match exported_at.get(..10) {
+        Some(d) if d.bytes().all(|b| b.is_ascii_digit() || b == b'-') => {
+            format!("pylentra-export-{d}.toml")
+        }
+        _ => "pylentra-export.toml".into(),
+    }
+}
+
+/// GTK saves a name typed without `.toml` as is, which the Open filter would hide.
+/// The dialog asked about overwriting only the typed name, so an existing
+/// `<name>.toml` is never replaced.
+fn export_target(picked: &Path) -> Result<PathBuf, ApiError> {
+    if picked.extension().is_some() {
+        return Ok(picked.to_path_buf());
+    }
+    let path = picked.with_extension("toml");
+    // `symlink_metadata`: a dangling link is taken too.
+    if std::fs::symlink_metadata(&path).is_ok() {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        return Err(ApiError {
+            code: "export.file_exists".into(),
+            params: [("name".into(), name.into_owned())].into(),
+        });
+    }
+    Ok(path)
+}
+
+fn check_exported_at(exported_at: &str) -> Result<(), ApiError> {
+    if exported_at.chars().count() > MAX_EXPORTED_AT_CHARS {
+        return Err(CoreError::InvalidInput {
+            field: "exported_at".into(),
+            reason: "too long".into(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// The dialogs are native: their filter label follows the app language.
+/// `lang` is the language the UI is shown in (the setting may say "system").
+fn all_files_label(lang: &str) -> &'static str {
+    if lang == "it" {
+        "Tutti i file"
+    } else {
+        "All files"
+    }
+}
+
+/// A network path (`\\host\share`, `//host/share`) is not checked: on Windows
+/// that alone contacts the host (SMB, NTLM) as soon as the preview opens.
+fn key_found_or_unchecked(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with(r"\\") || s.starts_with("//") || path.exists()
+}
+
+fn picked_path(picked: FilePath) -> Result<PathBuf, CoreError> {
+    picked
+        .into_path()
+        .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))
+}
+
+// Async: the dialog blocks, and must not run on the main thread.
+// The dialogs open here so no path ever comes from the webview.
+#[tauri::command(async)]
+pub fn library_export(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    exported_at: String,
+) -> Result<Option<ExportDone>, ApiError> {
+    check_exported_at(&exported_at)?;
+    let Some(picked) = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .add_filter("TOML", &["toml"])
+        .set_file_name(export_file_name(&exported_at))
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    do_library_export(&state, &picked_path(picked)?, &exported_at).map(Some)
+}
+
+/// Writes to `picked` (with `.toml` added if it has no extension).
+/// `snippets: false`: `snippets.toml` could not be read, so the file has none.
+pub fn do_library_export(
+    state: &AppState,
+    picked: &Path,
+    exported_at: &str,
+) -> Result<ExportDone, ApiError> {
+    let path = export_target(picked)?;
+    let (text, with_snippets) = {
+        let store = state.store();
+        let snippets = state.snippets();
+        let text = export::export(store.library(), snippets.list(), exported_at)?;
+        (text, !snippets.is_unavailable())
+    };
+    atomic_write(&path, &text)?;
+    Ok(ExportDone {
+        path: path.display().to_string(),
+        snippets: with_snippets,
+    })
+}
+
+fn read_export(path: &Path) -> Result<ExportFile, CoreError> {
+    let bytes = read_limited(path, MAX_EXPORT_BYTES, "file")?;
+    let text = String::from_utf8(bytes).map_err(|e| CoreError::InvalidInput {
+        field: "file".into(),
+        reason: e.to_string(),
+    })?;
+    export::parse(&text)
+}
+
+/// The file without the global snippets already saved, for preview and import alike.
+fn read_import(state: &AppState, path: &Path) -> Result<ExportFile, CoreError> {
+    let mut file = read_export(path)?;
+    export::drop_saved_globals(&mut file.snippets, state.snippets().list());
+    Ok(file)
+}
+
+// Async: the dialog blocks, and must not run on the main thread.
+#[tauri::command(async)]
+pub fn library_import_preview(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    lang: String,
+) -> Result<Option<ImportPick>, ApiError> {
+    let Some(picked) = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .add_filter("TOML", &["toml"])
+        // shortcut: GTK turns "*" into "*.*", hiding names without a dot; new exports always get `.toml`.
+        .add_filter(all_files_label(&lang), &["*"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    do_library_import_pick(&state, picked_path(picked)?).map(Some)
+}
+
+/// Previews `path` and remembers it for `library_import`.
+pub fn do_library_import_pick(state: &AppState, path: PathBuf) -> Result<ImportPick, ApiError> {
+    let preview = do_library_import_preview(state, &path);
+    // A failed pick forgets the previous file: a confirm only reads the one just shown.
+    *state.pending_import() = preview.is_ok().then(|| path.clone());
+    Ok(ImportPick {
+        path: path.display().to_string(),
+        preview: preview?,
+    })
+}
+
+pub fn do_library_import_preview(state: &AppState, path: &Path) -> Result<ImportPreview, ApiError> {
+    let file = read_import(state, path)?;
+    // A copy: the key checks may be slow and must not hold the store.
+    let library = state.store().library().clone();
+    Ok(export::preview(&file, &library, key_found_or_unchecked))
+}
+
+// Async so the file read runs off the main thread.
+#[tauri::command(async)]
+pub fn library_import(
+    state: State<'_, AppState>,
+    selected: Vec<Uuid>,
+) -> Result<ImportCounts, ApiError> {
+    do_library_import_pending(&state, &selected)
+}
+
+/// Imports the file remembered by the last pick.
+pub fn do_library_import_pending(
+    state: &AppState,
+    selected: &[Uuid],
+) -> Result<ImportCounts, ApiError> {
+    // Held throughout, so a second confirm waits and then finds nothing.
+    let mut pending = state.pending_import();
+    let path = pending
+        .as_deref()
+        .ok_or(CoreError::Io(std::io::ErrorKind::NotFound.into()))?;
+    let result = do_library_import(state, path, selected);
+    // Once the library is written, a retry would add the connections again.
+    if result
+        .as_ref()
+        .map_or_else(|e| e.params.contains_key("connections_imported"), |_| true)
+    {
+        *pending = None;
+    }
+    result
+}
+
+/// Rereads the file: `selected` holds its ids, the same the preview showed.
+/// The library is written first; if the snippets then fail, the connections
+/// stay imported and the snippet error is returned.
+pub fn do_library_import(
+    state: &AppState,
+    path: &Path,
+    selected: &[Uuid],
+) -> Result<ImportCounts, ApiError> {
+    let file = read_import(state, path)?;
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    // Held throughout, so the snippets' connections cannot vanish first.
+    let mut store = state.store();
+    let plan = export::plan(&file, selected, store.library())?;
+    let groups = count(plan.groups.len());
+    let connections = count(store.import_bundle(plan.groups, plan.connections)?);
+    // Nothing to add must not fail on an unavailable snippets file.
+    let snippets = if plan.snippets.is_empty() {
+        0
+    } else {
+        let imported = state.snippets().import(plan.snippets).map_err(|e| {
+            let mut e = ApiError::from(e);
+            // Tells "snippets failed" apart from "nothing imported".
+            e.params
+                .insert("connections_imported".into(), connections.to_string());
+            e
+        })?;
+        count(imported)
+    };
+    Ok(ImportCounts {
+        connections,
+        groups,
+        snippets,
+    })
 }
 
 #[tauri::command]
@@ -528,6 +754,8 @@ pub fn log_dir(app: AppHandle) -> Result<String, ApiError> {
 mod tests {
     use super::*;
     use pylentra_core::secrets::{FailingSecretStore, MemorySecretStore, SecretStore};
+    use pylentra_core::snippets::SnippetStore;
+    use pylentra_core::store::ConnectionStore;
     use secrecy::ExposeSecret;
     use tempfile::TempDir;
 
@@ -1074,6 +1302,351 @@ mod tests {
             2
         );
         assert_eq!(do_library_get(&state).connections.len(), 2);
+    }
+
+    fn group(name: &str) -> Group {
+        Group {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            color: None,
+            extra: Default::default(),
+        }
+    }
+
+    fn file_text(path: &Path) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+
+    /// Exports a library of two connections (one in a group) and one snippet.
+    fn exported(dir: &TempDir) -> std::path::PathBuf {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let g = group("Prod");
+        do_group_save(&state, g.clone()).unwrap();
+        let a = Connection {
+            group_id: Some(g.id),
+            ..conn("a")
+        };
+        do_connection_save(&state, a.clone(), None, None).unwrap();
+        do_connection_save(&state, conn("b"), None, None).unwrap();
+        do_snippet_save(&state, snippet("s", Some(a.id))).unwrap();
+        let path = dir.path().join("export.toml");
+        assert!(
+            do_library_export(&state, &path, "2026-10-30")
+                .unwrap()
+                .snippets
+        );
+        path
+    }
+
+    fn all_rows(state: &AppState, path: &Path) -> Vec<Uuid> {
+        let p = do_library_import_preview(state, path).unwrap();
+        p.rows.iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn library_export_then_import() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let selected = all_rows(&state, &path);
+        assert_eq!(selected.len(), 2);
+        let counts = do_library_import(&state, &path, &selected).unwrap();
+        assert_eq!(
+            counts,
+            ImportCounts {
+                connections: 2,
+                groups: 1,
+                snippets: 1
+            }
+        );
+        let lib = do_library_get(&state);
+        let names: Vec<&str> = lib.connections.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(lib.groups.len(), 1);
+        assert_eq!(lib.connections[0].group_id, Some(lib.groups[0].id));
+        assert_eq!(
+            do_snippets_get(&state)[0].connection_id,
+            Some(lib.connections[0].id)
+        );
+    }
+
+    #[test]
+    fn library_export_without_available_snippets() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        do_connection_save(&state, conn("a"), None, None).unwrap();
+        *state.snippets() = SnippetStore::unavailable(d.path().join("snippets.toml"));
+        let path = d.path().join("export.toml");
+        assert!(
+            !do_library_export(&state, &path, "2026-10-30")
+                .unwrap()
+                .snippets
+        );
+        let file = pylentra_core::export::parse(&file_text(&path).unwrap()).unwrap();
+        assert_eq!((file.connections.len(), file.snippets.len()), (1, 0));
+    }
+
+    #[test]
+    fn library_export_with_read_only_snippets_includes_them() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("snippets.toml"),
+            format!(
+                "version = 9\n[[snippets]]\nid = \"{}\"\nname = \"s\"\ntext = \"ls\"\n",
+                Uuid::new_v4()
+            ),
+        )
+        .unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let path = dir.path().join("export.toml");
+        assert!(
+            do_library_export(&state, &path, "2026-10-30")
+                .unwrap()
+                .snippets
+        );
+        let file = pylentra_core::export::parse(&file_text(&path).unwrap()).unwrap();
+        assert_eq!(file.snippets.len(), 1);
+    }
+
+    #[test]
+    fn library_import_into_read_only_library_changes_nothing() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let dir = TempDir::new().unwrap();
+        let (conns, snips) = (
+            dir.path().join("connections.toml"),
+            dir.path().join("snippets.toml"),
+        );
+        std::fs::write(&conns, "version = 9\n").unwrap();
+        std::fs::write(&snips, "version = 1\n").unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let selected = all_rows(&state, &path);
+        let err = do_library_import(&state, &path, &selected).unwrap_err();
+        assert_eq!(err.code, CoreError::ReadOnly.code());
+        assert!(!err.params.contains_key("connections_imported"));
+        assert_eq!(file_text(&conns).as_deref(), Some("version = 9\n"));
+        assert_eq!(file_text(&snips).as_deref(), Some("version = 1\n"));
+    }
+
+    #[test]
+    fn library_import_keeps_connections_when_snippets_fail() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let selected = all_rows(&state, &path);
+        let err = do_library_import(&state, &path, &selected).unwrap_err();
+        assert_eq!(err.code, CoreError::ReadOnly.code());
+        assert_eq!(err.params["connections_imported"], "2");
+        assert!(do_snippets_get(&state).is_empty());
+        let (on_disk, _) = ConnectionStore::load(dir.path().join("connections.toml")).unwrap();
+        assert_eq!(on_disk.library().connections.len(), 2);
+    }
+
+    #[test]
+    fn library_import_pick_remembers_the_file_until_imported() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = do_library_import_pending(&state, &[]).unwrap_err();
+        assert_eq!(err.code, "io");
+        let pick = do_library_import_pick(&state, path.clone()).unwrap();
+        assert_eq!(pick.path, path.display().to_string());
+        let selected: Vec<Uuid> = pick.preview.rows.iter().map(|r| r.id).collect();
+        assert_eq!(
+            do_library_import_pending(&state, &selected)
+                .unwrap()
+                .connections,
+            2
+        );
+        // Imported once: a second confirm must not add the same connections again.
+        assert_eq!(
+            do_library_import_pending(&state, &selected)
+                .unwrap_err()
+                .code,
+            "io"
+        );
+        assert_eq!(do_library_get(&state).connections.len(), 2);
+    }
+
+    #[test]
+    fn library_import_pick_of_a_bad_file_forgets_the_previous_one() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        do_library_import_pick(&state, path).unwrap();
+        assert!(do_library_import_pick(&state, files.path().to_path_buf()).is_err());
+        assert!(do_library_import_pending(&state, &[]).is_err());
+    }
+
+    #[test]
+    fn library_import_partly_done_is_not_repeated() {
+        let files = TempDir::new().unwrap();
+        let path = exported(&files);
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
+        let state =
+            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let selected = do_library_import_pick(&state, path)
+            .unwrap()
+            .preview
+            .rows
+            .iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>();
+        do_library_import_pending(&state, &selected).unwrap_err();
+        assert_eq!(
+            do_library_import_pending(&state, &selected)
+                .unwrap_err()
+                .code,
+            "io"
+        );
+        assert_eq!(do_library_get(&state).connections.len(), 2);
+    }
+
+    #[test]
+    fn export_file_name_uses_the_date() {
+        assert_eq!(
+            export_file_name("2026-10-30T12:00:00Z"),
+            "pylentra-export-2026-10-30.toml"
+        );
+        // Local time from the UI: just after midnight is already the new day.
+        assert_eq!(
+            export_file_name("2026-10-30T00:30:00+01:00"),
+            "pylentra-export-2026-10-30.toml"
+        );
+        for odd in ["", "2026", "../../etc/x.toml"] {
+            assert_eq!(export_file_name(odd), "pylentra-export.toml");
+        }
+    }
+
+    #[test]
+    fn export_path_gets_toml_when_it_has_no_extension() {
+        let d = TempDir::new().unwrap();
+        for (picked, saved) in [
+            ("backup", "backup.toml"),
+            ("backup.toml", "backup.toml"),
+            ("backup.txt", "backup.txt"),
+        ] {
+            let picked = d.path().join(picked);
+            assert_eq!(export_target(&picked).unwrap(), d.path().join(saved));
+        }
+        // The dialog confirmed the name as typed, not the one with `.toml`.
+        std::fs::write(d.path().join("backup.toml"), "old").unwrap();
+        let err = export_target(&d.path().join("backup")).unwrap_err();
+        assert_eq!(err.code, "export.file_exists");
+        assert_eq!(err.params["name"], "backup.toml");
+        let typed = d.path().join("backup.toml");
+        assert_eq!(export_target(&typed).unwrap(), typed);
+    }
+
+    #[test]
+    fn library_export_never_replaces_the_toml_it_appends() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        do_connection_save(&state, conn("a"), None, None).unwrap();
+        let existing = d.path().join("backup.toml");
+        std::fs::write(&existing, "old").unwrap();
+        let err = do_library_export(&state, &d.path().join("backup"), "2026-10-30").unwrap_err();
+        assert_eq!(err.code, "export.file_exists");
+        assert_eq!(file_text(&existing).unwrap(), "old");
+        assert!(!d.path().join("backup").exists());
+        let done = do_library_export(&state, &d.path().join("other"), "2026-10-30").unwrap();
+        assert_eq!(done.path, d.path().join("other.toml").display().to_string());
+        assert!(file_text(&d.path().join("other.toml")).is_some());
+    }
+
+    #[test]
+    fn dialog_filter_label_follows_the_language() {
+        assert_eq!(all_files_label("it"), "Tutti i file");
+        for other in ["en", ""] {
+            assert_eq!(all_files_label(other), "All files");
+        }
+    }
+
+    #[test]
+    fn key_check_skips_network_paths() {
+        let d = TempDir::new().unwrap();
+        let key = d.path().join("id");
+        std::fs::write(&key, "k").unwrap();
+        assert!(key_found_or_unchecked(&key));
+        assert!(!key_found_or_unchecked(&d.path().join("missing")));
+        for unc in [r"\\host\share\id", "//host/share/id"] {
+            assert!(key_found_or_unchecked(Path::new(unc)));
+        }
+    }
+
+    #[test]
+    fn library_import_again_skips_saved_global_snippets() {
+        let (d, src) = state_with(Arc::new(MemorySecretStore::default()));
+        let a = conn("a");
+        do_connection_save(&src, a.clone(), None, None).unwrap();
+        do_snippet_save(&src, snippet("g", None)).unwrap();
+        do_snippet_save(&src, snippet("on a", Some(a.id))).unwrap();
+        let path = d.path().join("export.toml");
+        do_library_export(&src, &path, "2026-10-30").unwrap();
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        // The second time the global snippet is already there; the one on
+        // `a` follows its new connection.
+        for (global, added) in [(1, 2), (0, 1)] {
+            let p = do_library_import_preview(&state, &path).unwrap();
+            assert_eq!((p.snippets_global, p.snippets_per_connection), (global, 1));
+            let selected = all_rows(&state, &path);
+            let counts = do_library_import(&state, &path, &selected).unwrap();
+            assert_eq!(counts.snippets, added);
+        }
+        let globals = do_snippets_get(&state)
+            .iter()
+            .filter(|s| s.connection_id.is_none())
+            .count();
+        assert_eq!((globals, do_snippets_get(&state).len()), (1, 3));
+    }
+
+    #[test]
+    fn library_import_without_snippets_ignores_unavailable_store() {
+        let (d, src) = state_with(Arc::new(MemorySecretStore::default()));
+        do_connection_save(&src, conn("a"), None, None).unwrap();
+        let path = d.path().join("export.toml");
+        do_library_export(&src, &path, "2026-10-30").unwrap();
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        *state.snippets() = SnippetStore::unavailable(d.path().join("snippets.toml"));
+        let selected = all_rows(&state, &path);
+        assert_eq!(
+            do_library_import(&state, &path, &selected)
+                .unwrap()
+                .connections,
+            1
+        );
+    }
+
+    #[test]
+    fn library_import_reads_only_regular_files_up_to_5_mib() {
+        let (d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let big = d.path().join("big.toml");
+        std::fs::write(&big, vec![b'#'; 5 * 1024 * 1024 + 1]).unwrap();
+        for (path, reason) in [(d.path(), "not a regular file"), (&*big, "file too large")] {
+            for err in [
+                do_library_import_preview(&state, path).unwrap_err(),
+                do_library_import(&state, path, &[]).unwrap_err(),
+            ] {
+                assert_eq!(err.code, "config.invalid");
+                assert_eq!(err.params["reason"], reason);
+            }
+        }
+        // At the limit the size check passes and the parse decides.
+        std::fs::write(&big, vec![b'#'; 5 * 1024 * 1024]).unwrap();
+        let err = do_library_import_preview(&state, &big).unwrap_err();
+        assert_eq!(err.params["field"], "format");
+    }
+
+    #[test]
+    fn library_export_rejects_long_exported_at() {
+        let err = check_exported_at(&"x".repeat(65)).unwrap_err();
+        assert_eq!(err.code, "config.invalid");
+        assert_eq!(err.params["field"], "exported_at");
+        assert!(check_exported_at(&"x".repeat(64)).is_ok());
     }
 
     #[test]

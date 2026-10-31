@@ -45,17 +45,31 @@ pub enum LoadOutcome {
     ReadOnlyNewerVersion { found: u32 },
 }
 
-/// Writes `<path>.tmp`, syncs it and renames it over `path`, so readers never
-/// see a half-written file.
-pub(crate) fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
+/// Writes a fresh `<path>.<n>.tmp`, syncs it and renames it over `path`, so
+/// readers never see a half-written file. The temporary file is created new,
+/// so a file that happens to have that name is never truncated.
+pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
-    let mut tmp = OsString::from(path);
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    let write = || -> std::io::Result<()> {
-        let mut f = fs::File::create(&tmp)?;
+    // shortcut: a crash leaves its temp file behind (it may be someone else's, so it is never
+    // deleted) and 100 taken names stop the write; upgrade if leftovers ever pile up.
+    let mut n = 0u32;
+    let (tmp, mut f) = loop {
+        let mut tmp = OsString::from(path);
+        tmp.push(format!(".{n}.tmp"));
+        let tmp = PathBuf::from(tmp);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(f) => break (tmp, f),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 100 => n += 1,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    let mut write = || -> std::io::Result<()> {
         f.write_all(contents.as_bytes())?;
         f.sync_all()?;
         fs::rename(&tmp, path)
@@ -245,37 +259,55 @@ impl ConnectionStore {
         if conns.is_empty() {
             return Ok(0);
         }
-        let mut candidate = self.library.clone();
-        let mut seen: HashSet<Uuid> = candidate.connections.iter().map(|x| x.id).collect();
         for c in &mut conns {
             c.group_id = group_id;
-            c.extra = toml::Table::new();
-            c.validate()?;
-            if !seen.insert(c.id) {
+        }
+        let mut candidate = self.library.clone();
+        let n = append_connections(&mut candidate, conns)?;
+        self.commit(candidate)?;
+        Ok(n)
+    }
+
+    /// Adds `groups` and `conns` with a single write; anything invalid
+    /// cancels all. Connections keep their own `group_id`, which must name
+    /// a group already in the library or one of `groups`.
+    pub fn import_bundle(
+        &mut self,
+        groups: Vec<Group>,
+        conns: Vec<Connection>,
+    ) -> Result<usize, CoreError> {
+        self.writable()?;
+        if groups.is_empty() && conns.is_empty() {
+            return Ok(0);
+        }
+        let mut candidate = self.library.clone();
+        let mut known: HashSet<Uuid> = candidate.groups.iter().map(|g| g.id).collect();
+        for mut g in groups {
+            if g.name.trim().is_empty() {
+                return Err(CoreError::InvalidInput {
+                    field: "name".into(),
+                    reason: "must not be empty".into(),
+                });
+            }
+            if !known.insert(g.id) {
                 return Err(CoreError::InvalidInput {
                     field: "id".into(),
                     reason: "already exists".into(),
                 });
             }
+            g.extra = toml::Table::new();
+            candidate.groups.push(g);
         }
-        let n = conns.len();
-        let ids: Vec<Uuid> = conns.iter().map(|c| c.id).collect();
-        candidate.connections.extend(conns);
-        for id in ids {
-            if let Some(j) = candidate
-                .connections
-                .iter()
-                .find(|x| x.id == id)
-                .and_then(|x| x.jump_via)
-                && !candidate.connections.iter().any(|x| x.id == j)
-            {
-                return Err(CoreError::InvalidInput {
-                    field: "jump_via".into(),
-                    reason: "unknown jump host".into(),
-                });
-            }
-            chain_in(&candidate.connections, id)?;
+        if conns
+            .iter()
+            .any(|c| c.group_id.is_some_and(|g| !known.contains(&g)))
+        {
+            return Err(CoreError::InvalidInput {
+                field: "group_id".into(),
+                reason: "unknown group".into(),
+            });
         }
+        let n = append_connections(&mut candidate, conns)?;
         self.commit(candidate)?;
         Ok(n)
     }
@@ -353,6 +385,44 @@ impl ConnectionStore {
     pub fn jump_chain(&self, id: Uuid) -> Result<Vec<Connection>, CoreError> {
         chain_in(&self.library.connections, id)
     }
+}
+
+/// Validates `conns` and appends them to `candidate`; ids and jump hosts
+/// may refer to each other, but not to anything missing or already taken.
+fn append_connections(
+    candidate: &mut Library,
+    mut conns: Vec<Connection>,
+) -> Result<usize, CoreError> {
+    let mut seen: HashSet<Uuid> = candidate.connections.iter().map(|x| x.id).collect();
+    for c in &mut conns {
+        c.extra = toml::Table::new();
+        c.validate()?;
+        if !seen.insert(c.id) {
+            return Err(CoreError::InvalidInput {
+                field: "id".into(),
+                reason: "already exists".into(),
+            });
+        }
+    }
+    let n = conns.len();
+    let ids: Vec<Uuid> = conns.iter().map(|c| c.id).collect();
+    candidate.connections.extend(conns);
+    for id in ids {
+        if let Some(j) = candidate
+            .connections
+            .iter()
+            .find(|x| x.id == id)
+            .and_then(|x| x.jump_via)
+            && !candidate.connections.iter().any(|x| x.id == j)
+        {
+            return Err(CoreError::InvalidInput {
+                field: "jump_via".into(),
+                reason: "unknown jump host".into(),
+            });
+        }
+        chain_in(&candidate.connections, id)?;
+    }
+    Ok(n)
 }
 
 fn dependents_in(conns: &[Connection], id: Uuid) -> Vec<Uuid> {
@@ -731,7 +801,26 @@ mod tests {
         let (d, mut s) = store();
         s.upsert_connection(conn("a")).unwrap();
         assert!(d.path().join("connections.toml").exists());
-        assert!(!d.path().join("connections.toml.tmp").exists());
+        let leftovers: Vec<_> = fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .filter(|n| n.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn atomic_write_never_touches_files_named_like_its_temp() {
+        let d = TempDir::new().unwrap();
+        let p = d.path().join("export.toml");
+        for taken in ["export.toml.tmp", "export.toml.0.tmp"] {
+            fs::write(d.path().join(taken), "keep").unwrap();
+        }
+        atomic_write(&p, "x = 1").unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "x = 1");
+        for taken in ["export.toml.tmp", "export.toml.0.tmp"] {
+            assert_eq!(fs::read_to_string(d.path().join(taken)).unwrap(), "keep");
+        }
     }
 
     #[test]
@@ -1274,5 +1363,138 @@ mod tests {
         let (path, _) = newer_file(&d);
         let (mut s, _) = ConnectionStore::load(path).unwrap();
         assert!(matches!(s.import(vec![], None), Err(CoreError::ReadOnly)));
+    }
+
+    fn group(name: &str) -> Group {
+        Group {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            color: None,
+            extra: Default::default(),
+        }
+    }
+
+    fn in_group(name: &str, g: &Group) -> Connection {
+        Connection {
+            group_id: Some(g.id),
+            ..conn(name)
+        }
+    }
+
+    #[test]
+    fn import_bundle_writes_groups_and_connections_once() {
+        let (d, mut s) = store();
+        let g = group("prod");
+        let bastion = conn("bastion");
+        let web = Connection {
+            jump_via: Some(bastion.id),
+            ..in_group("web", &g)
+        };
+        assert_eq!(
+            s.import_bundle(vec![g.clone()], vec![web, bastion])
+                .unwrap(),
+            2
+        );
+        assert_eq!(s.library().groups.len(), 1);
+        assert_eq!(s.library().connections.len(), 2);
+        let (again, _) = ConnectionStore::load(d.path().join("connections.toml")).unwrap();
+        assert_eq!(again.library(), s.library());
+    }
+
+    #[test]
+    fn import_bundle_accepts_a_group_already_in_the_library() {
+        let (_d, mut s) = store();
+        let g = group("prod");
+        s.upsert_group(g.clone()).unwrap();
+        assert_eq!(s.import_bundle(vec![], vec![in_group("a", &g)]).unwrap(), 1);
+    }
+
+    #[test]
+    fn import_bundle_starts_with_empty_extra() {
+        let (_d, mut s) = store();
+        let mut g = group("prod");
+        g.extra.insert("futuro".into(), 1.into());
+        s.import_bundle(vec![g], vec![]).unwrap();
+        assert!(s.library().groups[0].extra.is_empty());
+    }
+
+    #[test]
+    fn import_bundle_with_invalid_input_changes_nothing() {
+        let (d, mut s) = store();
+        s.upsert_connection(conn("old")).unwrap();
+        let path = d.path().join("connections.toml");
+        let g = group("new");
+        let mut bad = in_group("bad", &g);
+        bad.host = String::new();
+        let orphan = Connection {
+            jump_via: Some(Uuid::new_v4()),
+            ..in_group("orphan", &g)
+        };
+        let a = conn("a");
+        let b = a.clone();
+        let (mut c, mut e) = (conn("c"), conn("d"));
+        c.jump_via = Some(e.id);
+        e.jump_via = Some(c.id);
+        let lost = Connection {
+            group_id: Some(Uuid::new_v4()),
+            ..conn("lost")
+        };
+        let taken = group("taken");
+        s.upsert_group(taken.clone()).unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        let cases: Vec<(Vec<Group>, Vec<Connection>, &str)> = vec![
+            (vec![g.clone()], vec![bad], "host"),
+            (vec![g.clone()], vec![orphan], "jump_via"),
+            (vec![g.clone()], vec![a, b], "id"),
+            (vec![g.clone()], vec![lost], "group_id"),
+            (vec![taken], vec![], "id"),
+            (vec![group("  ")], vec![], "name"),
+        ];
+        for (groups, conns, field) in cases {
+            let err = s.import_bundle(groups, conns).unwrap_err();
+            assert!(
+                matches!(&err, CoreError::InvalidInput { field: f, .. } if f == field),
+                "{field}: {err:?}"
+            );
+        }
+        assert!(matches!(
+            s.import_bundle(vec![], vec![c, e]),
+            Err(CoreError::JumpCycle)
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(s.library().connections.len(), 1);
+        assert_eq!(s.library().groups.len(), 1);
+    }
+
+    #[test]
+    fn import_bundle_rejects_repeated_group_ids() {
+        let (_d, mut s) = store();
+        let g = group("a");
+        let err = s.import_bundle(vec![g.clone(), g], vec![]).unwrap_err();
+        assert!(matches!(err, CoreError::InvalidInput { field, .. } if field == "id"));
+        assert!(s.library().groups.is_empty());
+    }
+
+    #[test]
+    fn import_bundle_empty_writes_nothing() {
+        let (d, mut s) = store();
+        assert_eq!(s.import_bundle(vec![], vec![]).unwrap(), 0);
+        assert!(!d.path().join("connections.toml").exists());
+    }
+
+    #[test]
+    fn import_bundle_into_read_only_library_fails() {
+        let d = TempDir::new().unwrap();
+        let (path, text) = newer_file(&d);
+        let (mut s, _) = ConnectionStore::load(path.clone()).unwrap();
+        assert!(matches!(
+            s.import_bundle(vec![group("g")], vec![conn("a")]),
+            Err(CoreError::ReadOnly)
+        ));
+        assert!(matches!(
+            s.import_bundle(vec![], vec![]),
+            Err(CoreError::ReadOnly)
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
     }
 }

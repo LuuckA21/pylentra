@@ -4,6 +4,35 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-30
+
+Nothing saved changes format: going back to 0.5.x loses nothing.
+
+### Added
+
+- Export and import the library, to move it to another computer or keep a
+  backup. Use Settings → Library or the sidebar "⋯" menu ("Export library…"
+  and "Import library…"). Export saves one TOML file, in the place you pick
+  in the system "Save as" dialog (proposed name
+  `pylentra-export-YYYY-MM-DD.toml`), with groups, connections (forwards,
+  notes, colors and icons included) and snippets. No password or passphrase
+  is ever written: keys are saved only as paths, and the app settings are not
+  exported. If the snippets file cannot be read, the library is exported
+  without snippets and a warning says so. A name typed without an extension
+  gets `.toml`; if that file already exists, nothing is written and a message
+  asks for another name.
+- Import opens the system "Open" dialog and then a preview: connections that
+  are already in the library (same name) are unticked and marked "already
+  present", missing key files are flagged, and each jump host is shown as
+  imported with the connection, matched to an existing one with the same
+  name, or left out. Groups with the same name are merged, and a summary
+  shows the groups and snippets that will arrive. Everything is imported with
+  new ids, so importing the same file twice does not clash.
+- A file made by a newer version of Pylentra, or that is not a Pylentra
+  export, is refused with a clear message. With a read-only library, the
+  Import button in Settings is disabled with the reason and the menu item
+  shows the same message; export still works.
+
 ## [0.5.0] - 2026-10-28
 
 Nothing saved changes format: going back to 0.4.x loses nothing.

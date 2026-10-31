@@ -1,8 +1,11 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ApiError } from "./bindings/ApiError";
+import type { ExportDone } from "./bindings/ExportDone";
 import type { Connection } from "./bindings/Connection";
 import type { ForwardRule } from "./bindings/ForwardRule";
 import type { Group } from "./bindings/Group";
+import type { ImportCounts } from "./bindings/ImportCounts";
+import type { ImportPick } from "./bindings/ImportPick";
 import type { KnownHostEntry } from "./bindings/KnownHostEntry";
 import type { Library } from "./bindings/Library";
 import type { PromptAnswer } from "./bindings/PromptAnswer";
@@ -34,6 +37,14 @@ export const connectionsImport = (
   connections: Connection[],
   groupId: string | null,
 ) => invoke<number>("connections_import", { connections, groupId });
+// The file dialogs open on the Rust side; `null` means the user cancelled.
+export const libraryExport = (exportedAt: string) =>
+  invoke<ExportDone | null>("library_export", { exportedAt });
+// `lang`: the language the UI is shown in, for the dialog's filter label.
+export const libraryImportPreview = (lang: string) =>
+  invoke<ImportPick | null>("library_import_preview", { lang });
+export const libraryImport = (selected: string[]) =>
+  invoke<ImportCounts>("library_import", { selected });
 export const settingsGet = () => invoke<Settings>("settings_get");
 export const settingsSave = (settings: Settings) =>
   invoke<void>("settings_save", { settings });
@@ -126,6 +137,9 @@ export const api = {
   groupDelete,
   sshConfigScan,
   connectionsImport,
+  libraryExport,
+  libraryImportPreview,
+  libraryImport,
   settingsGet,
   settingsSave,
   snippetsGet,

@@ -16,6 +16,8 @@ pub struct AppState {
     pub secrets: Arc<dyn SecretStore>,
     pub known_hosts: Arc<KnownHosts>,
     pub warnings: Vec<ApiError>,
+    /// The file the last import preview read; `library_import` reads it again.
+    pub pending_import: Mutex<Option<PathBuf>>,
 }
 
 impl AppState {
@@ -71,6 +73,7 @@ impl AppState {
             secrets,
             known_hosts,
             warnings,
+            pending_import: Mutex::new(None),
         })
     }
 
@@ -82,6 +85,13 @@ impl AppState {
     /// Lock order: `store()` before `snippets()`, never the reverse.
     pub fn snippets(&self) -> MutexGuard<'_, SnippetStore> {
         self.snippets.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Lock order: before `store()`.
+    pub fn pending_import(&self) -> MutexGuard<'_, Option<PathBuf>> {
+        self.pending_import
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn settings(&self) -> MutexGuard<'_, SettingsStore> {

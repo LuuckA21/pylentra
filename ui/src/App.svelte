@@ -6,6 +6,7 @@
   import Banner from "./components/Banner.svelte";
   import ConnectionForm from "./components/ConnectionForm.svelte";
   import ImportDialog from "./components/ImportDialog.svelte";
+  import LibraryImportDialog from "./components/LibraryImportDialog.svelte";
   import Settings from "./components/Settings.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import SplitPicker from "./components/SplitPicker.svelte";
@@ -17,10 +18,12 @@
   import { colorOf } from "./lib/appearance";
   import { fromOtherModal, shortcutFor } from "./lib/shortcuts";
   import type { Connection } from "./lib/bindings/Connection";
+  import type { ImportPick } from "./lib/bindings/ImportPick";
   import { t } from "./lib/i18n";
+  import { exportLibrary, pickImport } from "./lib/libraryTransfer";
   import { count, rects, type Dir } from "./lib/layout";
   import type { PaneState } from "./lib/sessionReducer";
-  import { library, refresh } from "./lib/stores/library.svelte";
+  import { isReadOnly, library, refresh } from "./lib/stores/library.svelte";
   import { loadSnippets } from "./lib/stores/snippets.svelte";
   import {
     closePane,
@@ -33,7 +36,7 @@
     type Tab,
   } from "./lib/stores/sessions.svelte";
   import { loadSettings, settings } from "./lib/stores/settings.svelte";
-  import { toastError } from "./lib/stores/toasts.svelte";
+  import { toast, toastError } from "./lib/stores/toasts.svelte";
   import { checkForUpdate } from "./lib/stores/updates.svelte";
 
   const openConnectionIds = $derived(
@@ -51,6 +54,11 @@
   } | null>(null);
   let settingsOpen = $state(false);
   let importOpen = $state(false);
+  let importingLibrary = $state<ImportPick | null>(null);
+  async function importLibrary() {
+    if (isReadOnly()) return toast(t("error.config.read_only"));
+    importingLibrary = await pickImport();
+  }
   // The pane the picker will split; the picker is gone once that pane is.
   let splitting = $state<{ paneId: string; dir: Dir } | null>(null);
 
@@ -178,6 +186,8 @@
       onedit={(connection) => (editing = { connection })}
       onsettings={() => (settingsOpen = true)}
       onimport={() => (importOpen = true)}
+      onexportlibrary={exportLibrary}
+      onimportlibrary={importLibrary}
     />
     <main>
       {#if sessions.tabs.length}
@@ -267,7 +277,17 @@
   <ImportDialog onclose={() => (importOpen = false)} />
 {/if}
 {#if settingsOpen}
-  <Settings onclose={() => (settingsOpen = false)} />
+  <Settings
+    onclose={() => (settingsOpen = false)}
+    onimportlibrary={importLibrary}
+  />
+{/if}
+<!-- After Settings: it opens from there and must paint on top. -->
+{#if importingLibrary}
+  <LibraryImportDialog
+    pick={importingLibrary}
+    onclose={() => (importingLibrary = null)}
+  />
 {/if}
 {#if confirming}
   <ConfirmDialog
