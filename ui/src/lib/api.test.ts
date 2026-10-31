@@ -92,11 +92,11 @@ test("errors from invoke reject unchanged", async () => {
 test("library transfer commands pass exportedAt and selected", async () => {
   invoke.mockResolvedValue(null);
   await api.libraryExport("2026-10-30T10:00:00.000Z");
-  await api.libraryImportPreview();
+  await api.libraryImportPreview("it");
   await api.libraryImport(["a", "b"]);
   expect(invoke.mock.calls).toEqual([
     ["library_export", { exportedAt: "2026-10-30T10:00:00.000Z" }],
-    ["library_import_preview"],
+    ["library_import_preview", { lang: "it" }],
     ["library_import", { selected: ["a", "b"] }],
   ]);
 });

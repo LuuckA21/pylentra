@@ -109,6 +109,13 @@ test("pickImport returns the pick, or null when cancelled", async () => {
   expect(toasts).toHaveLength(0);
 });
 
+test("pickImport tells the dialog the language the UI is shown in", async () => {
+  vi.mocked(api.libraryImportPreview).mockResolvedValueOnce(null);
+  setLang("it");
+  await pickImport();
+  expect(api.libraryImportPreview).toHaveBeenLastCalledWith("it");
+});
+
 test.each([
   [
     { code: "config.unsupported_version", params: {} },

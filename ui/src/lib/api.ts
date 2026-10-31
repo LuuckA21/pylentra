@@ -40,8 +40,9 @@ export const connectionsImport = (
 // The file dialogs open on the Rust side; `null` means the user cancelled.
 export const libraryExport = (exportedAt: string) =>
   invoke<ExportDone | null>("library_export", { exportedAt });
-export const libraryImportPreview = () =>
-  invoke<ImportPick | null>("library_import_preview");
+// `lang`: the language the UI is shown in, for the dialog's filter label.
+export const libraryImportPreview = (lang: string) =>
+  invoke<ImportPick | null>("library_import_preview", { lang });
 export const libraryImport = (selected: string[]) =>
   invoke<ImportCounts>("library_import", { selected });
 export const settingsGet = () => invoke<Settings>("settings_get");

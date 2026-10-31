@@ -46,7 +46,9 @@
       // The connections are in and the backend forgot the file: retrying would duplicate them.
       toast(t("library.partial", { connections: done, reason }));
     }
-    await Promise.all([refresh(), loadSnippets()]).catch(toastError);
+    // Both reloads run; each failure gets its own notice.
+    for (const r of await Promise.allSettled([refresh(), loadSnippets()]))
+      if (r.status === "rejected") toastError(r.reason);
     onclose();
   }
 </script>

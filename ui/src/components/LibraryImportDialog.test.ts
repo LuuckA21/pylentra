@@ -210,3 +210,22 @@ test("a failed reload after the import is shown too", async () => {
     ["error", "I/O error: gone"],
   ]);
 });
+
+test("when both reloads fail, both errors are shown", async () => {
+  vi.mocked(api.libraryGet).mockRejectedValue({
+    code: "io",
+    params: { reason: "library gone" },
+  });
+  vi.mocked(api.snippetsGet).mockRejectedValue({
+    code: "io",
+    params: { reason: "snippets gone" },
+  });
+  const onclose = await open();
+  await fireEvent.click(importBtn(2));
+  await waitFor(() => expect(onclose).toHaveBeenCalledOnce());
+  expect(toasts.map((x) => x.message)).toEqual([
+    "Imported — connections: 2, groups: 1, snippets: 5",
+    "I/O error: library gone",
+    "I/O error: snippets gone",
+  ]);
+});

@@ -45,17 +45,31 @@ pub enum LoadOutcome {
     ReadOnlyNewerVersion { found: u32 },
 }
 
-/// Writes `<path>.tmp`, syncs it and renames it over `path`, so readers never
-/// see a half-written file.
+/// Writes a fresh `<path>.<n>.tmp`, syncs it and renames it over `path`, so
+/// readers never see a half-written file. The temporary file is created new,
+/// so a file that happens to have that name is never truncated.
 pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
-    let mut tmp = OsString::from(path);
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    let write = || -> std::io::Result<()> {
-        let mut f = fs::File::create(&tmp)?;
+    // shortcut: a crash leaves its temp file behind (it may be someone else's, so it is never
+    // deleted) and 100 taken names stop the write; upgrade if leftovers ever pile up.
+    let mut n = 0u32;
+    let (tmp, mut f) = loop {
+        let mut tmp = OsString::from(path);
+        tmp.push(format!(".{n}.tmp"));
+        let tmp = PathBuf::from(tmp);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(f) => break (tmp, f),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 100 => n += 1,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    let mut write = || -> std::io::Result<()> {
         f.write_all(contents.as_bytes())?;
         f.sync_all()?;
         fs::rename(&tmp, path)
@@ -787,7 +801,26 @@ mod tests {
         let (d, mut s) = store();
         s.upsert_connection(conn("a")).unwrap();
         assert!(d.path().join("connections.toml").exists());
-        assert!(!d.path().join("connections.toml.tmp").exists());
+        let leftovers: Vec<_> = fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .filter(|n| n.to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn atomic_write_never_touches_files_named_like_its_temp() {
+        let d = TempDir::new().unwrap();
+        let p = d.path().join("export.toml");
+        for taken in ["export.toml.tmp", "export.toml.0.tmp"] {
+            fs::write(d.path().join(taken), "keep").unwrap();
+        }
+        atomic_write(&p, "x = 1").unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "x = 1");
+        for taken in ["export.toml.tmp", "export.toml.0.tmp"] {
+            assert_eq!(fs::read_to_string(d.path().join(taken)).unwrap(), "keep");
+        }
     }
 
     #[test]

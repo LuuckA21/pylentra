@@ -2,6 +2,7 @@ import { api } from "./api";
 import type { ImportRow } from "./bindings/ImportRow";
 import type { ImportPick } from "./bindings/ImportPick";
 import { t } from "./i18n";
+import { current } from "./i18n/lang.svelte";
 import { isApiError, toast, toastError } from "./stores/toasts.svelte";
 
 // A file dialog is open: a second click must not open another.
@@ -36,7 +37,7 @@ export async function pickImport(): Promise<ImportPick | null> {
   if (busy) return null;
   busy = true;
   try {
-    return await api.libraryImportPreview();
+    return await api.libraryImportPreview(current.lang);
   } catch (e) {
     if (isApiError(e) && e.code === "config.unsupported_version")
       toast(t("library.newerVersion"));

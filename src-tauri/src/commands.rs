@@ -322,8 +322,9 @@ fn check_exported_at(exported_at: &str) -> Result<(), ApiError> {
 }
 
 /// The dialogs are native: their filter label follows the app language.
-fn all_files_label(language: Option<&str>) -> &'static str {
-    if language == Some("it") {
+/// `lang` is the language the UI is shown in (the setting may say "system").
+fn all_files_label(lang: &str) -> &'static str {
+    if lang == "it" {
         "Tutti i file"
     } else {
         "All files"
@@ -407,6 +408,7 @@ fn read_import(state: &AppState, path: &Path) -> Result<ExportFile, CoreError> {
 pub fn library_import_preview(
     window: WebviewWindow,
     state: State<'_, AppState>,
+    lang: String,
 ) -> Result<Option<ImportPick>, ApiError> {
     let Some(picked) = window
         .dialog()
@@ -414,10 +416,7 @@ pub fn library_import_preview(
         .set_parent(&window)
         .add_filter("TOML", &["toml"])
         // shortcut: GTK turns "*" into "*.*", hiding names without a dot; new exports always get `.toml`.
-        .add_filter(
-            all_files_label(state.settings().get().language.as_deref()),
-            &["*"],
-        )
+        .add_filter(all_files_label(&lang), &["*"])
         .blocking_pick_file()
     else {
         return Ok(None);
@@ -1561,8 +1560,8 @@ mod tests {
 
     #[test]
     fn dialog_filter_label_follows_the_language() {
-        assert_eq!(all_files_label(Some("it")), "Tutti i file");
-        for other in [Some("en"), None] {
+        assert_eq!(all_files_label("it"), "Tutti i file");
+        for other in ["en", ""] {
             assert_eq!(all_files_label(other), "All files");
         }
     }
