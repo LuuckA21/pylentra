@@ -302,6 +302,32 @@ button:disabled {
   outline-offset: 1px;
 }
 
+/* Context menus: <div class="menu" role="menu"> of <button role="menuitem">;
+   keyboard in lib/menu.ts. */
+.menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+}
+
+.menu button {
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.menu button:hover:not(:disabled),
+.menu button:focus-visible {
+  background: var(--surface-3);
+}
+
 /* In-tab overlays (prompts, session errors): they cover the terminal, not the app. */
 .tab-overlay {
   position: absolute;

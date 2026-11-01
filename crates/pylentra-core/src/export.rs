@@ -251,14 +251,13 @@ pub fn plan(
         });
     }
     let mut new_ids = HashMap::new();
-    // Each connection gets its own id even if a hand-edited file repeats one.
     let picked: Vec<(&Connection, Uuid)> = file
         .connections
         .iter()
         .filter(|c| selected.contains(&c.id))
         .map(|c| {
             let id = Uuid::new_v4();
-            new_ids.entry(c.id).or_insert(id);
+            new_ids.insert(c.id, id);
             (c, id)
         })
         .collect();

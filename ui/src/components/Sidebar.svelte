@@ -6,6 +6,7 @@
   import type { TagColor } from "../lib/bindings/TagColor";
   import { colorOf } from "../lib/appearance";
   import { t } from "../lib/i18n";
+  import { menuKeydown } from "../lib/menu";
   import { modal } from "../lib/modal";
   import { getPref, setPref } from "../lib/prefs";
   import { matches } from "../lib/search";
@@ -210,22 +211,6 @@
     if (menu && menu.mode)
       menuEl?.querySelector<HTMLElement>("button")?.focus();
   });
-
-  function onmenukeydown(e: KeyboardEvent) {
-    const items = [...(menuEl?.querySelectorAll<HTMLElement>("button") ?? [])];
-    const i = items.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "Escape") {
-      e.preventDefault();
-      closeMenu();
-    } else if (e.key === "Tab") {
-      closeMenu(false);
-    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const next =
-        (i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-      items[next]?.focus();
-    }
-  }
 
   async function run(op: Promise<unknown>) {
     try {
@@ -605,7 +590,7 @@
       m.y,
       window.innerHeight - 180,
     )}px"
-    onkeydown={onmenukeydown}
+    onkeydown={(e) => menuKeydown(e, menuEl!, closeMenu)}
   >
     {#if m.group}
       {@const g = m.group}
@@ -1017,27 +1002,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-  }
-  .menu {
-    position: fixed;
-    z-index: 50;
-    display: flex;
-    flex-direction: column;
-    min-width: 180px;
-    padding: 4px;
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow);
-  }
-  .menu button {
-    border: 0;
-    background: none;
-    text-align: left;
-  }
-  .menu button:hover,
-  .menu button:focus-visible {
-    background: var(--surface-3);
   }
   .backdrop {
     position: fixed;
