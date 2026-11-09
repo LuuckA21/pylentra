@@ -123,6 +123,7 @@ export const forwardStop = (sessionId: string, forwardId: number) =>
   invoke<void>("forward_stop", { sessionId, forwardId });
 export const knownHostForget = (host: string, port: number) =>
   invoke<number>("known_host_forget", { host, port });
+export const knownHostsClear = () => invoke<void>("known_hosts_clear");
 export const knownHostsList = () =>
   invoke<KnownHostEntry[]>("known_hosts_list");
 export const logDir = () => invoke<string>("log_dir");
@@ -154,6 +155,7 @@ export const api = {
   forwardStart,
   forwardStop,
   knownHostForget,
+  knownHostsClear,
   knownHostsList,
   logDir,
 };

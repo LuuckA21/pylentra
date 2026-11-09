@@ -6,10 +6,12 @@
   import { settings } from "../../lib/stores/settings.svelte";
   import { toastError } from "../../lib/stores/toasts.svelte";
   import type { SectionProps } from "./props";
+  import ConfirmDialog from "../ui/ConfirmDialog.svelte";
   import Toggle from "./Toggle.svelte";
 
   let { save }: SectionProps = $props();
   let hosts = $state<KnownHostEntry[] | null>(null);
+  let clearing = $state(false);
 
   const load = () =>
     api
@@ -23,6 +25,16 @@
   async function forget(h: string, port: number) {
     try {
       await api.knownHostForget(h, port);
+      await load();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  async function clearAll() {
+    clearing = false;
+    try {
+      await api.knownHostsClear();
       await load();
     } catch (e) {
       toastError(e);
@@ -64,8 +76,22 @@
       </li>
     {/each}
   </ul>
+  <button type="button" class="danger clear" onclick={() => (clearing = true)}
+    >{t("settings.knownHostsClear")}</button
+  >
 {/if}
 <p class="hint">{t("settings.knownHostsNote")}</p>
+
+{#if clearing}
+  <ConfirmDialog
+    title={t("settings.knownHostsClearTitle")}
+    message={t("settings.knownHostsClearBody", { n: hosts?.length ?? 0 })}
+    confirmLabel={t("settings.knownHostsClear")}
+    danger
+    onconfirm={clearAll}
+    oncancel={() => (clearing = false)}
+  />
+{/if}
 
 <style>
   h4 {
@@ -90,6 +116,9 @@
     padding: var(--space-2) var(--space-3);
     background: var(--surface-2);
     border-radius: var(--radius-md);
+  }
+  .clear {
+    align-self: flex-start;
   }
   .entry {
     display: flex;

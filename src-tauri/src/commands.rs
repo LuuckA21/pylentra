@@ -737,6 +737,11 @@ pub fn do_known_host_forget(state: &AppState, host: &str, port: u16) -> Result<u
 }
 
 #[tauri::command]
+pub fn known_hosts_clear(state: State<'_, AppState>) -> Result<(), ApiError> {
+    Ok(state.known_hosts.clear()?)
+}
+
+#[tauri::command]
 pub fn known_hosts_list(state: State<'_, AppState>) -> Result<Vec<KnownHostEntry>, ApiError> {
     Ok(state.known_hosts.list()?)
 }

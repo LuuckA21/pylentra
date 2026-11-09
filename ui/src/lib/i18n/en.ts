@@ -231,6 +231,10 @@ export const en = {
   "settings.confirmCloseHint":
     "Asks before a connected tab or the window is closed.",
   "settings.knownHosts": "Known hosts",
+  "settings.knownHostsClear": "Clear all",
+  "settings.knownHostsClearTitle": "Clear all known hosts?",
+  "settings.knownHostsClearBody":
+    "Pylentra will forget {n} saved host keys and ask to verify each server's fingerprint again on the next connection. ~/.ssh/known_hosts is not changed.",
   "settings.knownHostsEmpty": "No saved host keys.",
   "settings.knownHostsEncrypted": "Encrypted entry",
   "settings.knownHostsNote":

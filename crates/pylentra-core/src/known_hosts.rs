@@ -166,6 +166,14 @@ impl KnownHosts {
         atomic_write(&self.pylentra, &kept)?;
         Ok(hits.len())
     }
+
+    /// Empties Pylentra's own file; the user's OpenSSH file is never touched.
+    pub fn clear(&self) -> Result<(), CoreError> {
+        if !self.pylentra.exists() {
+            return Ok(());
+        }
+        atomic_write(&self.pylentra, "")
+    }
 }
 
 enum Scan {
@@ -543,6 +551,27 @@ mod tests {
     fn list_missing_file_is_empty() {
         let (_d, kh) = setup();
         assert!(kh.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_empties_own_file_only() {
+        let (d, kh) = setup();
+        let ssh = d.path().join("ssh_known_hosts");
+        let line = format!("o {}\n", key().to_openssh().unwrap());
+        fs::write(&ssh, &line).unwrap();
+        kh.learn("a", 22, &key()).unwrap();
+        kh.learn("b", 2222, &key()).unwrap();
+        kh.clear().unwrap();
+        assert!(kh.list().unwrap().is_empty());
+        assert_eq!(fs::read_to_string(&ssh).unwrap(), line);
+        kh.clear().unwrap();
+    }
+
+    #[test]
+    fn clear_missing_file_is_ok() {
+        let (d, kh) = setup();
+        kh.clear().unwrap();
+        assert!(!d.path().join("known_hosts").exists());
     }
 
     #[test]
