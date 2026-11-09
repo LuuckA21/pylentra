@@ -1,5 +1,5 @@
 import type { Snippet } from "./bindings/Snippet";
-import { fold } from "./search";
+import { byName, fold } from "./search";
 
 export const firstLine = (text: string): string =>
   text
@@ -26,8 +26,7 @@ export function groupSnippets(
   const q = fold(query.trim());
   const hit = (s: Snippet) =>
     fold(s.name).includes(q) || fold(s.text).includes(q);
-  const sorted = (xs: Snippet[]) =>
-    xs.sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = (xs: Snippet[]) => xs.sort(byName);
   const found = list.filter(hit);
   return {
     own: sorted(

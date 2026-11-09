@@ -3,13 +3,19 @@
   import type { Connection } from "../lib/bindings/Connection";
   import type { ConnIcon } from "../lib/bindings/ConnIcon";
   import type { TagColor } from "../lib/bindings/TagColor";
-  import type { ForwardRule } from "../lib/bindings/ForwardRule";
   import { colorOf } from "../lib/appearance";
   import { errorMessage, t, type MessageKey } from "../lib/i18n";
   import { modal } from "../lib/modal";
+  import { byName } from "../lib/search";
   import { library, saveConnection } from "../lib/stores/library.svelte";
   import { isApiError, toast, toastError } from "../lib/stores/toasts.svelte";
-  import { validate } from "../lib/validate";
+  import {
+    newForward,
+    num,
+    toRule,
+    validate,
+    type ForwardDraft,
+  } from "../lib/validate";
   import Avatar from "./ui/Avatar.svelte";
   import ColorPicker from "./ui/ColorPicker.svelte";
   import IconPicker from "./ui/IconPicker.svelte";
@@ -33,15 +39,6 @@
   const id = initial?.id ?? crypto.randomUUID();
   const auth = initial?.auth;
 
-  type Row = {
-    type: ForwardRule["type"];
-    bind_host: string;
-    bind_port: number | null;
-    dest_host: string;
-    dest_port: number | null;
-    auto_start: boolean;
-  };
-
   let name = $state(initial?.name ?? "");
   let groupId = $state(initial?.group_id ?? "");
   let color = $state<TagColor | null>(initial?.color ?? null);
@@ -57,7 +54,7 @@
   let password = $state("");
   let passphrase = $state("");
   let jumpVia = $state(initial?.jump_via ?? "");
-  let forwards = $state<Row[]>(
+  let forwards = $state<ForwardDraft[]>(
     (initial?.forwards ?? []).map((r) => ({
       bind_host: "",
       dest_host: "",
@@ -69,30 +66,17 @@
   let saving = $state(false);
   let formEl: HTMLFormElement | undefined = $state();
 
-  const groups = $derived(
-    [...library.groups].sort((a, b) => a.name.localeCompare(b.name)),
-  );
+  const groups = $derived([...library.groups].sort(byName));
   const previewColor = $derived(
     colorOf({ color: color ?? undefined, group_id: groupId || null }, groups),
   );
   const jumpHosts = $derived(
-    library.connections
-      .filter((c) => c.id !== id)
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    library.connections.filter((c) => c.id !== id).sort(byName),
   );
 
   const eid = (field: string) => `err-${field.replace(/\W+/g, "_")}`;
-  const num = (v: string) => (v === "" ? null : Number(v));
-
-  function addForward(type: Row["type"]) {
-    forwards.push({
-      type,
-      bind_host: type === "Remote" ? "" : "127.0.0.1",
-      bind_port: type === "Dynamic" ? 1080 : null,
-      dest_host: "localhost",
-      dest_port: null,
-      auto_start: false,
-    });
+  function addForward(type: ForwardDraft["type"]) {
+    forwards.push(newForward(type));
   }
 
   const fieldEl = (field: string) =>
@@ -123,24 +107,7 @@
       ...(color && { color }),
       ...(icon && { icon }),
       ...(notes.trim() && { notes }),
-      forwards: forwards.map((r): ForwardRule => {
-        const common = {
-          bind_port: r.bind_port!,
-          dest_host: r.dest_host.trim(),
-          dest_port: r.dest_port!,
-          auto_start: r.auto_start,
-        };
-        if (r.type === "Dynamic")
-          return {
-            type: "Dynamic",
-            bind_host: r.bind_host.trim(),
-            bind_port: common.bind_port,
-            auto_start: common.auto_start,
-          };
-        return r.type === "Local"
-          ? { type: "Local", bind_host: r.bind_host.trim(), ...common }
-          : { type: "Remote", ...common };
-      }),
+      forwards: forwards.map(toRule),
     };
   }
 
@@ -477,27 +444,8 @@
 </div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: var(--backdrop);
-    z-index: 60;
-  }
   .dialog {
     width: min(560px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
-    overflow-y: auto;
-    padding: var(--space-6);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow);
-  }
-  h2 {
-    margin: 0 0 8px;
-    font-size: 16px;
   }
   fieldset {
     margin: 0 0 12px;

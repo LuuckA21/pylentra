@@ -7,7 +7,7 @@
   import { api } from "../lib/api";
   import { library } from "../lib/stores/library.svelte";
   import { isApiError, toastError } from "../lib/stores/toasts.svelte";
-  import { validate } from "../lib/validate";
+  import { newForward, num, toRule, validate } from "../lib/validate";
   import Icon from "./ui/Icon.svelte";
 
   // Anchored above the status bar by the parent; closes itself on a failed start.
@@ -121,13 +121,7 @@
 
   // The "Add tunnel" mini form. Tunnels live only in the session: the
   // connection is never saved from here.
-  const blank = () => ({
-    type: "Local" as ForwardRule["type"],
-    bind_host: "127.0.0.1",
-    bind_port: null as number | null,
-    dest_host: "localhost",
-    dest_port: null as number | null,
-  });
+  const blank = () => newForward("Local");
   let adding = $state(false);
   let draft = $state(blank());
   // Same defaults as the form's "+ SOCKS" row.
@@ -136,50 +130,27 @@
     if (type === "Dynamic" && draft.bind_port === null) draft.bind_port = 1080;
   }
   let errors = $state<Record<string, string>>({});
-  const num = (v: string) => (v === "" ? null : Number(v));
   const uid = $props.id();
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
     const d = $state.snapshot(draft);
-    const found: Record<string, MessageKey> = {};
-    for (const [k, v] of Object.entries(
-      validate({
-        name: "-",
-        host: "-",
-        username: "-",
-        port: 22,
-        forwards: [d],
-      }),
-    ))
-      found[k.replace("forwards[0].", "")] = v;
-    if (d.type !== "Dynamic" && !d.dest_host.trim())
-      found.dest_host = "form.error.required";
+    const found = validate({
+      name: "-",
+      host: "-",
+      username: "-",
+      port: 22,
+      forwards: [d],
+    });
     errors = Object.fromEntries(
-      Object.entries(found).map(([k, v]) => [k, t(v)]),
+      Object.entries(found).map(([k, v]) => [
+        k.replace("forwards[0].", ""),
+        t(v),
+      ]),
     );
     if (Object.keys(found).length || !pane.sessionId) return;
-
-    const common = {
-      bind_port: d.bind_port!,
-      dest_host: d.dest_host.trim(),
-      dest_port: d.dest_port!,
-      auto_start: false,
-    };
     try {
-      await api.forwardStart(
-        pane.sessionId,
-        d.type === "Dynamic"
-          ? {
-              type: "Dynamic",
-              bind_host: d.bind_host.trim(),
-              bind_port: d.bind_port!,
-              auto_start: false,
-            }
-          : d.type === "Local"
-            ? { type: "Local", bind_host: d.bind_host.trim(), ...common }
-            : { type: "Remote", ...common },
-      );
+      await api.forwardStart(pane.sessionId, toRule(d));
       adding = false;
       draft = blank();
     } catch (err) {

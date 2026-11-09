@@ -154,24 +154,13 @@
 </div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: var(--backdrop);
-    z-index: 60;
-  }
   .dialog {
     display: grid;
     grid-template-columns: 220px 1fr;
     width: min(920px, calc(100vw - 32px));
     height: min(640px, calc(100vh - 32px));
     overflow: hidden;
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow);
+    padding: 0;
   }
   aside {
     display: flex;

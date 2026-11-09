@@ -4,6 +4,14 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A Local or Remote forward with an empty destination host can no longer be
+  saved from the connection form: it could never start. The core refuses it
+  too.
+
 ## [0.7.1] - 2026-11-09
 
 Nothing saved changes format: going back to 0.7.0 loses nothing.
