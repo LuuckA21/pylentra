@@ -271,6 +271,10 @@ cover it.
 2. Terminal themes Dracula, Nord and Solarized change the open terminals.
 3. Updates: "Check now" reports an available version or "up to date"; with
    the update check off, nothing is checked at startup.
+4. Security → Known hosts, with a few saved keys: "Clear all" asks first;
+   Cancel keeps the list, confirm empties it. The next connection to each
+   server asks to verify its fingerprint again, and `~/.ssh/known_hosts` is
+   unchanged.
 
 ## Window
 
