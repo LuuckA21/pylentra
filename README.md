@@ -57,7 +57,7 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
 
 ## Build from source
 
-Requirements: Rust 1.89 or newer, Node 22, pnpm 10, and on Linux the Tauri
+Requirements: Rust 1.90 or newer, Node 22, pnpm 10, and on Linux the Tauri
 system packages:
 
 ```sh

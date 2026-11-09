@@ -4,6 +4,23 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.1] - 2026-11-09
+
+Nothing saved changes format: going back to 0.7.0 loses nothing.
+
+### Added
+
+- Settings → Security → "Clear all" forgets every host key Pylentra saved,
+  after a confirmation. Each server asks to verify its fingerprint again on
+  the next connection. `~/.ssh/known_hosts` is never changed.
+
+### Security
+
+- The update plugin moves to zip 9.5, fixing RUSTSEC-2026-0367, 0368, 0369
+  and 0429 in how update bundles are unpacked. They were not reachable in
+  practice (a bundle is unpacked only after its signature is verified), but
+  the ignores are gone. Building from source now needs Rust 1.90.
+
 ## [0.7.0] - 2026-10-31
 
 Nothing saved changes format: going back to 0.6.x loses nothing.

@@ -95,6 +95,7 @@ fn main() {
             commands::forward_start,
             commands::forward_stop,
             commands::known_host_forget,
+            commands::known_hosts_clear,
             commands::known_hosts_list,
             commands::log_dir,
         ])

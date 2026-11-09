@@ -13,6 +13,7 @@ vi.mock("../lib/api", () => ({
     logDir: vi.fn(),
     knownHostsList: vi.fn(),
     knownHostForget: vi.fn(),
+    knownHostsClear: vi.fn(),
     snippetsGet: vi.fn(),
     snippetDelete: vi.fn(),
   },
@@ -222,6 +223,27 @@ test("known hosts are listed and can be removed", async () => {
     expect(api.knownHostForget).toHaveBeenCalledWith("web.example", 2222),
   );
   await screen.findByText("No saved host keys.");
+});
+
+test("clear all asks first, then empties the known hosts", async () => {
+  vi.mocked(api.knownHostsList).mockResolvedValue([
+    { host: "a", port: 22, algo: "ssh-ed25519", fingerprint: "SHA256:a" },
+    { host: null, port: 22, algo: "ssh-rsa", fingerprint: "SHA256:b" },
+  ]);
+  vi.mocked(api.knownHostsClear).mockResolvedValue();
+  setup();
+  await goTo("Security");
+  await fireEvent.click(
+    await screen.findByRole("button", { name: "Clear all" }),
+  );
+  expect(screen.getByText(/forget 2 saved host keys/)).toBeTruthy();
+  expect(api.knownHostsClear).not.toHaveBeenCalled();
+  vi.mocked(api.knownHostsList).mockResolvedValue([]);
+  const buttons = screen.getAllByRole("button", { name: "Clear all" });
+  await fireEvent.click(buttons[buttons.length - 1]);
+  await waitFor(() => expect(api.knownHostsClear).toHaveBeenCalledOnce());
+  await screen.findByText("No saved host keys.");
+  expect(screen.queryByRole("button", { name: "Clear all" })).toBeNull();
 });
 
 test("Connections fields save default user, port, timeout and keepalive", async () => {

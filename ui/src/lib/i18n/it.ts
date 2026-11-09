@@ -235,6 +235,10 @@ export const it: Record<MessageKey, string> = {
   "settings.confirmCloseHint":
     "Chiede conferma prima di chiudere una scheda connessa o la finestra.",
   "settings.knownHosts": "Host noti",
+  "settings.knownHostsClear": "Svuota tutti",
+  "settings.knownHostsClearTitle": "Svuotare tutti gli host noti?",
+  "settings.knownHostsClearBody":
+    "Pylentra dimenticherà {n} chiavi host salvate e alla prossima connessione chiederà di verificare di nuovo l'impronta di ogni server. ~/.ssh/known_hosts non viene modificato.",
   "settings.knownHostsEmpty": "Nessuna chiave host salvata.",
   "settings.knownHostsEncrypted": "Voce cifrata",
   "settings.knownHostsNote":
