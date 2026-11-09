@@ -47,7 +47,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
-            let openssh = dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"));
+            let openssh = std::env::home_dir().map(|h| h.join(".ssh").join("known_hosts"));
             app.manage(AppState::load(
                 &config_dir,
                 openssh,

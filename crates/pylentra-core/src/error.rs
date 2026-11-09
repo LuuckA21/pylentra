@@ -71,6 +71,13 @@ pub struct ApiError {
 }
 
 impl CoreError {
+    pub fn invalid(field: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::InvalidInput {
+            field: field.into(),
+            reason: reason.into(),
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::Dns { .. } => "network.dns",

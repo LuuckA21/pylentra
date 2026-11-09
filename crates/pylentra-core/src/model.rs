@@ -9,6 +9,8 @@ use uuid::Uuid;
 
 pub const MAX_JUMP_DEPTH: usize = 5;
 pub const MAX_NOTES_BYTES: usize = 4_096;
+const CONNECT_TIMEOUT_SECS: (u16, u16) = (5, 120);
+const KEEPALIVE_SECS: (u16, u16) = (5, 300);
 
 fn default_port() -> u16 {
     22
@@ -278,26 +280,36 @@ impl Settings {
             if (lo..=hi).contains(&v) {
                 return Ok(());
             }
-            Err(invalid(field, &format!("must be between {lo} and {hi}")))
+            Err(CoreError::invalid(
+                field,
+                format!("must be between {lo} and {hi}"),
+            ))
         }
         range("font_size", self.font_size.into(), 8, 32)?;
         range("scrollback", self.scrollback, 1_000, 100_000)?;
         range("default_port", self.default_port.into(), 1, 65_535)?;
+        let (lo, hi) = CONNECT_TIMEOUT_SECS;
         range(
             "connect_timeout_secs",
             self.connect_timeout_secs.into(),
-            5,
-            120,
+            lo.into(),
+            hi.into(),
         )?;
         if self.keepalive_secs != 0 {
-            range("keepalive_secs", self.keepalive_secs.into(), 5, 300)?;
+            let (lo, hi) = KEEPALIVE_SECS;
+            range(
+                "keepalive_secs",
+                self.keepalive_secs.into(),
+                lo.into(),
+                hi.into(),
+            )?;
         }
         if self
             .default_user
             .as_deref()
             .is_some_and(|u| u.trim().is_empty())
         {
-            return Err(invalid("default_user", "must not be empty"));
+            return Err(CoreError::invalid("default_user", "must not be empty"));
         }
         Ok(())
     }
@@ -305,10 +317,10 @@ impl Settings {
     /// Connect timeout and keepalive interval (`None` when off) for new sessions,
     /// clamped to the valid ranges: a hand-edited file is loaded without `validate`.
     pub fn session_timeouts(&self) -> (Duration, Option<Duration>) {
-        let secs = |v: u16, lo, hi| Duration::from_secs(v.clamp(lo, hi).into());
+        let secs = |v: u16, (lo, hi): (u16, u16)| Duration::from_secs(v.clamp(lo, hi).into());
         (
-            secs(self.connect_timeout_secs, 5, 120),
-            (self.keepalive_secs != 0).then(|| secs(self.keepalive_secs, 5, 300)),
+            secs(self.connect_timeout_secs, CONNECT_TIMEOUT_SECS),
+            (self.keepalive_secs != 0).then(|| secs(self.keepalive_secs, KEEPALIVE_SECS)),
         )
     }
 }
@@ -329,18 +341,23 @@ pub fn expand_home(path: &Path) -> PathBuf {
     }
 }
 
-fn invalid(field: impl Into<String>, reason: &str) -> CoreError {
-    CoreError::InvalidInput {
-        field: field.into(),
-        reason: reason.into(),
-    }
-}
-
 fn require_nonzero(port: u16, field: String) -> Result<(), CoreError> {
     if port == 0 {
-        return Err(invalid(field, "port must be between 1 and 65535"));
+        return Err(CoreError::invalid(
+            field,
+            "port must be between 1 and 65535",
+        ));
     }
     Ok(())
+}
+
+impl Group {
+    pub fn validate(&self) -> Result<(), CoreError> {
+        if self.name.trim().is_empty() {
+            return Err(CoreError::invalid("name", "must not be empty"));
+        }
+        Ok(())
+    }
 }
 
 impl ForwardRule {
@@ -348,28 +365,30 @@ impl ForwardRule {
     pub fn validate(&self, prefix: &str) -> Result<(), CoreError> {
         let check_host = |bind_host: &str| {
             if bind_host.parse::<IpAddr>().is_err() {
-                return Err(invalid(
+                return Err(CoreError::invalid(
                     format!("{prefix}.bind_host"),
                     "must be an IP address",
                 ));
             }
             Ok(())
         };
-        let (bind_port, dest_port) = match self {
+        let (bind_port, dest) = match self {
             Self::Local {
                 bind_host,
                 bind_port,
+                dest_host,
                 dest_port,
                 ..
             } => {
                 check_host(bind_host)?;
-                (bind_port, Some(dest_port))
+                (bind_port, Some((dest_host, dest_port)))
             }
             Self::Remote {
                 bind_port,
+                dest_host,
                 dest_port,
                 ..
-            } => (bind_port, Some(dest_port)),
+            } => (bind_port, Some((dest_host, dest_port))),
             Self::Dynamic {
                 bind_host,
                 bind_port,
@@ -380,9 +399,16 @@ impl ForwardRule {
             }
         };
         require_nonzero(*bind_port, format!("{prefix}.bind_port"))?;
-        dest_port.map_or(Ok(()), |p| {
-            require_nonzero(*p, format!("{prefix}.dest_port"))
-        })
+        if let Some((host, port)) = dest {
+            if host.trim().is_empty() {
+                return Err(CoreError::invalid(
+                    format!("{prefix}.dest_host"),
+                    "must not be empty",
+                ));
+            }
+            require_nonzero(*port, format!("{prefix}.dest_port"))?;
+        }
+        Ok(())
     }
 }
 
@@ -396,7 +422,7 @@ impl Connection {
             ("username", &self.username),
         ] {
             if value.trim().is_empty() {
-                return Err(invalid(field, "must not be empty"));
+                return Err(CoreError::invalid(field, "must not be empty"));
             }
         }
         require_nonzero(self.port, "port".into())?;
@@ -405,7 +431,7 @@ impl Connection {
             .as_deref()
             .is_some_and(|n| n.len() > MAX_NOTES_BYTES)
         {
-            return Err(invalid("notes", "too long"));
+            return Err(CoreError::invalid("notes", "too long"));
         }
 
         for (i, rule) in self.forwards.iter().enumerate() {
@@ -601,6 +627,26 @@ mod tests {
         assert_eq!(invalid_field(&c), "forwards[1].bind_port");
         c.forwards = vec![remote(9000, 0)];
         assert_eq!(invalid_field(&c), "forwards[0].dest_port");
+    }
+
+    #[test]
+    fn forward_destination_must_not_be_empty() {
+        let mut c = conn();
+        c.forwards = vec![ForwardRule::Local {
+            bind_host: "127.0.0.1".into(),
+            bind_port: 8080,
+            dest_host: " ".into(),
+            dest_port: 80,
+            auto_start: false,
+        }];
+        assert_eq!(invalid_field(&c), "forwards[0].dest_host");
+        c.forwards = vec![ForwardRule::Remote {
+            bind_port: 9000,
+            dest_host: String::new(),
+            dest_port: 80,
+            auto_start: false,
+        }];
+        assert_eq!(invalid_field(&c), "forwards[0].dest_host");
     }
 
     #[test]

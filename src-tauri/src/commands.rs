@@ -1,5 +1,5 @@
-//! Thin Tauri commands. Each delegates to a `do_<name>` that takes the state
-//! directly, so the logic is testable without a Tauri runtime.
+//! Thin Tauri commands. A command with logic worth testing delegates to a
+//! `do_<name>` that takes the state directly, so the tests need no Tauri runtime.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -119,11 +119,7 @@ pub fn do_connection_save(
 
 #[tauri::command]
 pub fn connection_dependents(state: State<'_, AppState>, id: Uuid) -> Result<Vec<Uuid>, ApiError> {
-    Ok(do_connection_dependents(&state, id))
-}
-
-pub fn do_connection_dependents(state: &AppState, id: Uuid) -> Vec<Uuid> {
-    state.store().dependents(id)
+    Ok(state.store().dependents(id))
 }
 
 // Off the main thread: the keychain may block.
@@ -163,21 +159,13 @@ pub fn do_snippet_save(state: &AppState, snippet: Snippet) -> Result<(), ApiErro
     if let Some(id) = snippet.connection_id
         && store.get(id).is_err()
     {
-        return Err(CoreError::InvalidInput {
-            field: "connection_id".into(),
-            reason: "unknown connection".into(),
-        }
-        .into());
+        return Err(CoreError::invalid("connection_id", "unknown connection").into());
     }
     Ok(state.snippets().upsert(snippet)?)
 }
 
 #[tauri::command]
 pub fn snippet_delete(state: State<'_, AppState>, id: Uuid) -> Result<(), ApiError> {
-    do_snippet_delete(&state, id)
-}
-
-pub fn do_snippet_delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
     Ok(state.snippets().delete(id)?)
 }
 
@@ -192,10 +180,6 @@ pub fn do_group_save(state: &AppState, group: Group) -> Result<(), ApiError> {
 
 #[tauri::command]
 pub fn group_delete(state: State<'_, AppState>, id: Uuid) -> Result<(), ApiError> {
-    do_group_delete(&state, id)
-}
-
-pub fn do_group_delete(state: &AppState, id: Uuid) -> Result<(), ApiError> {
     Ok(state.store().delete_group(id)?)
 }
 
@@ -241,10 +225,7 @@ const MAX_SSH_CONFIG_BYTES: usize = 1024 * 1024;
 
 /// Reads a regular file of at most `max` bytes; `Io(NotFound)` passes through.
 fn read_limited(path: &Path, max: usize, field: &str) -> Result<Vec<u8>, CoreError> {
-    let invalid = |reason: &str| CoreError::InvalidInput {
-        field: field.into(),
-        reason: reason.into(),
-    };
+    let invalid = |reason: &str| CoreError::invalid(field, reason);
     // Checked before opening: a directory errors and a FIFO would block the read.
     if !std::fs::metadata(path)?.is_file() {
         return Err(invalid("not a regular file"));
@@ -312,11 +293,7 @@ fn export_target(picked: &Path) -> Result<PathBuf, ApiError> {
 
 fn check_exported_at(exported_at: &str) -> Result<(), ApiError> {
     if exported_at.chars().count() > MAX_EXPORTED_AT_CHARS {
-        return Err(CoreError::InvalidInput {
-            field: "exported_at".into(),
-            reason: "too long".into(),
-        }
-        .into());
+        return Err(CoreError::invalid("exported_at", "too long").into());
     }
     Ok(())
 }
@@ -389,10 +366,7 @@ pub fn do_library_export(
 
 fn read_export(path: &Path) -> Result<ExportFile, CoreError> {
     let bytes = read_limited(path, MAX_EXPORT_BYTES, "file")?;
-    let text = String::from_utf8(bytes).map_err(|e| CoreError::InvalidInput {
-        field: "file".into(),
-        reason: e.to_string(),
-    })?;
+    let text = String::from_utf8(bytes).map_err(|e| CoreError::invalid("file", e.to_string()))?;
     export::parse(&text)
 }
 
@@ -481,12 +455,11 @@ pub fn do_library_import(
     selected: &[Uuid],
 ) -> Result<ImportCounts, ApiError> {
     let file = read_import(state, path)?;
-    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     // Held throughout, so the snippets' connections cannot vanish first.
     let mut store = state.store();
     let plan = export::plan(&file, selected, store.library())?;
-    let groups = count(plan.groups.len());
-    let connections = count(store.import_bundle(plan.groups, plan.connections)?);
+    let groups = export::count(plan.groups.len());
+    let connections = export::count(store.import_bundle(plan.groups, plan.connections)?);
     // Nothing to add must not fail on an unavailable snippets file.
     let snippets = if plan.snippets.is_empty() {
         0
@@ -498,7 +471,7 @@ pub fn do_library_import(
                 .insert("connections_imported".into(), connections.to_string());
             e
         })?;
-        count(imported)
+        export::count(imported)
     };
     Ok(ImportCounts {
         connections,
@@ -534,24 +507,8 @@ pub async fn session_open(
     data: Channel<InvokeResponseBody>,
     events: Channel<SessionEvent>,
 ) -> Result<SessionId, ApiError> {
-    do_session_open(
-        &state,
-        connection_id,
-        cols,
-        rows,
-        Arc::new(ChannelSink { data, events }),
-    )
-}
-
-/// Must run inside a tokio runtime.
-pub fn do_session_open(
-    state: &AppState,
-    connection_id: Uuid,
-    cols: u16,
-    rows: u16,
-    sink: Arc<dyn SessionSink>,
-) -> Result<SessionId, ApiError> {
     let chain = state.store().jump_chain(connection_id)?;
+    let sink = Arc::new(ChannelSink { data, events });
     Ok(state.sessions.open(chain, cols, rows, sink))
 }
 
@@ -584,21 +541,17 @@ pub fn do_session_open_quick(
     rows: u16,
     sink: Arc<dyn SessionSink>,
 ) -> Result<SessionId, ApiError> {
-    let invalid = |field: &str, reason: &str| CoreError::InvalidInput {
-        field: field.into(),
-        reason: reason.into(),
-    };
     if connection.jump_via.is_some() {
-        return Err(invalid("jump_via", "not allowed in a quick connection").into());
+        return Err(CoreError::invalid("jump_via", "not allowed in a quick connection").into());
     }
     if !connection.forwards.is_empty() {
-        return Err(invalid("forwards", "not allowed in a quick connection").into());
+        return Err(CoreError::invalid("forwards", "not allowed in a quick connection").into());
     }
     if !matches!(connection.auth, AuthMethod::Auto) {
-        return Err(invalid("auth", "must be automatic in a quick connection").into());
+        return Err(CoreError::invalid("auth", "must be automatic in a quick connection").into());
     }
     if state.store().get(connection.id).is_ok() {
-        return Err(invalid("id", "already in the library").into());
+        return Err(CoreError::invalid("id", "already in the library").into());
     }
     connection.validate()?;
     Ok(state.sessions.open(vec![connection], cols, rows, sink))
@@ -612,14 +565,11 @@ pub async fn session_write(
     request: Request<'_>,
 ) -> Result<(), ApiError> {
     let (id, data) = write_args(request.headers(), request.body())?;
-    do_session_write(&state, id, data).await
+    Ok(state.sessions.write(id, data).await?)
 }
 
 fn write_args(headers: &HeaderMap, body: &InvokeBody) -> Result<(SessionId, Vec<u8>), CoreError> {
-    let invalid = |field: &str| CoreError::InvalidInput {
-        field: field.into(),
-        reason: "malformed".into(),
-    };
+    let invalid = |field: &str| CoreError::invalid(field, "malformed");
     let id = headers
         .get("id")
         .and_then(|v| v.to_str().ok())
@@ -633,26 +583,9 @@ fn write_args(headers: &HeaderMap, body: &InvokeBody) -> Result<(SessionId, Vec<
     Ok((id, data))
 }
 
-pub async fn do_session_write(
-    state: &AppState,
-    id: SessionId,
-    data: Vec<u8>,
-) -> Result<(), ApiError> {
-    Ok(state.sessions.write(id, data).await?)
-}
-
 #[tauri::command]
 pub async fn session_resize(
     state: State<'_, AppState>,
-    id: SessionId,
-    cols: u16,
-    rows: u16,
-) -> Result<(), ApiError> {
-    do_session_resize(&state, id, cols, rows).await
-}
-
-pub async fn do_session_resize(
-    state: &AppState,
     id: SessionId,
     cols: u16,
     rows: u16,
@@ -666,23 +599,11 @@ pub fn session_answer(
     id: SessionId,
     answer: PromptAnswer,
 ) -> Result<(), ApiError> {
-    do_session_answer(&state, id, answer)
-}
-
-pub fn do_session_answer(
-    state: &AppState,
-    id: SessionId,
-    answer: PromptAnswer,
-) -> Result<(), ApiError> {
     Ok(state.sessions.answer(id, answer)?)
 }
 
 #[tauri::command]
 pub async fn session_close(state: State<'_, AppState>, id: SessionId) -> Result<(), ApiError> {
-    do_session_close(&state, id).await
-}
-
-pub async fn do_session_close(state: &AppState, id: SessionId) -> Result<(), ApiError> {
     Ok(state.sessions.close(id).await?)
 }
 
@@ -711,14 +632,6 @@ pub async fn forward_stop(
     session_id: SessionId,
     forward_id: u32,
 ) -> Result<(), ApiError> {
-    do_forward_stop(&state, session_id, forward_id).await
-}
-
-pub async fn do_forward_stop(
-    state: &AppState,
-    session_id: SessionId,
-    forward_id: u32,
-) -> Result<(), ApiError> {
     Ok(state.sessions.forward_stop(session_id, forward_id).await?)
 }
 
@@ -728,12 +641,7 @@ pub fn known_host_forget(
     host: String,
     port: u16,
 ) -> Result<u32, ApiError> {
-    do_known_host_forget(&state, &host, port)
-}
-
-pub fn do_known_host_forget(state: &AppState, host: &str, port: u16) -> Result<u32, ApiError> {
-    let removed = state.known_hosts.forget(host, port)?;
-    Ok(u32::try_from(removed).unwrap_or(u32::MAX))
+    Ok(export::count(state.known_hosts.forget(&host, port)?))
 }
 
 #[tauri::command]

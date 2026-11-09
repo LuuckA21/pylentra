@@ -98,13 +98,48 @@ pub(crate) fn quarantine(path: &Path) -> Result<PathBuf, CoreError> {
     Ok(backup)
 }
 
-pub(crate) fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
+fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
     toml::from_str(std::str::from_utf8(bytes).ok()?).ok()
 }
 
 #[derive(Deserialize)]
-pub(crate) struct VersionOnly {
-    pub(crate) version: u32,
+struct VersionOnly {
+    version: u32,
+}
+
+/// Reads a file with a `version` key. Missing: the default. Unreadable: moved
+/// aside, then the default. Newer than `current`: what can be read, with
+/// `true` for read-only, so a format we do not know is never written.
+pub(crate) fn load_versioned<T: serde::de::DeserializeOwned + Default>(
+    path: &Path,
+    current: u32,
+) -> Result<(T, LoadOutcome, bool), CoreError> {
+    let bytes = match fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((T::default(), LoadOutcome::CreatedEmpty, false));
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let parsed = match parse::<VersionOnly>(&bytes) {
+        Some(VersionOnly { version }) if version > current => {
+            let found = LoadOutcome::ReadOnlyNewerVersion { found: version };
+            return Ok((parse(&bytes).unwrap_or_default(), found, true));
+        }
+        Some(_) => parse(&bytes),
+        None => None,
+    };
+    Ok(match parsed {
+        Some(v) => (v, LoadOutcome::Ok, false),
+        None => {
+            let backup = quarantine(path)?;
+            (
+                T::default(),
+                LoadOutcome::RecoveredFromCorrupt { backup },
+                false,
+            )
+        }
+    })
 }
 
 pub struct ConnectionStore {
@@ -115,41 +150,15 @@ pub struct ConnectionStore {
 
 impl ConnectionStore {
     pub fn load(path: PathBuf) -> Result<(Self, LoadOutcome), CoreError> {
-        let mut store = Self {
-            path,
-            library: Library::default(),
-            read_only: false,
-        };
-        let bytes = match fs::read(&store.path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok((store, LoadOutcome::CreatedEmpty));
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let outcome = match parse::<VersionOnly>(&bytes) {
-            None => {
-                let backup = quarantine(&store.path)?;
-                LoadOutcome::RecoveredFromCorrupt { backup }
-            }
-            Some(VersionOnly { version }) if version > CONNECTIONS_VERSION => {
-                // Show what we can, but never write a format we do not know.
-                store.read_only = true;
-                store.library = parse(&bytes).unwrap_or_default();
-                LoadOutcome::ReadOnlyNewerVersion { found: version }
-            }
-            Some(_) => match parse::<Library>(&bytes) {
-                Some(lib) => {
-                    store.library = lib;
-                    LoadOutcome::Ok
-                }
-                None => {
-                    let backup = quarantine(&store.path)?;
-                    LoadOutcome::RecoveredFromCorrupt { backup }
-                }
+        let (library, outcome, read_only) = load_versioned(&path, CONNECTIONS_VERSION)?;
+        Ok((
+            Self {
+                path,
+                library,
+                read_only,
             },
-        };
-        Ok((store, outcome))
+            outcome,
+        ))
     }
 
     pub fn library(&self) -> &Library {
@@ -177,10 +186,8 @@ impl ConnectionStore {
     fn commit(&mut self, mut candidate: Library) -> Result<(), CoreError> {
         self.writable()?;
         candidate.version = CONNECTIONS_VERSION;
-        let text = toml::to_string_pretty(&candidate).map_err(|e| CoreError::InvalidInput {
-            field: "library".into(),
-            reason: e.to_string(),
-        })?;
+        let text = toml::to_string_pretty(&candidate)
+            .map_err(|e| CoreError::invalid("library", e.to_string()))?;
         atomic_write(&self.path, &text)?;
         self.library = candidate;
         Ok(())
@@ -218,18 +225,6 @@ impl ConnectionStore {
                 candidate.connections.push(c);
             }
         }
-        if let Some(j) = candidate
-            .connections
-            .iter()
-            .find(|x| x.id == id)
-            .and_then(|x| x.jump_via)
-            && !candidate.connections.iter().any(|x| x.id == j)
-        {
-            return Err(CoreError::InvalidInput {
-                field: "jump_via".into(),
-                reason: "unknown jump host".into(),
-            });
-        }
         // Only chains through the edited connection can have changed; a broken
         // chain elsewhere (hand-edited file) must not block this edit.
         let mut affected = vec![id];
@@ -242,30 +237,21 @@ impl ConnectionStore {
             }
             i += 1;
         }
-        for a in affected {
-            chain_in(&candidate.connections, a)?;
-        }
+        check_chains(&candidate.connections, &affected)?;
         Ok((candidate, warnings))
     }
 
-    /// Adds `conns` with a single write; any invalid one cancels them all.
-    /// Names are not deduplicated: the caller leaves out the ones it has.
+    /// Adds `conns` to `group_id` with a single write; any invalid one cancels
+    /// them all. Names are not deduplicated: the caller leaves out the ones it has.
     pub fn import(
         &mut self,
         mut conns: Vec<Connection>,
         group_id: Option<Uuid>,
     ) -> Result<usize, CoreError> {
-        self.writable()?;
-        if conns.is_empty() {
-            return Ok(0);
-        }
         for c in &mut conns {
             c.group_id = group_id;
         }
-        let mut candidate = self.library.clone();
-        let n = append_connections(&mut candidate, conns)?;
-        self.commit(candidate)?;
-        Ok(n)
+        self.import_bundle(vec![], conns)
     }
 
     /// Adds `groups` and `conns` with a single write; anything invalid
@@ -283,17 +269,9 @@ impl ConnectionStore {
         let mut candidate = self.library.clone();
         let mut known: HashSet<Uuid> = candidate.groups.iter().map(|g| g.id).collect();
         for mut g in groups {
-            if g.name.trim().is_empty() {
-                return Err(CoreError::InvalidInput {
-                    field: "name".into(),
-                    reason: "must not be empty".into(),
-                });
-            }
+            g.validate()?;
             if !known.insert(g.id) {
-                return Err(CoreError::InvalidInput {
-                    field: "id".into(),
-                    reason: "already exists".into(),
-                });
+                return Err(CoreError::invalid("id", "already exists"));
             }
             g.extra = toml::Table::new();
             candidate.groups.push(g);
@@ -302,10 +280,7 @@ impl ConnectionStore {
             .iter()
             .any(|c| c.group_id.is_some_and(|g| !known.contains(&g)))
         {
-            return Err(CoreError::InvalidInput {
-                field: "group_id".into(),
-                reason: "unknown group".into(),
-            });
+            return Err(CoreError::invalid("group_id", "unknown group"));
         }
         let n = append_connections(&mut candidate, conns)?;
         self.commit(candidate)?;
@@ -343,12 +318,7 @@ impl ConnectionStore {
 
     pub fn upsert_group(&mut self, mut g: Group) -> Result<(), CoreError> {
         self.writable()?;
-        if g.name.trim().is_empty() {
-            return Err(CoreError::InvalidInput {
-                field: "name".into(),
-                reason: "must not be empty".into(),
-            });
-        }
+        g.validate()?;
         let mut candidate = self.library.clone();
         match candidate.groups.iter_mut().find(|x| x.id == g.id) {
             Some(slot) => {
@@ -398,31 +368,26 @@ fn append_connections(
         c.extra = toml::Table::new();
         c.validate()?;
         if !seen.insert(c.id) {
-            return Err(CoreError::InvalidInput {
-                field: "id".into(),
-                reason: "already exists".into(),
-            });
+            return Err(CoreError::invalid("id", "already exists"));
         }
     }
-    let n = conns.len();
     let ids: Vec<Uuid> = conns.iter().map(|c| c.id).collect();
     candidate.connections.extend(conns);
-    for id in ids {
-        if let Some(j) = candidate
-            .connections
-            .iter()
-            .find(|x| x.id == id)
-            .and_then(|x| x.jump_via)
-            && !candidate.connections.iter().any(|x| x.id == j)
+    check_chains(&candidate.connections, &ids)?;
+    Ok(ids.len())
+}
+
+/// Each of `ids` jumps, if at all, through a known connection in a valid chain.
+fn check_chains(conns: &[Connection], ids: &[Uuid]) -> Result<(), CoreError> {
+    for &id in ids {
+        if let Some(j) = conns.iter().find(|x| x.id == id).and_then(|x| x.jump_via)
+            && !conns.iter().any(|x| x.id == j)
         {
-            return Err(CoreError::InvalidInput {
-                field: "jump_via".into(),
-                reason: "unknown jump host".into(),
-            });
+            return Err(CoreError::invalid("jump_via", "unknown jump host"));
         }
-        chain_in(&candidate.connections, id)?;
+        chain_in(conns, id)?;
     }
-    Ok(n)
+    Ok(())
 }
 
 fn dependents_in(conns: &[Connection], id: Uuid) -> Vec<Uuid> {
@@ -499,10 +464,8 @@ impl SettingsStore {
             extra: self.settings.extra.clone(),
             ..s
         };
-        let text = toml::to_string_pretty(&s).map_err(|e| CoreError::InvalidInput {
-            field: "settings".into(),
-            reason: e.to_string(),
-        })?;
+        let text = toml::to_string_pretty(&s)
+            .map_err(|e| CoreError::invalid("settings", e.to_string()))?;
         atomic_write(&self.path, &text)?;
         self.settings = s;
         Ok(())
@@ -1318,6 +1281,15 @@ mod tests {
     fn import_sets_the_group() {
         let (_d, mut s) = store();
         let g = Uuid::new_v4();
+        let err = s.import(vec![conn("a")], Some(g)).unwrap_err();
+        assert!(matches!(err, CoreError::InvalidInput { field, .. } if field == "group_id"));
+        s.upsert_group(Group {
+            id: g,
+            name: "g".into(),
+            color: None,
+            extra: toml::Table::new(),
+        })
+        .unwrap();
         s.import(vec![conn("a"), conn("b")], Some(g)).unwrap();
         assert!(
             s.library()
