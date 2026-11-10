@@ -1,5 +1,6 @@
 //! Name rules for entries a server sends us (spec §4.2).
 
+#[allow(dead_code)] // Used by transfers (Tasks 4-6).
 pub(crate) const TEMP_SUFFIX: &str = "pylentra-tmp";
 pub(crate) const LOCAL_WINDOWS: bool = cfg!(windows);
 
@@ -31,10 +32,12 @@ pub(crate) fn valid_name(name: &str, windows: bool) -> bool {
 }
 
 /// `dir` and `name` as a remote path.
+#[allow(dead_code)] // Used by transfers (Tasks 4-6).
 pub(crate) fn remote_join(dir: &str, name: &str) -> String {
     format!("{}/{name}", dir.trim_end_matches('/'))
 }
 
+#[allow(dead_code)] // Used by transfers (Tasks 4-6).
 pub(crate) fn temp_name(name: &str, n: u32) -> String {
     format!("{name}.{n}.{TEMP_SUFFIX}")
 }

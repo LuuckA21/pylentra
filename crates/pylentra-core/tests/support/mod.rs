@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,6 +17,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+
+mod sftp;
+pub use sftp::Hostile;
 
 pub struct TestServerConfig {
     pub password: Option<String>,
@@ -34,6 +38,9 @@ pub struct TestServerConfig {
     /// Failed password, keyboard-interactive or publickey attempts allowed; one more ends
     /// the connection (OpenSSH's `MaxAuthTries`). `None`: no limit.
     pub max_auth_attempts: Option<usize>,
+    /// Folder served as "/" (and home) by the "sftp" subsystem; `None` refuses the subsystem.
+    pub sftp_root: Option<PathBuf>,
+    pub sftp_hostile: Hostile,
 }
 
 impl Default for TestServerConfig {
@@ -47,6 +54,8 @@ impl Default for TestServerConfig {
             allow_password_method: true,
             single_password_try: false,
             max_auth_attempts: None,
+            sftp_root: None,
+            sftp_hostile: Hostile::None,
         }
     }
 }
@@ -145,6 +154,7 @@ impl Server for Acceptor {
             tasks: Vec::new(),
             listeners: HashMap::new(),
             relayed: HashSet::new(),
+            sessions: HashMap::new(),
             otp_pending: false,
             failures: 0,
         }
@@ -162,8 +172,11 @@ struct ConnHandler {
     tasks: Vec<JoinHandle<()>>,
     /// Accept loops of tcpip-forward listeners by bound port, for cancel-tcpip-forward.
     listeners: HashMap<u16, JoinHandle<()>>,
-    /// direct-tcpip channels: their bytes belong to the pipe, not to the echo shell.
+    /// direct-tcpip and sftp channels: their bytes belong to the pipe, not to the echo shell.
     relayed: HashSet<ChannelId>,
+    /// Session channels until their pty or subsystem request. Shell channels are dropped
+    /// there: the echo shell answers through `data`, and an undrained channel would stall.
+    sessions: HashMap<ChannelId, Channel<Msg>>,
     /// The first keyboard-interactive round passed; the OTP round is next.
     otp_pending: bool,
     /// Rejected auth attempts so far, for `max_auth_attempts`.
@@ -280,10 +293,11 @@ impl Handler for ConnHandler {
 
     async fn channel_open_session(
         &mut self,
-        _channel: Channel<Msg>,
+        channel: Channel<Msg>,
         reply: russh::server::ChannelOpenHandle,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
+        self.sessions.insert(channel.id(), channel);
         reply.accept().await;
         Ok(())
     }
@@ -299,6 +313,7 @@ impl Handler for ConnHandler {
         _modes: &[(russh::Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        self.sessions.remove(&channel);
         self.ptys
             .lock()
             .expect("ptys")
@@ -311,7 +326,28 @@ impl Handler for ConnHandler {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        self.sessions.remove(&channel);
         session.channel_success(channel)
+    }
+
+    async fn subsystem_request(
+        &mut self,
+        channel: ChannelId,
+        name: &str,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let opened = self.sessions.remove(&channel);
+        match (name, &self.cfg.sftp_root, opened) {
+            ("sftp", Some(root), Some(ch)) => {
+                self.relayed.insert(channel);
+                session.channel_success(channel)?;
+                let fs = sftp::SftpFs::new(root, self.cfg.sftp_hostile.clone());
+                // Spawns its own task, which ends with the channel.
+                russh_sftp::server::run(ch.into_stream(), fs).await;
+                Ok(())
+            }
+            _ => session.channel_failure(channel),
+        }
     }
 
     async fn window_change_request(

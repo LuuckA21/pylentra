@@ -220,4 +220,31 @@ mod tests {
         );
         assert_eq!(CoreError::SftpUnavailable.code(), "sftp.unavailable");
     }
+
+    #[test]
+    fn sftp_client_errors() {
+        use russh_sftp::client::error::Error;
+        use russh_sftp::protocol::{Status, StatusCode};
+        let status = |status_code| {
+            CoreError::from(Error::Status(Status {
+                id: 1,
+                status_code,
+                error_message: String::new(),
+                language_tag: String::new(),
+            }))
+        };
+        assert!(matches!(
+            status(StatusCode::PermissionDenied),
+            CoreError::SftpPermissionDenied { .. }
+        ));
+        assert!(matches!(
+            status(StatusCode::NoSuchFile),
+            CoreError::NotFound { .. }
+        ));
+        assert!(matches!(status(StatusCode::Failure), CoreError::Ssh(_)));
+        assert!(matches!(
+            CoreError::from(Error::Limited("handles".into())),
+            CoreError::SftpLimit { what } if what == "handles"
+        ));
+    }
 }
