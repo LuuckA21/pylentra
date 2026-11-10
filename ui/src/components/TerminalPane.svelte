@@ -86,6 +86,15 @@
   let fit: FitAddon | undefined;
 
   const theme = () => terminalTheme(settings.terminal_theme, appTerminalTheme);
+  // The terminal settings, read when the terminal opens and whenever they change.
+  const options = () => ({
+    fontFamily: settings.font_family,
+    fontSize: settings.font_size,
+    theme: theme(),
+    cursorStyle: settings.cursor_style,
+    cursorBlink: settings.cursor_blink,
+    scrollback: settings.scrollback,
+  });
 
   // Automatic reconnection: retries launched in the current chain (0 = none),
   // and whether the next one is being waited for (the overlay shows then).
@@ -149,14 +158,7 @@
   const onanswer = (a: PromptAnswer) => answer(pane.paneId, a);
 
   onMount(() => {
-    const tm = new Terminal({
-      fontFamily: settings.font_family,
-      fontSize: settings.font_size,
-      theme: theme(),
-      cursorStyle: settings.cursor_style,
-      cursorBlink: settings.cursor_blink,
-      scrollback: settings.scrollback,
-    });
+    const tm = new Terminal(options());
     const fa = new FitAddon();
     tm.loadAddon(fa);
     tm.open(el);
@@ -213,14 +215,7 @@
 
   // Open terminals follow the terminal settings.
   $effect(() => {
-    const o = {
-      fontFamily: settings.font_family,
-      fontSize: settings.font_size,
-      theme: theme(),
-      cursorStyle: settings.cursor_style,
-      cursorBlink: settings.cursor_blink,
-      scrollback: settings.scrollback,
-    };
+    const o = options();
     if (!term) return;
     Object.assign(term.options, o);
     fit?.fit();

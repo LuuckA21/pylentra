@@ -13,6 +13,7 @@
     toggle,
   } from "../lib/importSelection";
   import { modal } from "../lib/modal";
+  import { byName } from "../lib/search";
   import {
     isReadOnly,
     library,
@@ -40,9 +41,7 @@
   );
   const userMissing = $derived(needsUser && !user.trim());
   const count = $derived(selected.size);
-  const groups = $derived(
-    [...library.groups].sort((a, b) => a.name.localeCompare(b.name)),
-  );
+  const groups = $derived([...library.groups].sort(byName));
   const readOnly = $derived(isReadOnly());
 
   const noteText = (n: ImportNote) => {
@@ -232,52 +231,9 @@
 </div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: var(--backdrop);
-    z-index: 60;
-  }
   .dialog {
     width: min(620px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
-    overflow-y: auto;
-    padding: var(--space-6);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow);
   }
-  h2 {
-    margin: 0 0 8px;
-    font-size: 16px;
-  }
-  .hosts {
-    margin: 0 0 12px;
-    padding: 0;
-    list-style: none;
-  }
-  li {
-    padding: var(--space-2) 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .row {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-  }
-  .main {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .name {
-    font-weight: 600;
-  }
-  .meta,
   .note,
   .hint {
     color: var(--fg-muted);

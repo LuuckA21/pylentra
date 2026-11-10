@@ -5,7 +5,7 @@
   import { library, isSnippetsReadOnly } from "../../lib/stores/library.svelte";
   import { deleteSnippet, snippets } from "../../lib/stores/snippets.svelte";
   import { toastError } from "../../lib/stores/toasts.svelte";
-  import { fold } from "../../lib/search";
+  import { byName, fold } from "../../lib/search";
   import { firstLine } from "../../lib/snippets";
   import SnippetForm from "../SnippetForm.svelte";
   import Avatar from "../ui/Avatar.svelte";
@@ -20,8 +20,6 @@
   let deleting = $state<Snippet | null>(null);
 
   const readOnly = $derived(isSnippetsReadOnly());
-  const byName = (a: { name: string }, b: { name: string }) =>
-    a.name.localeCompare(b.name);
 
   // "Global" first, then one group per connection that has snippets. A
   // snippet whose connection is gone stays reachable under "Global".

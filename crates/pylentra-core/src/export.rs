@@ -91,10 +91,7 @@ pub struct ImportPlan {
 }
 
 fn invalid_file(e: impl ToString) -> CoreError {
-    CoreError::InvalidInput {
-        field: "file".into(),
-        reason: e.to_string(),
-    }
+    CoreError::invalid("file", e.to_string())
 }
 
 fn without_extra<T: Clone>(items: &[T], extra: fn(&mut T) -> &mut toml::Table) -> Vec<T> {
@@ -122,20 +119,14 @@ pub fn export(
         connections: without_extra(&library.connections, |c| &mut c.extra),
         snippets: without_extra(snippets, |s| &mut s.extra),
     };
-    toml::to_string_pretty(&file).map_err(|e| CoreError::InvalidInput {
-        field: "export".into(),
-        reason: e.to_string(),
-    })
+    toml::to_string_pretty(&file).map_err(|e| CoreError::invalid("export", e.to_string()))
 }
 
 /// Checks `format` and `version` on the raw table before the full parse, so a newer file reports its version.
 pub fn parse(text: &str) -> Result<ExportFile, CoreError> {
     let table: toml::Table = text.parse().map_err(invalid_file)?;
     if table.get("format").and_then(|v| v.as_str()) != Some(EXPORT_FORMAT) {
-        return Err(CoreError::InvalidInput {
-            field: "format".into(),
-            reason: "not a Pylentra export".into(),
-        });
+        return Err(CoreError::invalid("format", "not a Pylentra export"));
     }
     match table.get("version").and_then(|v| v.as_integer()) {
         Some(v) if v > i64::from(EXPORT_VERSION) => {
@@ -150,15 +141,13 @@ pub fn parse(text: &str) -> Result<ExportFile, CoreError> {
     let mut ids: Vec<Uuid> = file.connections.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     if ids.windows(2).any(|w| w[0] == w[1]) {
-        return Err(CoreError::InvalidInput {
-            field: "id".into(),
-            reason: "repeated in the file".into(),
-        });
+        return Err(CoreError::invalid("id", "repeated in the file"));
     }
     Ok(file)
 }
 
-fn count(n: usize) -> u32 {
+/// A count for the UI, which takes `u32`.
+pub fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
@@ -245,10 +234,10 @@ pub fn plan(
         .iter()
         .find(|id| !file.connections.iter().any(|c| c.id == **id))
     {
-        return Err(CoreError::InvalidInput {
-            field: "selected".into(),
-            reason: format!("{id} is not in the file"),
-        });
+        return Err(CoreError::invalid(
+            "selected",
+            format!("{id} is not in the file"),
+        ));
     }
     let mut new_ids = HashMap::new();
     let picked: Vec<(&Connection, Uuid)> = file

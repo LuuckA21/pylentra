@@ -54,27 +54,8 @@
 </div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: var(--backdrop);
-    z-index: 60;
-  }
   .dialog {
     width: min(440px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
-    overflow-y: auto;
-    padding: var(--space-6);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow);
-  }
-  h2 {
-    margin: 0 0 8px;
-    font-size: 16px;
   }
   .field {
     display: flex;

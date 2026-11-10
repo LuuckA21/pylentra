@@ -1,6 +1,10 @@
 import type { Connection } from "./bindings/Connection";
 import type { Group } from "./bindings/Group";
 
+// Sort order of every list of names (connections, groups, snippets).
+export const byName = (a: { name: string }, b: { name: string }) =>
+  a.name.localeCompare(b.name);
+
 export const fold = (s: string) =>
   s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 

@@ -328,6 +328,66 @@ button:disabled {
   background: var(--surface-3);
 }
 
+/* Modal dialogs: <div class="backdrop"><div class="dialog" role="dialog">;
+   each dialog sets its own width, and its own rules win over these. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--backdrop);
+  z-index: 60;
+}
+
+.dialog {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: var(--space-6);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow);
+}
+
+:where(.dialog) h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+/* The connection list of the import dialogs: <ul class="hosts"><li><label class="row">. */
+.hosts {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.hosts > li {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.hosts .row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.hosts .main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hosts .name {
+  font-weight: 600;
+}
+
+.hosts .meta {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
 /* In-tab overlays (prompts, session errors): they cover the terminal, not the app. */
 .tab-overlay {
   position: absolute;

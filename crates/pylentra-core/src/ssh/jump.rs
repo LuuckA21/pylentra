@@ -45,10 +45,7 @@ pub(crate) async fn connect_chain(
     ctx: &ChainCtx<'_>,
 ) -> Result<Chain, CoreError> {
     let Some((target, via)) = chain.split_last() else {
-        return Err(CoreError::InvalidInput {
-            field: "chain".into(),
-            reason: "empty".into(),
-        });
+        return Err(CoreError::invalid("chain", "empty"));
     };
     let config = Arc::new(client::Config {
         keepalive_interval: ctx.opts.keepalive_interval,

@@ -9,7 +9,7 @@
   import { menuKeydown } from "../lib/menu";
   import { modal } from "../lib/modal";
   import { getPref, setPref } from "../lib/prefs";
-  import { matches } from "../lib/search";
+  import { byName, matches } from "../lib/search";
   import { fromOtherModal, shortcutFor } from "../lib/shortcuts";
   import {
     deleteConnection,
@@ -21,6 +21,7 @@
   import { toastError } from "../lib/stores/toasts.svelte";
   import Avatar from "./ui/Avatar.svelte";
   import ColorPicker from "./ui/ColorPicker.svelte";
+  import ConfirmDialog from "./ui/ConfirmDialog.svelte";
   import Icon from "./ui/Icon.svelte";
   import Pill from "./ui/Pill.svelte";
   import TextField from "./ui/TextField.svelte";
@@ -98,9 +99,6 @@
   let menuEl: HTMLElement | undefined = $state();
   let searchEl = $state<HTMLInputElement>();
   let lastRow: HTMLElement | null = null;
-
-  const byName = (a: { name: string }, b: { name: string }) =>
-    a.name.localeCompare(b.name);
 
   // "No group" comes last and also takes connections whose group no longer exists.
   const view = $derived(
@@ -682,32 +680,16 @@
 {/if}
 
 {#if confirm}
-  <div class="backdrop">
-    <div
-      class="dialog"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="del-title"
-      aria-describedby="del-body"
-      use:modal={cancelDelete}
-    >
-      <h2 id="del-title">{t("delete.title")}</h2>
-      <div id="del-body">
-        <p>{t("delete.confirm", { name: confirm.conn.name })}</p>
-        {#if confirm.names.length}
-          <p>{t("delete.dependents", { names: confirm.names.join(", ") })}</p>
-        {/if}
-      </div>
-      <div class="actions">
-        <button type="button" data-autofocus onclick={cancelDelete}
-          >{t("common.cancel")}</button
-        >
-        <button type="button" class="danger" onclick={doDelete}
-          >{t("common.delete")}</button
-        >
-      </div>
-    </div>
-  </div>
+  <ConfirmDialog
+    title={t("delete.title")}
+    message={confirm.names.length
+      ? `${t("delete.confirm", { name: confirm.conn.name })} ${t("delete.dependents", { names: confirm.names.join(", ") })}`
+      : t("delete.confirm", { name: confirm.conn.name })}
+    confirmLabel={t("common.delete")}
+    danger
+    onconfirm={doDelete}
+    oncancel={cancelDelete}
+  />
 {/if}
 
 {#if groupDialog}
@@ -756,32 +738,17 @@
 {/if}
 
 {#if confirmGroup}
-  <div class="backdrop">
-    <div
-      class="dialog"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="delgrp-title"
-      aria-describedby="delgrp-body"
-      use:modal={cancelDeleteGroup}
-    >
-      <h2 id="delgrp-title">{t("group.deleteTitle")}</h2>
-      <p id="delgrp-body">
-        {t("group.deleteConfirm", {
-          name: confirmGroup.name,
-          noGroup: t("sidebar.noGroup"),
-        })}
-      </p>
-      <div class="actions">
-        <button type="button" data-autofocus onclick={cancelDeleteGroup}
-          >{t("common.cancel")}</button
-        >
-        <button type="button" class="danger" onclick={doDeleteGroup}
-          >{t("common.delete")}</button
-        >
-      </div>
-    </div>
-  </div>
+  <ConfirmDialog
+    title={t("group.deleteTitle")}
+    message={t("group.deleteConfirm", {
+      name: confirmGroup.name,
+      noGroup: t("sidebar.noGroup"),
+    })}
+    confirmLabel={t("common.delete")}
+    danger
+    onconfirm={doDeleteGroup}
+    oncancel={cancelDeleteGroup}
+  />
 {/if}
 
 <style>
@@ -1003,25 +970,8 @@
     flex-direction: column;
     gap: var(--space-2);
   }
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: var(--backdrop);
-    z-index: 60;
-  }
   .dialog {
     max-width: min(440px, calc(100vw - 32px));
-    padding: var(--space-6);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow);
-  }
-  h2 {
-    margin: 0 0 8px;
-    font-size: 16px;
   }
   .actions {
     display: flex;

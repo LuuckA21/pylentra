@@ -111,19 +111,9 @@ impl KnownHosts {
             Err(e) => return Err(e.into()),
         };
         let mut entries = Vec::new();
-        for (i, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
-            if line.trim().is_empty() || line.starts_with(['#', '@']) {
-                continue;
-            }
-            let mut fields = line.split_ascii_whitespace();
-            let (Some(hosts), Some(algo), Some(b64)) =
-                (fields.next(), fields.next(), fields.next())
-            else {
-                log::warn!("skipping malformed line {} of known_hosts", i + 1);
-                continue;
-            };
+        for (n, hosts, algo, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
             let Ok(key) = parse_public_key_base64(b64) else {
-                log::warn!("skipping unusable key on line {} of known_hosts", i + 1);
+                log::warn!("skipping unusable key on line {n} of known_hosts");
                 continue;
             };
             let fingerprint = fingerprint(&key);
@@ -200,16 +190,7 @@ fn scan_openssh(path: &Path, host: &str, port: u16, key: &PublicKey) -> Result<S
         format!("[{host}]:{port}")
     };
     let mut found = false;
-    for line in String::from_utf8_lossy(&bytes).lines() {
-        // '@cert-authority' / '@revoked' markers are not plain host keys.
-        if line.starts_with(['#', '@']) {
-            continue;
-        }
-        let mut fields = line.split_ascii_whitespace();
-        let (Some(hosts), Some(_), Some(b64)) = (fields.next(), fields.next(), fields.next())
-        else {
-            continue;
-        };
+    for (_, hosts, _, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
         if !hosts.split(',').any(|p| host_matches(&host_port, p)) {
             continue;
         }
@@ -229,6 +210,19 @@ fn scan_openssh(path: &Path, host: &str, port: u16, key: &PublicKey) -> Result<S
         }
     }
     Ok(if found { Scan::Found } else { Scan::Absent })
+}
+
+/// `(line number, hosts, algorithm, base64 key)` of each line that can hold a
+/// plain host key; comments, '@cert-authority' / '@revoked' markers and lines
+/// with too few fields are skipped.
+fn key_lines(text: &str) -> impl Iterator<Item = (usize, &str, &str, &str)> {
+    text.lines().enumerate().filter_map(|(i, line)| {
+        if line.starts_with(['#', '@']) {
+            return None;
+        }
+        let mut fields = line.split_ascii_whitespace();
+        Some((i + 1, fields.next()?, fields.next()?, fields.next()?))
+    })
 }
 
 /// `[h]:p` -> (h, p), `h` -> (h, 22); a hashed name hides both (port 22 is a placeholder).

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "../lib/bindings/Snippet";
   import { errorMessage, t } from "../lib/i18n";
+  import { byName } from "../lib/search";
   import { modal } from "../lib/modal";
   import { library } from "../lib/stores/library.svelte";
   import { settings } from "../lib/stores/settings.svelte";
@@ -42,9 +43,7 @@
   let formEl: HTMLFormElement | undefined = $state();
   const uid = $props.id();
 
-  const connections = $derived(
-    [...library.connections].sort((a, b) => a.name.localeCompare(b.name)),
-  );
+  const connections = $derived([...library.connections].sort(byName));
   const eid = (field: string) => `${uid}-err-${field}`;
   const focusField = (field: string) =>
     formEl?.querySelector<HTMLElement>(`[data-field="${field}"]`);
@@ -172,27 +171,8 @@
 </div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: var(--backdrop);
-    z-index: 60;
-  }
   .dialog {
     width: min(560px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
-    overflow-y: auto;
-    padding: var(--space-6);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow);
-  }
-  h2 {
-    margin: 0 0 8px;
-    font-size: 16px;
   }
   .field {
     display: flex;

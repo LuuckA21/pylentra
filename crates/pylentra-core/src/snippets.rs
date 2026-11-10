@@ -1,9 +1,8 @@
 use crate::error::CoreError;
 use crate::model::lenient_extra;
-use crate::store::{LoadOutcome, VersionOnly, atomic_write, parse, quarantine};
+use crate::store::{LoadOutcome, atomic_write, load_versioned};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fs;
 use std::path::PathBuf;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -49,21 +48,17 @@ impl Default for SnippetFile {
 
 impl Snippet {
     pub fn validate(&self) -> Result<(), CoreError> {
-        let invalid = |field: &str, reason: &str| CoreError::InvalidInput {
-            field: field.into(),
-            reason: reason.into(),
-        };
         if self.name.trim().is_empty() {
-            return Err(invalid("name", "must not be empty"));
+            return Err(CoreError::invalid("name", "must not be empty"));
         }
         if self.name.chars().count() > MAX_NAME_CHARS {
-            return Err(invalid("name", "too long"));
+            return Err(CoreError::invalid("name", "too long"));
         }
         if self.text.trim().is_empty() {
-            return Err(invalid("text", "must not be empty"));
+            return Err(CoreError::invalid("text", "must not be empty"));
         }
         if self.text.len() > MAX_TEXT_BYTES {
-            return Err(invalid("text", "too long"));
+            return Err(CoreError::invalid("text", "too long"));
         }
         Ok(())
     }
@@ -81,44 +76,17 @@ pub struct SnippetStore {
 
 impl SnippetStore {
     pub fn load(path: PathBuf) -> Result<(Self, LoadOutcome), CoreError> {
-        let mut store = Self {
-            path,
-            snippets: vec![],
-            extra: toml::Table::new(),
-            read_only: false,
-            unavailable: false,
-        };
-        let bytes = match fs::read(&store.path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok((store, LoadOutcome::CreatedEmpty));
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let outcome = match parse::<VersionOnly>(&bytes) {
-            Some(VersionOnly { version }) if version > SNIPPETS_VERSION => {
-                // Show what we can, but never write a format we do not know.
-                store.read_only = true;
-                let file = parse::<SnippetFile>(&bytes).unwrap_or_default();
-                store.snippets = file.snippets;
-                store.extra = file.extra;
-                LoadOutcome::ReadOnlyNewerVersion { found: version }
-            }
-            Some(_) => match parse::<SnippetFile>(&bytes) {
-                Some(file) => {
-                    store.snippets = file.snippets;
-                    store.extra = file.extra;
-                    LoadOutcome::Ok
-                }
-                None => LoadOutcome::RecoveredFromCorrupt {
-                    backup: quarantine(&store.path)?,
-                },
+        let (file, outcome, read_only) = load_versioned::<SnippetFile>(&path, SNIPPETS_VERSION)?;
+        Ok((
+            Self {
+                path,
+                snippets: file.snippets,
+                extra: file.extra,
+                read_only,
+                unavailable: false,
             },
-            None => LoadOutcome::RecoveredFromCorrupt {
-                backup: quarantine(&store.path)?,
-            },
-        };
-        Ok((store, outcome))
+            outcome,
+        ))
     }
 
     /// An empty, read-only store for a file that could not be read, so the
@@ -156,10 +124,8 @@ impl SnippetStore {
             snippets: candidate,
             extra: self.extra.clone(),
         };
-        let text = toml::to_string_pretty(&file).map_err(|e| CoreError::InvalidInput {
-            field: "snippets".into(),
-            reason: e.to_string(),
-        })?;
+        let text = toml::to_string_pretty(&file)
+            .map_err(|e| CoreError::invalid("snippets", e.to_string()))?;
         atomic_write(&self.path, &text)?;
         self.snippets = file.snippets;
         Ok(())
@@ -196,10 +162,7 @@ impl SnippetStore {
         for mut s in snippets {
             s.validate()?;
             if !seen.insert(s.id) {
-                return Err(CoreError::InvalidInput {
-                    field: "id".into(),
-                    reason: "already exists".into(),
-                });
+                return Err(CoreError::invalid("id", "already exists"));
             }
             s.extra = toml::Table::new();
             candidate.push(s);

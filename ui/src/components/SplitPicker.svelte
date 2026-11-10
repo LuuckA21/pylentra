@@ -44,21 +44,8 @@
 </div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    place-items: center;
-    background: var(--backdrop);
-    z-index: 60;
-  }
   .dialog {
     width: min(440px, calc(100vw - 32px));
-    padding: var(--space-6);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow);
   }
   /* The field fills the dialog (360 px is its cap in the top bar). */
   .dialog :global(.quick) {
