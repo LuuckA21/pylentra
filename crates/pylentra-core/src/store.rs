@@ -45,17 +45,16 @@ pub enum LoadOutcome {
     ReadOnlyNewerVersion { found: u32 },
 }
 
-/// Writes a fresh `<path>.<n>.tmp`, syncs it and renames it over `path`, so
-/// readers never see a half-written file. The temporary file is created new,
-/// so a file that happens to have that name is never truncated.
-pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
+/// Creates `<path>.<n>.tmp` exclusively (and any missing folders), so a file that
+/// happens to have that name is never truncated.
+pub(crate) fn create_temp(path: &Path) -> Result<(PathBuf, fs::File), CoreError> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
     // shortcut: a crash leaves its temp file behind (it may be someone else's, so it is never
     // deleted) and 100 taken names stop the write; upgrade if leftovers ever pile up.
     let mut n = 0u32;
-    let (tmp, mut f) = loop {
+    let (tmp, f) = loop {
         let mut tmp = OsString::from(path);
         tmp.push(format!(".{n}.tmp"));
         let tmp = PathBuf::from(tmp);
@@ -69,6 +68,14 @@ pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
             Err(e) => return Err(e.into()),
         }
     };
+    Ok((tmp, f))
+}
+
+/// Writes a fresh `<path>.<n>.tmp`, syncs it and renames it over `path`, so
+/// readers never see a half-written file. The temporary file is created new,
+/// so a file that happens to have that name is never truncated.
+pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
+    let (tmp, mut f) = create_temp(path)?;
     let mut write = || -> std::io::Result<()> {
         f.write_all(contents.as_bytes())?;
         f.sync_all()?;
@@ -478,6 +485,22 @@ mod tests {
     use crate::model::{AuthMethod, ConnIcon, TagColor, Theme};
     use crate::secrets::{MemorySecretStore, SecretKind};
     use tempfile::TempDir;
+
+    #[test]
+    fn create_temp_is_exclusive() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("f");
+        let (a, _fa) = create_temp(&path).unwrap();
+        let (b, _fb) = create_temp(&path).unwrap();
+        assert_ne!(a, b);
+        std::fs::write(dir.path().join("sub/g.0.tmp"), "keep").unwrap();
+        let (c, _fc) = create_temp(&dir.path().join("sub/g")).unwrap();
+        assert!(c.ends_with("g.1.tmp"));
+        assert_eq!(
+            std::fs::read(dir.path().join("sub/g.0.tmp")).unwrap(),
+            b"keep"
+        );
+    }
 
     fn conn(name: &str) -> Connection {
         Connection {
