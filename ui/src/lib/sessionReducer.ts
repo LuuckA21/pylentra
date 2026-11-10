@@ -61,6 +61,8 @@ export function reduce(s: PaneState, e: SessionEvent): PaneState {
           [e.forward_id]: { rule: e.rule, state: e.state },
         },
       };
+    case "Transfer":
+      return s; // handled by the file panel (later task)
     case "Closed":
       return { ...s, phase: "closed", closed: e.reason, prompt: undefined };
   }

@@ -6,6 +6,7 @@ use ts_rs::TS;
 use crate::error::ApiError;
 use crate::known_hosts::KeySource;
 use crate::model::ForwardRule;
+use crate::ssh::sftp::Direction;
 
 #[derive(Serialize, Clone, Debug, PartialEq, TS)]
 #[ts(export)]
@@ -58,6 +59,59 @@ pub enum CloseReason {
 #[derive(Serialize, Clone, Debug, PartialEq, TS)]
 #[serde(tag = "type")]
 #[ts(export)]
+pub enum SkipReason {
+    Symlink,
+    Special,
+    InvalidName,
+    Exists,
+    Error { error: ApiError },
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[ts(export)]
+pub struct Skipped {
+    /// Relative to the transferred folder.
+    pub path: String,
+    pub reason: SkipReason,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[serde(tag = "type")]
+#[ts(export)]
+pub enum TransferState {
+    Queued {
+        direction: Direction,
+        name: String,
+    },
+    Running {
+        #[ts(type = "number")]
+        done_bytes: u64,
+        #[ts(type = "number | null")]
+        total_bytes: Option<u64>,
+        files_done: u32,
+        current: String,
+    },
+    /// Waiting for `PromptAnswer::Conflict`.
+    Conflict {
+        name: String,
+    },
+    Finished {
+        files: u32,
+        skipped: Vec<Skipped>,
+    },
+    Failed {
+        error: ApiError,
+        files: u32,
+        skipped: Vec<Skipped>,
+    },
+    Cancelled {
+        files: u32,
+    },
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[serde(tag = "type")]
+#[ts(export)]
 pub enum SessionEvent {
     Status {
         stage: Stage,
@@ -87,9 +141,21 @@ pub enum SessionEvent {
         rule: ForwardRule,
         state: ForwardState,
     },
+    Transfer {
+        transfer_id: u32,
+        state: TransferState,
+    },
     Closed {
         reason: CloseReason,
     },
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, TS)]
+#[ts(export)]
+pub enum ConflictChoice {
+    Overwrite,
+    Skip,
+    Cancel,
 }
 
 #[derive(Deserialize, Clone, PartialEq, TS)]
@@ -99,6 +165,7 @@ pub enum PromptAnswer {
     HostKey { accept: bool },
     Secret { value: String, save: bool },
     KeyboardInteractive { responses: Vec<String>, save: bool },
+    Conflict { choice: ConflictChoice, all: bool },
     Cancel,
 }
 
@@ -116,6 +183,11 @@ impl fmt::Debug for PromptAnswer {
                 .debug_struct("KeyboardInteractive")
                 .field("responses", &"<redacted>")
                 .field("save", save)
+                .finish(),
+            Self::Conflict { choice, all } => f
+                .debug_struct("Conflict")
+                .field("choice", choice)
+                .field("all", all)
                 .finish(),
             Self::Cancel => f.write_str("Cancel"),
         }
@@ -138,5 +210,25 @@ mod tests {
         let a: PromptAnswer =
             toml::from_str("type = \"Secret\"\nvalue = \"hunter2\"\nsave = true").unwrap();
         assert!(!format!("{a:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn transfer_and_conflict_wire_format() {
+        let ev = SessionEvent::Transfer {
+            transfer_id: 3,
+            state: TransferState::Cancelled { files: 2 },
+        };
+        let out = toml::to_string(&ev).unwrap();
+        assert!(out.contains("type = \"Transfer\""), "{out}");
+        assert!(out.contains("type = \"Cancelled\""), "{out}");
+        let a: PromptAnswer =
+            toml::from_str("type = \"Conflict\"\nchoice = \"Skip\"\nall = true").unwrap();
+        assert_eq!(
+            a,
+            PromptAnswer::Conflict {
+                choice: ConflictChoice::Skip,
+                all: true
+            }
+        );
     }
 }

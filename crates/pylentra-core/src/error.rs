@@ -44,6 +44,13 @@ pub enum CoreError {
     UnsupportedVersion { found: u32 },
     #[error("configuration is read-only")]
     ReadOnly,
+    #[error("SFTP is not available on this server")]
+    SftpUnavailable,
+    // `path` goes to the UI params only, never to logs.
+    #[error("SFTP permission denied")]
+    SftpPermissionDenied { path: String },
+    #[error("SFTP limit exceeded: {what}")]
+    SftpLimit { what: String },
     #[error("{what} not found")]
     NotFound { what: String },
     /// The user cancelled a prompt; the session closes as `UserClosed`, never shown as an error.
@@ -59,6 +66,25 @@ pub enum CoreError {
 impl From<russh::Error> for CoreError {
     fn from(e: russh::Error) -> Self {
         Self::Ssh(e.to_string())
+    }
+}
+
+impl From<russh_sftp::client::error::Error> for CoreError {
+    fn from(e: russh_sftp::client::error::Error) -> Self {
+        use russh_sftp::client::error::Error as E;
+        use russh_sftp::protocol::StatusCode;
+        match e {
+            E::Status(s) if s.status_code == StatusCode::PermissionDenied => {
+                Self::SftpPermissionDenied {
+                    path: String::new(),
+                }
+            }
+            E::Status(s) if s.status_code == StatusCode::NoSuchFile => Self::NotFound {
+                what: String::new(),
+            },
+            E::Limited(what) => Self::SftpLimit { what },
+            other => Self::Ssh(other.to_string()),
+        }
     }
 }
 
@@ -98,6 +124,9 @@ impl CoreError {
             Self::JumpTooDeep => "config.jump_too_deep",
             Self::UnsupportedVersion { .. } => "config.unsupported_version",
             Self::ReadOnly => "config.read_only",
+            Self::SftpUnavailable => "sftp.unavailable",
+            Self::SftpPermissionDenied { .. } => "sftp.permission_denied",
+            Self::SftpLimit { .. } => "sftp.limit",
             Self::NotFound { .. } => "not_found",
             Self::Cancelled => "cancelled",
             Self::Ssh(_) => "ssh.protocol",
@@ -132,7 +161,8 @@ impl CoreError {
                 vec![("field", field.clone()), ("reason", reason.clone())]
             }
             Self::UnsupportedVersion { found } => vec![("found", found.to_string())],
-            Self::NotFound { what } => vec![("what", what.clone())],
+            Self::SftpPermissionDenied { path } => vec![("path", path.clone())],
+            Self::NotFound { what } | Self::SftpLimit { what } => vec![("what", what.clone())],
             Self::Ssh(reason) => vec![("reason", reason.clone())],
             Self::Io(e) => vec![("reason", e.to_string())],
             Self::HostKeyRejected
@@ -140,6 +170,7 @@ impl CoreError {
             | Self::JumpCycle
             | Self::JumpTooDeep
             | Self::ReadOnly
+            | Self::SftpUnavailable
             | Self::Cancelled => vec![],
         };
         ApiError {
@@ -172,5 +203,21 @@ mod tests {
             }
         );
         assert_eq!(CoreError::JumpCycle.code(), "config.jump_cycle");
+    }
+
+    #[test]
+    fn sftp_codes() {
+        let p = CoreError::SftpPermissionDenied { path: "/a".into() }.to_api();
+        assert_eq!(p.code, "sftp.permission_denied");
+        assert_eq!(p.params["path"], "/a");
+        let l = CoreError::SftpLimit {
+            what: "depth".into(),
+        }
+        .to_api();
+        assert_eq!(
+            (l.code.as_str(), l.params["what"].as_str()),
+            ("sftp.limit", "depth")
+        );
+        assert_eq!(CoreError::SftpUnavailable.code(), "sftp.unavailable");
     }
 }

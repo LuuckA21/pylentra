@@ -305,6 +305,10 @@ export const it: Record<MessageKey, string> = {
   "error.network.unreachable": "{host}:{port} non raggiungibile: {reason}",
   "error.not_found": "Non trovato: {what}",
   "error.secret.unavailable": "Portachiavi non disponibile: {reason}",
+  "error.sftp.limit":
+    "Il trasferimento supera un limite di sicurezza ({what}).",
+  "error.sftp.permission_denied": "Permesso negato: {path}",
+  "error.sftp.unavailable": "Il server non offre SFTP.",
   "error.ssh.protocol": "Errore SSH: {reason}",
   "error.unknown": "Qualcosa è andato storto.",
   "import.title": "Importa da ~/.ssh/config",
