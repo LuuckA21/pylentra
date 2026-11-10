@@ -473,3 +473,26 @@ button:disabled {
   --tag-bg: var(--tag-none-bg);
   --tag-solid: var(--tag-none-solid);
 }
+
+/* A draggable divider (lib/divider.ts); .row: between side-by-side areas. */
+.divider {
+  position: absolute;
+  pointer-events: auto;
+  /* Centered on the line, over the panes' edges. */
+  transform: translateX(-3px);
+  width: 6px;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+.divider:not(.row) {
+  transform: translateY(-3px);
+  height: 6px;
+  cursor: row-resize;
+}
+.divider:hover,
+.divider:focus-visible,
+.divider:active {
+  background: var(--accent);
+  outline: none;
+}

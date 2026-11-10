@@ -63,6 +63,14 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
   write: vi.fn(),
 }));
 
+vi.mock("../lib/api", () => ({
+  api: {
+    sftpList: vi.fn(async () => ({ dir: "/", entries: [], truncated: false })),
+    settingsSave: vi.fn(async () => {}),
+  },
+}));
+
+import { api } from "../lib/api";
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
 import { initialPane, type PaneState } from "../lib/sessionReducer";
@@ -666,4 +674,19 @@ test("the terminal takes the keyboard focus when its pane gets the focus", async
   expect(made.terms[0].focus).not.toHaveBeenCalled();
   await rerender({ ...p, focused: true });
   expect(made.terms[0].focus).toHaveBeenCalled();
+});
+
+test("File opens the panel beside the terminal; its edge clamps and saves the width", async () => {
+  settings.sftp_panel_width = 0.9;
+  render(TerminalPane, props({ ...readyPane, sessionId: "s1" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Files" }));
+  expect(screen.getByRole("region", { name: "Remote files" })).toBeTruthy();
+  const edge = screen.getByRole("separator", { name: "Resize the file panel" });
+  // 0.9 is out of range: the panel takes 60%, the terminal the other 40%.
+  expect(edge.getAttribute("aria-valuenow")).toBe("40");
+  await fireEvent.keyDown(edge, { key: "ArrowRight" });
+  expect(edge.getAttribute("aria-valuenow")).toBe("45");
+  expect(api.settingsSave).toHaveBeenCalledWith(
+    expect.objectContaining({ sftp_panel_width: expect.closeTo(0.55) }),
+  );
 });

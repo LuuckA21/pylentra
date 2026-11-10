@@ -115,3 +115,62 @@ test("Ready sets readyAt once", () => {
   s = reduce(s, { type: "Closed", reason: { type: "UserClosed" } });
   expect(s.readyAt).toBe(1000);
 });
+
+test("a Transfer event sets that transfer's state", () => {
+  const queued = run({
+    type: "Transfer",
+    transfer_id: 4,
+    state: { type: "Queued", direction: "Down", name: "a.txt" },
+  });
+  const running = reduce(queued, {
+    type: "Transfer",
+    transfer_id: 4,
+    state: {
+      type: "Running",
+      done_bytes: 10,
+      total_bytes: 20,
+      files_done: 0,
+      current: "a.txt",
+    },
+  });
+  expect(running.transfers[4].type).toBe("Running");
+  expect(initialPane("t1", "c1").transfers).toEqual({});
+});
+
+test("Closed cancels the transfers still in progress, keeps the final ones", () => {
+  const s = run(
+    {
+      type: "Transfer",
+      transfer_id: 1,
+      state: { type: "Queued", direction: "Up", name: "q" },
+    },
+    {
+      type: "Transfer",
+      transfer_id: 2,
+      state: {
+        type: "Running",
+        done_bytes: 1,
+        total_bytes: null,
+        files_done: 3,
+        current: "r",
+      },
+    },
+    {
+      type: "Transfer",
+      transfer_id: 3,
+      state: { type: "Conflict", name: "c" },
+    },
+    {
+      type: "Transfer",
+      transfer_id: 4,
+      state: { type: "Finished", files: 2, skipped: [] },
+    },
+    { type: "Closed", reason: { type: "UserClosed" } },
+  );
+  expect(s.transfers).toEqual({
+    1: { type: "Cancelled", files: 0 },
+    2: { type: "Cancelled", files: 3 },
+    3: { type: "Cancelled", files: 0 },
+    4: { type: "Finished", files: 2, skipped: [] },
+  });
+});

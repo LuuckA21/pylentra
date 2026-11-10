@@ -13,6 +13,8 @@
     groups,
     onforwards,
     forwardsOpen = false,
+    onfiles,
+    filesOpen = false,
     onsnippets,
     snippetsOpen = false,
     onsave,
@@ -24,6 +26,8 @@
     groups: Group[];
     onforwards: () => void;
     forwardsOpen?: boolean;
+    onfiles?: () => void;
+    filesOpen?: boolean;
     onsnippets?: () => void;
     snippetsOpen?: boolean;
     /** Only for quick (unsaved) panes. */
@@ -73,6 +77,15 @@
     aria-expanded={forwardsOpen}
     onclick={onforwards}>{t("status.forward")}</button
   >
+  {#if onfiles}
+    <button
+      type="button"
+      class="fwd"
+      disabled={pane.phase !== "ready"}
+      aria-expanded={filesOpen}
+      onclick={onfiles}>{t("status.files")}</button
+    >
+  {/if}
   {#if onsnippets}
     <button
       type="button"

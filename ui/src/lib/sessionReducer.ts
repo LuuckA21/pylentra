@@ -3,6 +3,7 @@ import type { Connection } from "./bindings/Connection";
 import type { ForwardRule } from "./bindings/ForwardRule";
 import type { ForwardState } from "./bindings/ForwardState";
 import type { SessionEvent } from "./bindings/SessionEvent";
+import type { TransferState } from "./bindings/TransferState";
 
 export type PaneState = {
   paneId: string;
@@ -17,6 +18,7 @@ export type PaneState = {
   /** Epoch ms of the first Ready; kept after the session closes. */
   readyAt?: number;
   forwards: Record<number, { rule: ForwardRule; state: ForwardState }>;
+  transfers: Record<number, TransferState>;
 };
 
 export const initialPane = (
@@ -29,6 +31,7 @@ export const initialPane = (
   ...(quick && { quick }),
   phase: "connecting",
   forwards: {},
+  transfers: {},
 });
 
 const PHASE = {
@@ -62,11 +65,29 @@ export function reduce(s: PaneState, e: SessionEvent): PaneState {
         },
       };
     case "Transfer":
-      return s; // handled by the file panel (later task)
+      return {
+        ...s,
+        transfers: { ...s.transfers, [e.transfer_id]: e.state },
+      };
     case "Closed":
-      return { ...s, phase: "closed", closed: e.reason, prompt: undefined };
+      return {
+        ...s,
+        phase: "closed",
+        closed: e.reason,
+        prompt: undefined,
+        transfers: Object.fromEntries(
+          Object.entries(s.transfers).map(([id, t]) => [id, settle(t)]),
+        ),
+      };
   }
 }
+
+// The core sends no final event for transfers still queued when the session
+// shuts down: they end here, as cancelled.
+const settle = (t: TransferState): TransferState =>
+  t.type === "Queued" || t.type === "Running" || t.type === "Conflict"
+    ? { type: "Cancelled", files: t.type === "Running" ? t.files_done : 0 }
+    : t;
 
 // Double quotes keep `[host]:port` from being globbed by bash/zsh and work in cmd and PowerShell too.
 export const keygenHint = (host: string, port: number): string =>

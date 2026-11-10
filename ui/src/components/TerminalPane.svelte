@@ -6,6 +6,7 @@
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
   import type { Snippet } from "../lib/bindings/Snippet";
   import { t } from "../lib/i18n";
+  import { keyStep, startDrag } from "../lib/divider";
   import { focusFirst } from "../lib/modal";
   import type { Dir, Side } from "../lib/layout";
   import { RECONNECT_DELAYS, shouldReconnect } from "../lib/reconnect";
@@ -29,10 +30,11 @@
     write,
   } from "../lib/stores/sessions.svelte";
   import { library } from "../lib/stores/library.svelte";
-  import { settings } from "../lib/stores/settings.svelte";
+  import { saveSettings, settings } from "../lib/stores/settings.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
   import ForwardPanel from "./ForwardPanel.svelte";
   import ErrorOverlay from "./ErrorOverlay.svelte";
+  import FilePanel from "./FilePanel.svelte";
   import HostKeyDialog from "./HostKeyDialog.svelte";
   import ReconnectOverlay from "./ReconnectOverlay.svelte";
   import SecretPrompt from "./SecretPrompt.svelte";
@@ -74,6 +76,22 @@
   let el: HTMLDivElement;
   let root: HTMLDivElement;
   let forwardsOpen = $state(false);
+  let filesOpen = $state(false);
+  let split: HTMLDivElement;
+  // The file panel's share of the pane's width: the setting, or the value being
+  // dragged until it is saved. The terminal refits through its ResizeObserver.
+  let dragWidth = $state<number>();
+  const clampWidth = (w: number) => Math.min(0.6, Math.max(0.15, w));
+  const panelWidth = $derived(
+    dragWidth ?? clampWidth(settings.sftp_panel_width),
+  );
+  // Also on a cancelled drag: the capture ends either way.
+  function saveWidth() {
+    if (dragWidth === undefined) return;
+    saveSettings({ sftp_panel_width: dragWidth })
+      .catch(toastError)
+      .finally(() => (dragWidth = undefined));
+  }
   let snippetsOpen = $state(false);
   // The terminal selection when the palette opened.
   let selection = $state("");
@@ -370,7 +388,39 @@
   onpointerdown={() => focusPane(pane.paneId)}
   onclick={() => active && free() && focusInside()}
 >
-  <div class="inset"><div class="terminal" bind:this={el}></div></div>
+  <div class="body" bind:this={split}>
+    <div class="inset"><div class="terminal" bind:this={el}></div></div>
+    {#if filesOpen && pane.phase === "ready"}
+      <!-- A focusable separator is a widget (ARIA window splitter). -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+      <div
+        class="divider row"
+        role="separator"
+        tabindex="0"
+        aria-label={t("sftp.resize")}
+        aria-orientation="vertical"
+        aria-valuenow={Math.round((1 - panelWidth) * 100)}
+        aria-valuemin="40"
+        aria-valuemax="85"
+        style:left="{(1 - panelWidth) * 100}%"
+        style:top="0"
+        style:height="100%"
+        onmousedown={(e) => e.preventDefault()}
+        onpointerdown={(e) =>
+          startDrag(e, split, (r) => (dragWidth = clampWidth(1 - r)), "row")}
+        onlostpointercapture={saveWidth}
+        onkeydown={(e) => {
+          const next = keyStep(e, 1 - panelWidth);
+          if (next === null) return;
+          dragWidth = clampWidth(1 - next);
+          saveWidth();
+        }}
+      ></div>
+      <div class="side" style:width="{panelWidth * 100}%">
+        {#key pane.sessionId}<FilePanel {pane} />{/key}
+      </div>
+    {/if}
+  </div>
   <div class="anchor">
     {#if pane.phase === "ready"}
       <ForwardPanel
@@ -400,6 +450,8 @@
       groups={library.groups}
       onforwards={() => (forwardsOpen = !forwardsOpen)}
       {forwardsOpen}
+      onfiles={() => (filesOpen = !filesOpen)}
+      {filesOpen}
       onsnippets={toggleSnippets}
       {snippetsOpen}
       onsave={pane.quick ? () => onsave(pane.paneId) : undefined}
@@ -514,10 +566,24 @@
     border-radius: inherit;
     pointer-events: none;
   }
+  .body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .side {
+    flex: none;
+    min-width: 0;
+  }
+  /* Over the panel's edge, which comes after it. */
+  .divider {
+    z-index: 1;
+  }
   /* The fit addon measures its parent, so the padding sits one level above. */
   .inset {
     flex: 1;
-    min-height: 0;
+    min-width: 0;
     padding: var(--space-4) var(--space-5);
   }
   .terminal {

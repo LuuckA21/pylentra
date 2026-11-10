@@ -7,6 +7,7 @@
     type Dir,
     type Divider,
   } from "../lib/layout";
+  import { keyStep, startDrag } from "../lib/divider";
   import { t } from "../lib/i18n";
   import {
     paneOf,
@@ -45,44 +46,23 @@
     ),
   );
 
-  const STEP = 0.05;
   // Smallest pane while dragging: 160 px wide, 120 px tall.
   const minPx = (d: Divider) => (d.dir === "row" ? 160 : 120);
   const pct = (d: Divider) => Math.round(d.ratio * 100);
-  // The path of the divider being dragged.
-  let dragging = $state<string | null>(null);
 
-  function drag(e: PointerEvent, tab: Tab, d: Divider) {
-    if (dragging !== d.path.join()) return;
-    const view = (e.currentTarget as HTMLElement).parentElement!;
+  // r is the pointer's position across the whole view; the divider splits only
+  // its own area of it.
+  function drag(view: HTMLElement, tab: Tab, d: Divider, r: number) {
     const box = view.getBoundingClientRect();
     const row = d.dir === "row";
-    const total =
-      (row ? box.width : box.height) * ((row ? d.area.w : d.area.h) / 100);
+    const [offset, span] = row ? [d.area.x, d.area.w] : [d.area.y, d.area.h];
+    const total = ((row ? box.width : box.height) * span) / 100;
     if (total <= 0) return;
-    const start =
-      (row ? box.left : box.top) +
-      ((row ? box.width : box.height) * (row ? d.area.x : d.area.y)) / 100;
-    const pos = (row ? e.clientX : e.clientY) - start;
-    setTabRatio(tab.tabId, d.path, clampRatio(pos / total, total, minPx(d)));
-  }
-
-  function key(e: KeyboardEvent, tab: Tab, d: Divider) {
-    // Alt+arrow is the window's pane-focus shortcut, not a resize.
-    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    const back = d.dir === "row" ? "ArrowLeft" : "ArrowUp";
-    const fwd = d.dir === "row" ? "ArrowRight" : "ArrowDown";
-    const next =
-      e.key === back
-        ? d.ratio - STEP
-        : e.key === fwd
-          ? d.ratio + STEP
-          : e.key === "Enter"
-            ? 0.5
-            : null;
-    if (next === null) return;
-    e.preventDefault();
-    setTabRatio(tab.tabId, d.path, next);
+    setTabRatio(
+      tab.tabId,
+      d.path,
+      clampRatio((r * 100 - offset) / span, total, minPx(d)),
+    );
   }
 </script>
 
@@ -114,17 +94,14 @@
           style:height={row ? `${d.area.h}%` : undefined}
           onmousedown={(e) => e.preventDefault()}
           onpointerdown={(e) => {
-            dragging = d.path.join();
-            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            const view = e.currentTarget.parentElement!;
+            startDrag(e, view, (r) => drag(view, tab, d, r), d.dir);
           }}
-          onpointermove={(e) => drag(e, tab, d)}
-          onpointerup={(e) => {
-            dragging = null;
-            (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-          }}
-          onlostpointercapture={() => (dragging = null)}
           ondblclick={() => setTabRatio(tab.tabId, d.path, 0.5)}
-          onkeydown={(e) => key(e, tab, d)}
+          onkeydown={(e) => {
+            const next = keyStep(e, d.ratio);
+            if (next !== null) setTabRatio(tab.tabId, d.path, next);
+          }}
         ></div>
       {/each}
     </div>
@@ -174,26 +151,5 @@
   .view[hidden],
   .slot[hidden] {
     display: none;
-  }
-  .divider {
-    position: absolute;
-    pointer-events: auto;
-    /* Centered on the line, over the panes' edges. */
-    transform: translateX(-3px);
-    width: 6px;
-    background: transparent;
-    cursor: col-resize;
-    touch-action: none;
-  }
-  .divider:not(.row) {
-    transform: translateY(-3px);
-    height: 6px;
-    cursor: row-resize;
-  }
-  .divider:hover,
-  .divider:focus-visible,
-  .divider:active {
-    background: var(--accent);
-    outline: none;
   }
 </style>
