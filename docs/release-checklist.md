@@ -267,6 +267,32 @@ cover it.
 11. On a split tab choose "Move … to a new tab": the focused pane becomes its
     own tab, still connected.
 
+## SFTP
+
+1. Open a saved session and click "Files" in the status bar: the panel opens
+   on the right at about 30% width, in the home directory. Repeat with a quick
+   connect session and a session through a jump host: both show the panel.
+2. Drag files and a folder from the file manager onto the panel, on Linux and
+   on Windows: they upload and appear in the listing. Download them to a
+   folder you pick: the contents are identical (`sha256sum`) and the
+   modification date is kept.
+3. Transfer a file larger than 1 GB in each direction: progress advances and
+   the checksum matches.
+4. Against a server without the `posix-rename` extension, overwrite an
+   existing file: it ends up with the new content and no `.pylentra-tmp` file
+   is left.
+5. Start a large transfer and click Cancel: it stops, and neither side has a
+   partial or `.pylentra-tmp` file.
+6. On Windows, download a folder that holds names invalid there (for example
+   `a:b`, `CON`, or a trailing dot): those items are skipped and listed with
+   the reason; the rest arrives.
+7. Transfer a folder where several files already exist: a question appears
+   per file; "Overwrite" with "apply to all" stops further questions, and so
+   does "Skip" with "apply to all"; "Cancel" stops the transfer.
+8. Symbolic links in a folder are skipped and listed.
+9. Resize the panel, turn on "Show hidden files" and restart the app: the
+   width and the toggle are as left.
+
 ## Settings
 
 1. Walk through every category in Settings (appearance, terminal, connection,

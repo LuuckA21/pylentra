@@ -3756,7 +3756,7 @@ dependencies = [
 
 [[package]]
 name = "pylentra"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "log",
  "pylentra-core",
@@ -3777,7 +3777,7 @@ dependencies = [
 
 [[package]]
 name = "pylentra-core"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "data-encoding",
  "futures",
