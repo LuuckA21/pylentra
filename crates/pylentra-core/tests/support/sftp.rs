@@ -2,12 +2,12 @@
 
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
-use std::io;
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use russh_sftp::protocol::{
-    Attrs, File, FileAttributes, Handle, Name, Status, StatusCode, Version,
+    Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version,
 };
 
 /// Ways the server misbehaves, for the client's defences.
@@ -23,6 +23,10 @@ pub enum Hostile {
     NeverAnswer,
     /// Every readdir answers a batch of "." and ".." and never ends.
     EndlessDots,
+    /// Every read returns half the bytes asked for (at least one).
+    HalfReads,
+    /// Every file ends, when read, at half the size it is listed with.
+    ShortFile,
 }
 
 pub struct SftpFs {
@@ -31,6 +35,8 @@ pub struct SftpFs {
     hostile: Hostile,
     /// Open directory handles and the entries not yet returned.
     dirs: HashMap<String, Vec<File>>,
+    /// Open file handles, with the length reads stop at.
+    files: HashMap<String, (fs::File, u64)>,
     next_handle: u64,
 }
 
@@ -40,6 +46,7 @@ impl SftpFs {
             root: root.canonicalize().expect("sftp root"),
             hostile,
             dirs: HashMap::new(),
+            files: HashMap::new(),
             next_handle: 0,
         }
     }
@@ -100,7 +107,11 @@ impl SftpFs {
             files.push(File::new(e.file_name().to_string_lossy(), attrs(&meta)));
         }
         match &self.hostile {
-            Hostile::None | Hostile::NeverAnswer | Hostile::EndlessDots => {}
+            Hostile::None
+            | Hostile::NeverAnswer
+            | Hostile::EndlessDots
+            | Hostile::HalfReads
+            | Hostile::ShortFile => {}
             Hostile::Names(names) => {
                 let mut file = FileAttributes::default();
                 file.set_regular(true);
@@ -186,10 +197,15 @@ impl russh_sftp::server::Handler for SftpFs {
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
         let files = self.dirs.get_mut(&handle).ok_or(StatusCode::Failure)?;
         if matches!(self.hostile, Hostile::EndlessDots) {
-            let dot = |n: &str| File::new(n, FileAttributes::default());
+            // A big batch, so the client's entry limit trips quickly.
+            let dots = [".", ".."].map(|n| File {
+                filename: n.into(),
+                longname: String::new(),
+                attrs: FileAttributes::empty(),
+            });
             return Ok(Name {
                 id,
-                files: vec![dot("."), dot("..")],
+                files: dots.iter().cycle().take(1000).cloned().collect(),
             });
         }
         if files.is_empty() {
@@ -202,13 +218,60 @@ impl russh_sftp::server::Handler for SftpFs {
     }
 
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
-        self.dirs.remove(&handle).ok_or(StatusCode::Failure)?;
+        let dir = self.dirs.remove(&handle).is_some();
+        if !dir {
+            self.files.remove(&handle).ok_or(StatusCode::Failure)?;
+        }
         Ok(Status {
             id,
             status_code: StatusCode::Ok,
             error_message: "Ok".into(),
             language_tag: "en-US".into(),
         })
+    }
+
+    /// Read-only: links are followed, as a real server does, but never out of the root.
+    async fn open(
+        &mut self,
+        id: u32,
+        filename: String,
+        pflags: OpenFlags,
+        _attrs: FileAttributes,
+    ) -> Result<Handle, Self::Error> {
+        if pflags.contains(OpenFlags::WRITE) {
+            return Err(StatusCode::OpUnsupported);
+        }
+        let (_, real) = self.resolve(&filename)?;
+        let f = fs::File::open(self.followed(&real)?).map_err(status)?;
+        let mut len = f.metadata().map_err(status)?.len();
+        if matches!(self.hostile, Hostile::ShortFile) {
+            len /= 2;
+        }
+        self.next_handle += 1;
+        let handle = self.next_handle.to_string();
+        self.files.insert(handle.clone(), (f, len));
+        Ok(Handle { id, handle })
+    }
+
+    async fn read(
+        &mut self,
+        id: u32,
+        handle: String,
+        offset: u64,
+        len: u32,
+    ) -> Result<Data, Self::Error> {
+        let (f, end) = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
+        if offset >= *end {
+            return Err(StatusCode::Eof);
+        }
+        let mut len = u64::from(len).min(*end - offset);
+        if matches!(self.hostile, Hostile::HalfReads) {
+            len = (len / 2).max(1);
+        }
+        f.seek(SeekFrom::Start(offset)).map_err(status)?;
+        let mut data = vec![];
+        f.take(len).read_to_end(&mut data).map_err(status)?;
+        Ok(Data { id, data })
     }
 
     async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {

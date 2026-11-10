@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -23,7 +24,7 @@ use crate::secrets::SecretStore;
 
 const TERM: &str = "xterm-256color";
 /// How long `close` waits for one session to wind down before aborting it.
-const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+pub(super) const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub struct SessionOptions {
@@ -141,6 +142,7 @@ impl SessionManager {
             opts: self.opts().clone(),
             sink: sink.clone(),
             sessions: self.sessions.clone(),
+            transfer_ids: Arc::new(AtomicU32::new(1)),
         };
         // Locked across the spawn so the task cannot deregister before it is registered.
         let mut sessions = lock(&self.sessions);
@@ -206,6 +208,32 @@ impl SessionManager {
         answer.await.map_err(|_| not_found(id))?
     }
 
+    /// Queues a download of remote `items` (absolute paths) into `local_dir` and returns its
+    /// transfer id at once; the rest arrives as `Transfer` events.
+    pub async fn sftp_download(
+        &self,
+        id: SessionId,
+        items: Vec<String>,
+        local_dir: PathBuf,
+    ) -> Result<u32, CoreError> {
+        let (reply, answer) = oneshot::channel();
+        let cmd = SftpCmd::Download {
+            items,
+            local_dir,
+            reply,
+        };
+        self.send(id, Command::Sftp(cmd)).await?;
+        answer.await.map_err(|_| not_found(id))?
+    }
+
+    /// Drops a queued transfer or stops the running one; `NotFound` once it has ended.
+    pub async fn sftp_cancel(&self, id: SessionId, transfer_id: u32) -> Result<(), CoreError> {
+        let (reply, answer) = oneshot::channel();
+        let cmd = SftpCmd::Cancel { transfer_id, reply };
+        self.send(id, Command::Sftp(cmd)).await?;
+        answer.await.map_err(|_| not_found(id))?
+    }
+
     /// Test hook: scans remote `items` through the session's SFTP channel.
     #[cfg(feature = "test-util")]
     pub async fn sftp_scan(
@@ -266,6 +294,7 @@ struct Ctx {
     opts: SessionOptions,
     sink: Arc<dyn SessionSink>,
     sessions: Sessions,
+    transfer_ids: Arc<AtomicU32>,
 }
 
 fn error_reason(e: CoreError) -> CloseReason {
@@ -452,6 +481,7 @@ async fn write_loop(
                         ctx.id,
                         ctx.sink.clone(),
                         ctx.broker.clone(),
+                        ctx.transfer_ids.clone(),
                         ctx.opts.connect_timeout,
                     ),
                 };
@@ -460,6 +490,10 @@ async fn write_loop(
                 continue;
             }
             Some(Command::Close) | None => {
+                // While the connection is up, so transfers can clean up on the server too.
+                if let Some(s) = sftp.take() {
+                    s.shutdown().await;
+                }
                 let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
                 return CloseReason::UserClosed;
             }

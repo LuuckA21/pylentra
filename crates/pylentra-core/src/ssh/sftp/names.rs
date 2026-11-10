@@ -1,6 +1,5 @@
 //! Name rules for entries a server sends us (spec §4.2).
 
-#[allow(dead_code)] // Used by transfers (Tasks 4-6).
 pub(crate) const TEMP_SUFFIX: &str = "pylentra-tmp";
 pub(crate) const LOCAL_WINDOWS: bool = cfg!(windows);
 
@@ -32,9 +31,15 @@ pub(crate) fn valid_name(name: &str, windows: bool) -> bool {
 }
 
 /// `dir` and `name` as a remote path.
-#[allow(dead_code)] // Used by transfers (Tasks 4-6).
 pub(crate) fn remote_join(dir: &str, name: &str) -> String {
     format!("{}/{name}", dir.trim_end_matches('/'))
+}
+
+/// A remote item path as (parent, name): "/a/b/" is ("/a", "b"), "/a" is ("", "a"), "a" is
+/// (".", "a"); `remote_join` puts them back together.
+pub(crate) fn remote_split(path: &str) -> (&str, &str) {
+    let path = path.trim_end_matches('/');
+    path.rsplit_once('/').unwrap_or((".", path))
 }
 
 #[allow(dead_code)] // Used by transfers (Tasks 4-6).
@@ -68,5 +73,9 @@ mod tests {
         assert_eq!(remote_join("/", "a"), "/a");
         assert_eq!(remote_join("/x", "a"), "/x/a");
         assert_eq!(temp_name("f.txt", 2), "f.txt.2.pylentra-tmp");
+        assert_eq!(remote_split("/a/b/"), ("/a", "b"));
+        assert_eq!(remote_split("/a"), ("", "a"));
+        assert_eq!(remote_split("a"), (".", "a"));
+        assert_eq!(remote_join(remote_split("/a/b").0, "b"), "/a/b");
     }
 }

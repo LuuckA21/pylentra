@@ -8,7 +8,7 @@ use std::time::UNIX_EPOCH;
 use russh_sftp::client::RawSftpSession;
 use russh_sftp::protocol::File;
 
-use super::names::{LOCAL_WINDOWS, remote_join, valid_name};
+use super::names::{LOCAL_WINDOWS, remote_join, remote_split, valid_name};
 use super::{EntryKind, entry, lost, named, read_dir};
 use crate::error::CoreError;
 use crate::ssh::events::{SkipReason, Skipped};
@@ -164,7 +164,7 @@ pub(crate) async fn scan_remote(
 async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<Plan, CoreError> {
     let mut plan = Plan::new(max);
     for item in items {
-        let name = item.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+        let name = remote_split(item).1;
         if !valid_name(name, LOCAL_WINDOWS) {
             plan.skip(name.into(), SkipReason::InvalidName)?;
             continue;
