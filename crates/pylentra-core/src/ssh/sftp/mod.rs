@@ -299,14 +299,14 @@ async fn read_dir(raw: &RawSftpSession, handle: &str) -> Result<Dir, SftpError> 
             break;
         }
         for f in files {
-            if matches!(f.filename.as_str(), "." | "..") {
-                continue;
-            }
             if seen == MAX_LISTING {
                 dir.truncated = true;
                 return Ok(dir);
             }
             seen += 1;
+            if matches!(f.filename.as_str(), "." | "..") {
+                continue;
+            }
             if valid_name(&f.filename, LOCAL_WINDOWS) {
                 dir.entries.push(entry(f));
             } else {

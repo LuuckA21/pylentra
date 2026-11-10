@@ -16,13 +16,14 @@ use crate::ssh::events::{SkipReason, Skipped};
 const MAX_DEPTH: usize = 32;
 const MAX_ENTRIES: usize = 100_000;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Plan {
     /// Parents first, relative to the item's parent, `/`-separated.
     pub dirs: Vec<String>,
     pub files: Vec<PlannedFile>,
     pub skipped: Vec<Skipped>,
     pub total_bytes: u64,
+    max: usize,
 }
 
 #[derive(Debug)]
@@ -37,9 +38,19 @@ fn limit(what: &str) -> CoreError {
 }
 
 impl Plan {
+    fn new(max: usize) -> Self {
+        Plan {
+            dirs: vec![],
+            files: vec![],
+            skipped: vec![],
+            total_bytes: 0,
+            max,
+        }
+    }
+
     fn skip(&mut self, path: String, reason: SkipReason) -> Result<(), CoreError> {
         self.skipped.push(Skipped { path, reason });
-        self.check()
+        self.check(0)
     }
 
     fn file(&mut self, rel: String, size: u64, modified: Option<u64>) -> Result<(), CoreError> {
@@ -49,7 +60,7 @@ impl Plan {
             size,
             modified,
         });
-        self.check()
+        self.check(0)
     }
 
     fn dir(&mut self, rel: String, depth: usize) -> Result<(), CoreError> {
@@ -57,11 +68,13 @@ impl Plan {
             return Err(limit("depth"));
         }
         self.dirs.push(rel);
-        self.check()
+        self.check(0)
     }
 
-    fn check(&self) -> Result<(), CoreError> {
-        if self.dirs.len() + self.files.len() + self.skipped.len() > MAX_ENTRIES {
+    /// `pending` items are already known but not yet counted; they count too, so a wide tree
+    /// cannot fill memory before the limit trips.
+    fn check(&self, pending: usize) -> Result<(), CoreError> {
+        if self.dirs.len() + self.files.len() + self.skipped.len() + pending > self.max {
             return Err(limit("entries"));
         }
         Ok(())
@@ -74,7 +87,11 @@ fn join(rel: &str, name: &str) -> String {
 
 #[allow(dead_code)] // Used by uploads (Task 6).
 pub(crate) fn scan_local(items: &[PathBuf]) -> Result<Plan, CoreError> {
-    let mut plan = Plan::default();
+    local(items, MAX_ENTRIES)
+}
+
+fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
+    let mut plan = Plan::new(max);
     for item in items {
         let name = item.file_name().and_then(|n| n.to_str());
         let Some(name) = name.filter(|n| valid_name(n, false)) else {
@@ -118,6 +135,7 @@ pub(crate) fn scan_local(items: &[PathBuf]) -> Result<Plan, CoreError> {
                         Ok(m) => stack.push((c.path(), child, depth + 1, m)),
                         Err(e) => plan.skip(child, error(CoreError::Io(e)))?,
                     }
+                    plan.check(stack.len())?;
                 }
             }
         }
@@ -140,7 +158,11 @@ pub(crate) async fn scan_remote(
     sftp: &RawSftpSession,
     items: &[String],
 ) -> Result<Plan, CoreError> {
-    let mut plan = Plan::default();
+    remote(sftp, items, MAX_ENTRIES).await
+}
+
+async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<Plan, CoreError> {
+    let mut plan = Plan::new(max);
     for item in items {
         let name = item.trim_end_matches('/').rsplit('/').next().unwrap_or("");
         if !valid_name(name, LOCAL_WINDOWS) {
@@ -186,6 +208,7 @@ pub(crate) async fn scan_remote(
                         let child = (remote_join(&path, &c.name), join(&rel, &c.name));
                         stack.push((child.0, child.1, depth + 1, c));
                     }
+                    plan.check(stack.len())?;
                 }
             }
         }
@@ -245,6 +268,23 @@ mod tests {
                 ("a/link", &SkipReason::Symlink)
             ]
         );
+    }
+
+    #[test]
+    fn local_pending_counts() {
+        let t = tempfile::tempdir().unwrap();
+        for d in 0..5 {
+            for f in 0..5 {
+                write(&t.path().join(format!("a/d{d}/f{f}")), "");
+            }
+        }
+        let err = local(&[t.path().join("a")], 10).unwrap_err();
+        assert!(
+            matches!(&err, CoreError::SftpLimit { what } if what == "entries"),
+            "{err:?}"
+        );
+        // 1 + 5 dirs + 25 files fit.
+        assert_eq!(local(&[t.path().join("a")], 31).unwrap().files.len(), 25);
     }
 
     #[test]

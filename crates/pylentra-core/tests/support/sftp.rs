@@ -21,6 +21,8 @@ pub enum Hostile {
     EndlessDirs,
     /// The "sftp" subsystem is accepted, but no SFTP reply ever comes.
     NeverAnswer,
+    /// Every readdir answers a batch of "." and ".." and never ends.
+    EndlessDots,
 }
 
 pub struct SftpFs {
@@ -98,7 +100,7 @@ impl SftpFs {
             files.push(File::new(e.file_name().to_string_lossy(), attrs(&meta)));
         }
         match &self.hostile {
-            Hostile::None | Hostile::NeverAnswer => {}
+            Hostile::None | Hostile::NeverAnswer | Hostile::EndlessDots => {}
             Hostile::Names(names) => {
                 let mut file = FileAttributes::default();
                 file.set_regular(true);
@@ -183,6 +185,13 @@ impl russh_sftp::server::Handler for SftpFs {
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
         let files = self.dirs.get_mut(&handle).ok_or(StatusCode::Failure)?;
+        if matches!(self.hostile, Hostile::EndlessDots) {
+            let dot = |n: &str| File::new(n, FileAttributes::default());
+            return Ok(Name {
+                id,
+                files: vec![dot("."), dot("..")],
+            });
+        }
         if files.is_empty() {
             return Err(StatusCode::Eof);
         }

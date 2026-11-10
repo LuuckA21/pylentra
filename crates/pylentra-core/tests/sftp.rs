@@ -261,3 +261,24 @@ async fn remote_bad_names_skipped() {
     assert_eq!(plan.skipped[0].reason, SkipReason::InvalidName);
     env.mgr.close(id).await.unwrap();
 }
+
+#[tokio::test]
+async fn endless_dots_end_the_listing() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("top")).unwrap();
+    let env = env(Some(root.path()), Hostile::EndlessDots, true).await;
+    let id = open_ready(&env).await;
+
+    let l = env.mgr.sftp_list(id, "/top".into()).await.unwrap();
+    assert!(l.truncated && l.entries.is_empty());
+    let err = env
+        .mgr
+        .sftp_scan(id, vec!["/top".into()])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, CoreError::SftpLimit { what } if what == "entries"),
+        "{err:?}"
+    );
+    env.mgr.close(id).await.unwrap();
+}
