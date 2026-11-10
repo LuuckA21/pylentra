@@ -29,7 +29,7 @@ use super::handler::ClientHandler;
 use super::session::CLOSE_TIMEOUT;
 use super::{PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
-use names::{LOCAL_WINDOWS, remote_split, valid_name};
+use names::{LOCAL_WINDOWS, valid_name};
 
 /// At most this many names are read from one directory (spec §4.6).
 const MAX_LISTING: usize = 100_000;
@@ -83,6 +83,12 @@ pub(crate) enum SftpCmd {
         local_dir: PathBuf,
         reply: oneshot::Sender<Result<u32, CoreError>>,
     },
+    /// Queues an upload of local `items` into `remote_dir`; replies with its transfer id.
+    Upload {
+        items: Vec<PathBuf>,
+        remote_dir: String,
+        reply: oneshot::Sender<Result<u32, CoreError>>,
+    },
     /// Drops a queued transfer, or stops the running one.
     Cancel {
         transfer_id: u32,
@@ -102,7 +108,7 @@ impl SftpCmd {
             Self::List { reply, .. } => {
                 let _ = reply.send(Err(e));
             }
-            Self::Download { reply, .. } => {
+            Self::Download { reply, .. } | Self::Upload { reply, .. } => {
                 let _ = reply.send(Err(e));
             }
             Self::Cancel { reply, .. } => {
@@ -142,11 +148,9 @@ struct Server {
     broker: Arc<PromptBroker>,
     /// Per session, so ids stay unique when a lost channel is reopened.
     transfer_ids: Arc<AtomicU32>,
-    #[allow(dead_code)] // Used by uploads (Task 6).
     posix_rename: bool,
     /// From `limits@openssh.com`; `None` when not advertised or unlimited.
     max_read: Option<u64>,
-    #[allow(dead_code)] // Used by uploads (Task 6).
     max_write: Option<u64>,
 }
 
@@ -308,8 +312,7 @@ async fn or_cancel<T>(
 
 struct Job {
     id: u32,
-    items: Vec<String>,
-    local_dir: PathBuf,
+    side: transfer::Side,
 }
 
 /// The transfer in progress: ends `true` when it lost the channel.
@@ -332,7 +335,7 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
         {
             let (cancel, cancelled) = watch::channel(false);
             let id = job.id;
-            let t = Box::pin(transfer::download(&server, job, cancelled));
+            let t = Box::pin(transfer::run(&server, job, cancelled));
             running = Some((id, cancel, t));
         }
         let ended = async {
@@ -365,14 +368,13 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
                         lost
                     }
                     SftpCmd::Download { items, local_dir, reply } => {
-                        let id = server.transfer_ids.fetch_add(1, Ordering::Relaxed);
-                        let names: Vec<_> = items.iter().map(|i| remote_split(i).1).collect();
-                        server.emit(id, TransferState::Queued {
-                            direction: Direction::Down,
-                            name: names.join(", "),
-                        });
-                        queue.push_back(Job { id, items, local_dir });
-                        let _ = reply.send(Ok(id));
+                        let side = transfer::Side::Down { items, local_dir };
+                        let _ = reply.send(Ok(enqueue(&server, &mut queue, side)));
+                        false
+                    }
+                    SftpCmd::Upload { items, remote_dir, reply } => {
+                        let side = transfer::Side::Up { items, remote_dir };
+                        let _ = reply.send(Ok(enqueue(&server, &mut queue, side)));
                         false
                     }
                     SftpCmd::Cancel { transfer_id, reply } => {
@@ -406,6 +408,19 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
             server.emit(job.id, transfer::failed(&closed(), 0, vec![]));
         }
     }
+}
+
+fn enqueue(server: &Server, queue: &mut VecDeque<Job>, side: transfer::Side) -> u32 {
+    let id = server.transfer_ids.fetch_add(1, Ordering::Relaxed);
+    server.emit(
+        id,
+        TransferState::Queued {
+            direction: side.direction(),
+            name: side.label(),
+        },
+    );
+    queue.push_back(Job { id, side });
+    id
 }
 
 fn cancel(

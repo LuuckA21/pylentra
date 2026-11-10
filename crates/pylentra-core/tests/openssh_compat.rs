@@ -10,7 +10,9 @@ use std::time::Duration;
 use pylentra_core::known_hosts::KnownHosts;
 use pylentra_core::model::{AuthMethod, Connection, ForwardRule};
 use pylentra_core::secrets::{MemorySecretStore, SecretKind, SecretStore};
-use pylentra_core::ssh::events::{ForwardState, PromptAnswer, SessionEvent, Stage};
+use pylentra_core::ssh::events::{
+    ConflictChoice, ForwardState, PromptAnswer, SessionEvent, Stage, TransferState,
+};
 use pylentra_core::ssh::{SessionId, SessionManager, SessionOptions};
 use support::{CollectSink, spawn_tcp_echo};
 use tempfile::TempDir;
@@ -289,5 +291,105 @@ async fn remote_forward() {
         .unwrap();
     ping(bound_port(&probe_sink).await).await;
     env.mgr.close(probe).await.unwrap();
+    env.mgr.close(id).await.unwrap();
+}
+
+/// Waits for the last event of `transfer_id`, answering a conflict question with `choice`.
+async fn transfer_end(
+    env: &Env,
+    id: SessionId,
+    sink: &CollectSink,
+    transfer_id: u32,
+    choice: Option<ConflictChoice>,
+) -> TransferState {
+    let deadline = tokio::time::Instant::now() + T;
+    let mut asked = false;
+    loop {
+        let states: Vec<_> = sink
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Transfer {
+                    transfer_id: t,
+                    state,
+                } if *t == transfer_id => Some(state.clone()),
+                _ => None,
+            })
+            .collect();
+        for s in &states {
+            match s {
+                TransferState::Conflict { .. } if !asked => {
+                    asked = true;
+                    let choice = choice.expect("no conflict expected");
+                    env.mgr
+                        .answer(id, PromptAnswer::Conflict { choice, all: false })
+                        .unwrap();
+                }
+                TransferState::Finished { .. }
+                | TransferState::Failed { .. }
+                | TransferState::Cancelled { .. } => return s.clone(),
+                _ => {}
+            }
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{states:?}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs the Docker environment and PYLENTRA_COMPAT=1"]
+async fn openssh_sftp_roundtrip() {
+    let Some(env) = env() else { return };
+    let (id, sink) = open_ready(&env, vec![bastion(&env, password())]).await;
+    let home = env.mgr.sftp_list(id, String::new()).await.unwrap().dir;
+    // Unique, so a reused container never answers with an earlier run's file.
+    let name = format!("rt-{}", Uuid::new_v4());
+    let local = TempDir::new().unwrap();
+    let file = local.path().join(&name);
+    let done = TransferState::Finished {
+        files: 1,
+        skipped: vec![],
+    };
+
+    std::fs::write(&file, "v1").unwrap();
+    let t = env
+        .mgr
+        .sftp_upload(id, vec![file.clone()], home.clone())
+        .await
+        .unwrap();
+    assert_eq!(transfer_end(&env, id, &sink, t, None).await, done);
+    // Over the existing file: OpenSSH advertises posix-rename, which replaces in one step.
+    std::fs::write(&file, "v2!").unwrap();
+    let t = env
+        .mgr
+        .sftp_upload(id, vec![file], home.clone())
+        .await
+        .unwrap();
+    let overwrite = Some(ConflictChoice::Overwrite);
+    assert_eq!(transfer_end(&env, id, &sink, t, overwrite).await, done);
+
+    let listing = env.mgr.sftp_list(id, home.clone()).await.unwrap();
+    let names: Vec<_> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+    let entry = listing.entries.iter().find(|e| e.name == name).unwrap();
+    assert_eq!(entry.size, Some(3));
+    assert!(
+        !names.iter().any(|n| n.ends_with(".pylentra-tmp")),
+        "{names:?}"
+    );
+
+    let back = TempDir::new().unwrap();
+    let remote = format!("{}/{name}", home.trim_end_matches('/'));
+    let t = env
+        .mgr
+        .sftp_download(id, vec![remote], back.path().into())
+        .await
+        .unwrap();
+    assert_eq!(transfer_end(&env, id, &sink, t, None).await, done);
+    assert_eq!(
+        std::fs::read_to_string(back.path().join(&name)).unwrap(),
+        "v2!"
+    );
     env.mgr.close(id).await.unwrap();
 }

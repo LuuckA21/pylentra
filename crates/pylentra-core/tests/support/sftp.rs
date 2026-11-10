@@ -1,14 +1,18 @@
 //! SFTP subsystem of the test server: serves a real folder as "/", never anything outside it.
 
 use std::collections::HashMap;
+use std::fs::FileTimes;
 use std::fs::{self, Metadata};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
+use russh::Disconnect;
 use russh_sftp::protocol::{
-    Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version,
+    Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Packet, Status, StatusCode, Version,
 };
+
+const POSIX_RENAME: &str = "posix-rename@openssh.com";
 
 /// Ways the server misbehaves, for the client's defences.
 #[derive(Clone, Debug, Default)]
@@ -31,6 +35,10 @@ pub enum Hostile {
     FailRead(String),
     /// No read is ever answered, and nothing after it either: the server is stuck.
     StallReads,
+    /// `posix-rename@openssh.com` is neither advertised nor served.
+    NoPosixRename,
+    /// The whole SSH connection is closed once this many bytes of writes have arrived.
+    DropAfterWrite(u64),
 }
 
 pub struct SftpFs {
@@ -42,17 +50,29 @@ pub struct SftpFs {
     /// Open file handles, with the length reads stop at and whether reads fail.
     files: HashMap<String, (fs::File, u64, bool)>,
     next_handle: u64,
+    /// The connection, for `Hostile::DropAfterWrite`, and the bytes written so far.
+    conn: russh::server::Handle,
+    written: u64,
 }
 
 impl SftpFs {
-    pub fn new(root: &Path, hostile: Hostile) -> Self {
+    pub fn new(root: &Path, hostile: Hostile, conn: russh::server::Handle) -> Self {
         Self {
             root: root.canonicalize().expect("sftp root"),
             hostile,
             dirs: HashMap::new(),
             files: HashMap::new(),
             next_handle: 0,
+            conn,
+            written: 0,
         }
+    }
+
+    fn handle(&mut self, f: fs::File, len: u64, fail: bool) -> String {
+        self.next_handle += 1;
+        let handle = self.next_handle.to_string();
+        self.files.insert(handle.clone(), (f, len, fail));
+        handle
     }
 
     /// The canonical remote path ("/a/b") and its place on disk. Relative paths start at the
@@ -117,7 +137,9 @@ impl SftpFs {
             | Hostile::HalfReads
             | Hostile::ShortFile
             | Hostile::FailRead(_)
-            | Hostile::StallReads => {}
+            | Hostile::StallReads
+            | Hostile::NoPosixRename
+            | Hostile::DropAfterWrite(_) => {}
             Hostile::Names(names) => {
                 let mut file = FileAttributes::default();
                 file.set_regular(true);
@@ -156,6 +178,28 @@ fn attrs(m: &Metadata) -> FileAttributes {
     a
 }
 
+fn ok(id: u32) -> Status {
+    Status {
+        id,
+        status_code: StatusCode::Ok,
+        error_message: "Ok".into(),
+        language_tag: "en-US".into(),
+    }
+}
+
+/// SFTP strings (u32 length, bytes) back to back, as extended requests carry them.
+fn strings(mut d: &[u8]) -> Option<Vec<String>> {
+    let mut out = vec![];
+    while !d.is_empty() {
+        let (len, rest) = d.split_first_chunk::<4>()?;
+        let len = u32::from_be_bytes(*len) as usize;
+        out.push(String::from_utf8(rest.get(..len)?.to_vec()).ok()?);
+        d = &rest[len..];
+    }
+    Some(out)
+}
+
+/// Like OpenSSH, an existing file is a plain failure: SFTPv3 has no "exists" status.
 fn status(e: io::Error) -> StatusCode {
     match e.kind() {
         io::ErrorKind::NotFound => StatusCode::NoSuchFile,
@@ -177,8 +221,9 @@ impl russh_sftp::server::Handler for SftpFs {
         _extensions: HashMap<String, String>,
     ) -> Result<Version, Self::Error> {
         let mut v = Version::new();
-        v.extensions
-            .insert("posix-rename@openssh.com".into(), "1".into());
+        if !matches!(self.hostile, Hostile::NoPosixRename) {
+            v.extensions.insert(POSIX_RENAME.into(), "1".into());
+        }
         Ok(v)
     }
 
@@ -228,15 +273,11 @@ impl russh_sftp::server::Handler for SftpFs {
         if !dir {
             self.files.remove(&handle).ok_or(StatusCode::Failure)?;
         }
-        Ok(Status {
-            id,
-            status_code: StatusCode::Ok,
-            error_message: "Ok".into(),
-            language_tag: "en-US".into(),
-        })
+        Ok(ok(id))
     }
 
-    /// Read-only: links are followed, as a real server does, but never out of the root.
+    /// Reads follow links, as a real server does, but never out of the root. Writes create
+    /// the last component itself: with EXCLUDE, an existing name (a link included) fails.
     async fn open(
         &mut self,
         id: u32,
@@ -245,7 +286,16 @@ impl russh_sftp::server::Handler for SftpFs {
         _attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
         if pflags.contains(OpenFlags::WRITE) {
-            return Err(StatusCode::OpUnsupported);
+            let mut o = fs::OpenOptions::new();
+            o.write(true).truncate(pflags.contains(OpenFlags::TRUNCATE));
+            if pflags.contains(OpenFlags::CREATE | OpenFlags::EXCLUDE) {
+                o.create_new(true);
+            } else {
+                o.create(pflags.contains(OpenFlags::CREATE));
+            }
+            let f = o.open(self.lstat_path(&filename)?).map_err(status)?;
+            let handle = self.handle(f, 0, false);
+            return Ok(Handle { id, handle });
         }
         let (_, real) = self.resolve(&filename)?;
         let f = fs::File::open(self.followed(&real)?).map_err(status)?;
@@ -253,12 +303,101 @@ impl russh_sftp::server::Handler for SftpFs {
         if matches!(self.hostile, Hostile::ShortFile) {
             len /= 2;
         }
-        self.next_handle += 1;
-        let handle = self.next_handle.to_string();
         let fail =
             matches!(&self.hostile, Hostile::FailRead(n) if filename.rsplit('/').next() == Some(n));
-        self.files.insert(handle.clone(), (f, len, fail));
+        let handle = self.handle(f, len, fail);
         Ok(Handle { id, handle })
+    }
+
+    async fn write(
+        &mut self,
+        id: u32,
+        handle: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<Status, Self::Error> {
+        if let Hostile::DropAfterWrite(n) = self.hostile {
+            self.written += data.len() as u64;
+            if self.written >= n {
+                let bye = Disconnect::ByApplication;
+                let _ = self
+                    .conn
+                    .disconnect(bye, String::new(), String::new())
+                    .await;
+                // No reply: the client must see the connection end, not a failed write.
+                std::future::pending::<()>().await;
+            }
+        }
+        let (f, ..) = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
+        f.seek(SeekFrom::Start(offset)).map_err(status)?;
+        f.write_all(&data).map_err(status)?;
+        Ok(ok(id))
+    }
+
+    async fn fsetstat(
+        &mut self,
+        id: u32,
+        handle: String,
+        attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
+        let (f, ..) = self.files.get(&handle).ok_or(StatusCode::Failure)?;
+        let at = |t: Option<u32>| t.map(|s| UNIX_EPOCH + Duration::from_secs(s.into()));
+        let mut times = FileTimes::new();
+        if let Some(t) = at(attrs.mtime) {
+            times = times.set_modified(t);
+        }
+        if let Some(t) = at(attrs.atime) {
+            times = times.set_accessed(t);
+        }
+        f.set_times(times).map_err(status)?;
+        Ok(ok(id))
+    }
+
+    async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
+        fs::remove_file(self.lstat_path(&filename)?).map_err(status)?;
+        Ok(ok(id))
+    }
+
+    async fn mkdir(
+        &mut self,
+        id: u32,
+        path: String,
+        _attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
+        fs::create_dir(self.lstat_path(&path)?).map_err(status)?;
+        Ok(ok(id))
+    }
+
+    /// SFTPv3 rename, as OpenSSH serves it: an existing target is a failure, never replaced.
+    async fn rename(
+        &mut self,
+        id: u32,
+        oldpath: String,
+        newpath: String,
+    ) -> Result<Status, Self::Error> {
+        let (from, to) = (self.lstat_path(&oldpath)?, self.lstat_path(&newpath)?);
+        if to.symlink_metadata().is_ok() {
+            return Err(StatusCode::Failure);
+        }
+        fs::rename(from, to).map_err(status)?;
+        Ok(ok(id))
+    }
+
+    /// `posix-rename@openssh.com`: replaces the target in one step.
+    async fn extended(
+        &mut self,
+        id: u32,
+        request: String,
+        data: Vec<u8>,
+    ) -> Result<Packet, Self::Error> {
+        if request != POSIX_RENAME || matches!(self.hostile, Hostile::NoPosixRename) {
+            return Err(StatusCode::OpUnsupported);
+        }
+        let Some([old, new]) = strings(&data).and_then(|s| <[String; 2]>::try_from(s).ok()) else {
+            return Err(StatusCode::BadMessage);
+        };
+        fs::rename(self.lstat_path(&old)?, self.lstat_path(&new)?).map_err(status)?;
+        Ok(Packet::Status(ok(id)))
     }
 
     async fn read(

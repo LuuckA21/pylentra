@@ -348,7 +348,7 @@ impl Handler for ConnHandler {
                     self.silent.push(ch);
                     return Ok(());
                 }
-                let fs = sftp::SftpFs::new(root, self.cfg.sftp_hostile.clone());
+                let fs = sftp::SftpFs::new(root, self.cfg.sftp_hostile.clone(), session.handle());
                 // Spawns its own task, which ends with the channel.
                 russh_sftp::server::run(ch.into_stream(), fs).await;
                 Ok(())

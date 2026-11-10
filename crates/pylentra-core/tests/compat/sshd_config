@@ -6,3 +6,4 @@ PubkeyAuthentication yes
 UsePAM yes
 AllowTcpForwarding yes
 PermitOpen any
+Subsystem sftp internal-sftp

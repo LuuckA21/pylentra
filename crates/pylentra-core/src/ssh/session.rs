@@ -226,6 +226,24 @@ impl SessionManager {
         answer.await.map_err(|_| not_found(id))?
     }
 
+    /// Queues an upload of local `items` into `remote_dir` (absolute) and returns its transfer
+    /// id at once; the rest arrives as `Transfer` events.
+    pub async fn sftp_upload(
+        &self,
+        id: SessionId,
+        items: Vec<PathBuf>,
+        remote_dir: String,
+    ) -> Result<u32, CoreError> {
+        let (reply, answer) = oneshot::channel();
+        let cmd = SftpCmd::Upload {
+            items,
+            remote_dir,
+            reply,
+        };
+        self.send(id, Command::Sftp(cmd)).await?;
+        answer.await.map_err(|_| not_found(id))?
+    }
+
     /// Drops a queued transfer or stops the running one; `NotFound` once it has ended.
     pub async fn sftp_cancel(&self, id: SessionId, transfer_id: u32) -> Result<(), CoreError> {
         let (reply, answer) = oneshot::channel();

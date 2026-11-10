@@ -42,7 +42,6 @@ pub(crate) fn remote_split(path: &str) -> (&str, &str) {
     path.rsplit_once('/').unwrap_or((".", path))
 }
 
-#[allow(dead_code)] // Used by transfers (Tasks 4-6).
 pub(crate) fn temp_name(name: &str, n: u32) -> String {
     format!("{name}.{n}.{TEMP_SUFFIX}")
 }

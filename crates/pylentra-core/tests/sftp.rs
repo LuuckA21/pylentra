@@ -666,7 +666,7 @@ async fn download_size_changed() {
 }
 
 #[tokio::test]
-async fn close_during_transfer() {
+async fn close_during_conflict() {
     let root = TempDir::new().unwrap();
     let local = TempDir::new().unwrap();
     fs::write(root.path().join("f"), "new").unwrap();
@@ -825,4 +825,272 @@ async fn close_with_stalled_listing_leaves_no_temp() {
     sink.wait_event(|e| matches!(e, SessionEvent::Closed { .. }), T)
         .await;
     assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
+}
+
+#[tokio::test]
+async fn close_during_transfer() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("big"), vec![7u8; 8 << 20]).unwrap();
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+    let local = TempDir::new().unwrap();
+
+    let t = env
+        .mgr
+        .sftp_download(id, vec!["/big".into()], local.path().into())
+        .await
+        .unwrap();
+    wait_running(&sink, t).await;
+    env.mgr.close(id).await.unwrap();
+    sink.wait_event(|e| matches!(e, SessionEvent::Closed { .. }), T)
+        .await;
+    assert_eq!(
+        transfer(&sink, t).last(),
+        Some(&TransferState::Cancelled { files: 0 })
+    );
+    assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
+}
+
+async fn wait_running(sink: &CollectSink, transfer_id: u32) {
+    sink.wait_event(
+        |e| {
+            matches!(
+                e,
+                SessionEvent::Transfer {
+                    transfer_id: t,
+                    state: TransferState::Running { .. },
+                } if *t == transfer_id
+            )
+        },
+        T,
+    )
+    .await;
+}
+
+fn set_mtime(p: &Path, t: SystemTime) {
+    fs::File::options()
+        .write(true)
+        .open(p)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn upload_file_and_tree() {
+    let local = TempDir::new().unwrap();
+    fs::write(local.path().join("f.txt"), "hello").unwrap();
+    fs::create_dir_all(local.path().join("d/e")).unwrap();
+    fs::write(local.path().join("d/x"), "xx").unwrap();
+    fs::write(local.path().join("d/e/y"), "yyy").unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_500_000_000);
+    set_mtime(&local.path().join("d/e/y"), old);
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("up")).unwrap();
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("f.txt"), local.path().join("d")];
+    let t = env.mgr.sftp_upload(id, items, "/up".into()).await.unwrap();
+    let end = wait_end(&sink, t).await;
+    assert_eq!(
+        end,
+        TransferState::Finished {
+            files: 3,
+            skipped: vec![]
+        }
+    );
+    let up = root.path().join("up");
+    assert_eq!(tree(&up), ["d/", "d/e/", "d/e/y", "d/x", "f.txt"]);
+    // Before any read, which would move the access time.
+    let m = fs::metadata(up.join("d/e/y")).unwrap();
+    assert_eq!((m.modified().unwrap(), m.accessed().unwrap()), (old, old));
+    assert_eq!(fs::read(up.join("f.txt")).unwrap(), b"hello");
+    assert_eq!(fs::read(up.join("d/e/y")).unwrap(), b"yyy");
+    let states = transfer(&sink, t);
+    assert!(
+        matches!(
+            &states[0],
+            TransferState::Queued {
+                direction: Direction::Up,
+                ..
+            }
+        ),
+        "{states:?}"
+    );
+    env.mgr.close(id).await.unwrap();
+}
+
+/// A bigger file over an existing one, so several blocks are in flight.
+async fn overwrite(hostile: Hostile) {
+    let local = TempDir::new().unwrap();
+    let mut body = vec![0u8; 300_000];
+    rand::fill(&mut body[..]);
+    fs::write(local.path().join("f"), &body).unwrap();
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("f"), "old").unwrap();
+    let env = env(Some(root.path()), hostile, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("f")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    assert_eq!(wait_conflicts(&sink, t, 1).await, ["f"]);
+    answer(&env, id, ConflictChoice::Overwrite, false);
+    let end = wait_end(&sink, t).await;
+    assert!(
+        matches!(end, TransferState::Finished { files: 1, .. }),
+        "{end:?}"
+    );
+    assert!(fs::read(root.path().join("f")).unwrap() == body);
+    assert_eq!(tree(root.path()), ["f"]);
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn upload_overwrite_atomic() {
+    overwrite(Hostile::None).await;
+}
+
+#[tokio::test]
+async fn upload_without_posix_rename() {
+    overwrite(Hostile::NoPosixRename).await;
+}
+
+#[tokio::test]
+async fn upload_conflict_choices() {
+    let root = TempDir::new().unwrap();
+    let local = TempDir::new().unwrap();
+    for n in ["1", "2", "3"] {
+        fs::write(local.path().join(n), "new").unwrap();
+        fs::write(root.path().join(n), "old").unwrap();
+    }
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = ["1", "2", "3"].map(|n| local.path().join(n)).to_vec();
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    assert_eq!(wait_conflicts(&sink, t, 1).await, ["1"]);
+    answer(&env, id, ConflictChoice::Skip, false);
+    assert_eq!(wait_conflicts(&sink, t, 2).await, ["1", "2"]);
+    answer(&env, id, ConflictChoice::Overwrite, true);
+    let end = wait_end(&sink, t).await;
+    assert_eq!(
+        end,
+        TransferState::Finished {
+            files: 2,
+            skipped: vec![Skipped {
+                path: "1".into(),
+                reason: SkipReason::Exists
+            }]
+        }
+    );
+    assert_eq!(conflicts(&sink, t).len(), 2);
+    let read = |n: &str| fs::read_to_string(root.path().join(n)).unwrap();
+    assert_eq!(
+        (read("1"), read("2"), read("3")),
+        ("old".into(), "new".into(), "new".into())
+    );
+    assert_eq!(tree(root.path()), ["1", "2", "3"]);
+    env.mgr.close(id).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn upload_never_through_remote_links() {
+    let root = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), root.path().join("d")).unwrap();
+    fs::write(elsewhere.path().join("target"), "keep").unwrap();
+    std::os::unix::fs::symlink(elsewhere.path().join("target"), root.path().join("f")).unwrap();
+    let local = TempDir::new().unwrap();
+    fs::create_dir(local.path().join("d")).unwrap();
+    fs::write(local.path().join("d/x"), "x").unwrap();
+    fs::write(local.path().join("f"), "f").unwrap();
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("d"), local.path().join("f")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    let TransferState::Finished { files: 0, skipped } = wait_end(&sink, t).await else {
+        panic!("{:?}", transfer(&sink, t));
+    };
+    let mut skipped: Vec<_> = skipped.into_iter().map(|s| (s.path, s.reason)).collect();
+    skipped.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        skipped,
+        [
+            ("d".into(), SkipReason::Symlink),
+            ("f".into(), SkipReason::Symlink)
+        ]
+    );
+    assert!(conflicts(&sink, t).is_empty());
+    assert_eq!(tree(elsewhere.path()), ["target"]);
+    assert_eq!(
+        fs::read_to_string(elsewhere.path().join("target")).unwrap(),
+        "keep"
+    );
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn upload_cancel_leaves_nothing() {
+    let local = TempDir::new().unwrap();
+    fs::write(local.path().join("big"), vec![7u8; 8 << 20]).unwrap();
+    let root = TempDir::new().unwrap();
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("big")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    wait_running(&sink, t).await;
+    env.mgr.sftp_cancel(id, t).await.unwrap();
+    assert_eq!(
+        wait_end(&sink, t).await,
+        TransferState::Cancelled { files: 0 }
+    );
+    // Removed on the server before `Cancelled` was sent.
+    assert!(tree(root.path()).is_empty(), "{:?}", tree(root.path()));
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn close_during_upload_cleans_server() {
+    let local = TempDir::new().unwrap();
+    fs::write(local.path().join("big"), vec![7u8; 8 << 20]).unwrap();
+    let root = TempDir::new().unwrap();
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("big")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    wait_running(&sink, t).await;
+    let started = std::time::Instant::now();
+    env.mgr.close(id).await.unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(
+        transfer(&sink, t).last(),
+        Some(&TransferState::Cancelled { files: 0 })
+    );
+    assert!(tree(root.path()).is_empty(), "{:?}", tree(root.path()));
+}
+
+#[tokio::test]
+async fn connection_drop_during_upload() {
+    let local = TempDir::new().unwrap();
+    fs::write(local.path().join("f"), vec![1u8; 1 << 20]).unwrap();
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("f"), "old").unwrap();
+    let env = env(Some(root.path()), Hostile::DropAfterWrite(64 * 1024), true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("f")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    wait_conflicts(&sink, t, 1).await;
+    answer(&env, id, ConflictChoice::Overwrite, false);
+    let end = wait_end(&sink, t).await;
+    assert!(matches!(end, TransferState::Failed { .. }), "{end:?}");
+    // The temp file may remain (nothing can reach the server any more); the file never breaks.
+    assert_eq!(fs::read_to_string(root.path().join("f")).unwrap(), "old");
+    sink.wait_event(|e| matches!(e, SessionEvent::Closed { .. }), T)
+        .await;
 }

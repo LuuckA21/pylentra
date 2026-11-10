@@ -1,23 +1,25 @@
 //! Copies one file between the server and this machine (spec §3 "Trasferimento", steps 3-4).
 
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use futures_util::{StreamExt, stream};
 use russh_sftp::client::error::Error as SftpError;
-use russh_sftp::protocol::{Data, FileAttributes, OpenFlags, StatusCode};
+use russh_sftp::protocol::{Data, FileAttributes, OpenFlags, Packet, StatusCode};
 use tokio::sync::watch;
 
-use super::names::TEMP_SUFFIX;
-use super::{Server, StepError, or_cancel, step_error};
+use super::names::{TEMP_SUFFIX, remote_join, remote_split, temp_name};
+use super::{POSIX_RENAME, Server, StepError, lost, or_cancel, step_error};
 use crate::error::CoreError;
 use crate::store::create_temp;
 
 const BLOCK: u64 = 32 * 1024;
 /// Requests in flight per file, so the server's latency does not cap the speed.
 const IN_FLIGHT: usize = 8;
+/// How long a failed or cancelled upload waits for its remote temp file to be removed.
+const CLEANUP: Duration = Duration::from_millis(500);
 
 fn changed() -> StepError {
     CoreError::NotFound {
@@ -139,4 +141,139 @@ fn bytes(r: Result<Data, SftpError>, len: u64, remote: &str) -> Result<Vec<u8>, 
         Err(SftpError::Status(s)) if s.status_code == StatusCode::Eof => Err(changed()),
         Err(e) => Err(step_error(e, remote)),
     }
+}
+
+/// Uploads `local` (`size` bytes, as scanned) over `remote` through a fresh remote temp file.
+/// The temp file is removed on any failure or cancel while the channel is up; when the channel
+/// is gone it may remain, but `remote` is only ever replaced by a complete file.
+pub(crate) async fn upload_file(
+    sftp: &Server,
+    local: &Path,
+    remote: &str,
+    size: u64,
+    modified: Option<u64>,
+    cancel: &watch::Receiver<bool>,
+    progress: &mut impl FnMut(u64),
+) -> Result<(), StepError> {
+    // shortcut: opening and reading the local file block the runtime thread for one 32 KiB
+    // read at a time; upgrade to spawn_blocking if users report stalls on slow disks.
+    let mut file = fs::File::open(local)?;
+    let (tmp, handle) = or_cancel(cancel, create_remote_temp(sftp, remote)).await?;
+    let wrote = async {
+        write_from(sftp, &handle, remote, &mut file, size, cancel, progress).await?;
+        if let Some(t) = modified.and_then(|m| u32::try_from(m).ok()) {
+            let attrs = FileAttributes {
+                mtime: Some(t),
+                atime: Some(t),
+                ..Default::default()
+            };
+            let set = sftp.raw.fsetstat(handle.as_str(), attrs).await;
+            set.map_err(|e| step_error(e, remote))?;
+        }
+        Ok(())
+    };
+    let wrote = or_cancel(cancel, wrote).await;
+    // Sent even after a cancel, but never waited for then.
+    let close = async {
+        sftp.raw
+            .close(handle)
+            .await
+            .map_err(|e| step_error(e, remote))
+    };
+    let close = or_cancel(cancel, close).await;
+    let done = match wrote.and(close) {
+        Ok(_) => or_cancel(cancel, replace(sftp, &tmp, remote)).await,
+        Err(e) => Err(e),
+    };
+    let Err(e) = done else { return Ok(()) };
+    match tokio::time::timeout(CLEANUP, sftp.raw.remove(tmp)).await {
+        // The channel is gone: the temp file stays, so this is a failure, not a clean cancel.
+        Ok(Err(r)) if lost(&r) => Err(step_error(r, remote)),
+        _ => Err(e),
+    }
+}
+
+/// `<name>.<n>.pylentra-tmp` next to `remote`, created exclusively; returns it and its handle.
+async fn create_remote_temp(sftp: &Server, remote: &str) -> Result<(String, String), StepError> {
+    let (dir, name) = remote_split(remote);
+    let flags = OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE;
+    let mut n = 0;
+    loop {
+        let tmp = remote_join(dir, &temp_name(name, n));
+        let e = match sftp.raw.open(tmp.as_str(), flags, Default::default()).await {
+            Ok(h) => return Ok((tmp, h.handle)),
+            Err(e) => e,
+        };
+        // SFTPv3 has no "exists" status (OpenSSH answers a plain failure), so look.
+        let taken = matches!(&e, SftpError::Status(s) if s.status_code == StatusCode::Failure)
+            && sftp.raw.lstat(tmp.as_str()).await.is_ok();
+        if !taken || n == 100 {
+            return Err(step_error(e, remote));
+        }
+        n += 1;
+    }
+}
+
+/// Local blocks read in order, written with up to `IN_FLIGHT` requests outstanding.
+async fn write_from(
+    sftp: &Server,
+    handle: &str,
+    remote: &str,
+    file: &mut fs::File,
+    size: u64,
+    cancel: &watch::Receiver<bool>,
+    progress: &mut impl FnMut(u64),
+) -> Result<(), StepError> {
+    let block = sftp.max_write.map_or(BLOCK, |m| m.min(BLOCK));
+    let mut blocks = stream::iter((0..size).step_by(block as usize))
+        .map(|offset| {
+            let mut data = vec![0; block.min(size - offset) as usize];
+            let read = file.read_exact(&mut data);
+            async move {
+                read.map_err(|e| match e.kind() {
+                    io::ErrorKind::UnexpectedEof => changed(),
+                    _ => e.into(),
+                })?;
+                let end = offset + data.len() as u64;
+                let w = sftp.raw.write(handle, offset, data).await;
+                w.map_err(|e| step_error(e, remote))?;
+                Ok::<_, StepError>(end)
+            }
+        })
+        .buffered(IN_FLIGHT);
+    while let Some(end) = blocks.next().await {
+        if *cancel.borrow() {
+            return Err(CoreError::Cancelled.into());
+        }
+        progress(end?);
+    }
+    Ok(())
+}
+
+/// Puts the complete `tmp` in place of `remote`: in one step with `posix-rename@openssh.com`,
+/// otherwise by removing `remote` first, since a plain SFTP rename never replaces.
+async fn replace(sftp: &Server, tmp: &str, remote: &str) -> Result<(), StepError> {
+    let r = if sftp.posix_rename {
+        let mut data = vec![];
+        for s in [tmp, remote] {
+            // Remote paths come from validated names, far below 4 GiB.
+            data.extend((s.len() as u32).to_be_bytes());
+            data.extend(s.as_bytes());
+        }
+        match sftp.raw.extended(POSIX_RENAME, data).await {
+            Ok(Packet::Status(s)) if s.status_code == StatusCode::Ok => Ok(()),
+            Ok(Packet::Status(s)) => Err(SftpError::Status(s)),
+            Ok(_) => Err(SftpError::UnexpectedPacket),
+            Err(e) => Err(e),
+        }
+    } else {
+        match sftp.raw.remove(remote).await {
+            Ok(_) => sftp.raw.rename(tmp, remote).await.map(drop),
+            Err(SftpError::Status(s)) if s.status_code == StatusCode::NoSuchFile => {
+                sftp.raw.rename(tmp, remote).await.map(drop)
+            }
+            Err(e) => Err(e),
+        }
+    };
+    r.map_err(|e| step_error(e, remote))
 }

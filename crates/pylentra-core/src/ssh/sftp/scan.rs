@@ -85,7 +85,6 @@ fn join(rel: &str, name: &str) -> String {
     format!("{rel}/{name}")
 }
 
-#[allow(dead_code)] // Used by uploads (Task 6).
 pub(crate) fn scan_local(items: &[PathBuf]) -> Result<Plan, CoreError> {
     local(items, MAX_ENTRIES)
 }
@@ -143,7 +142,6 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
     Ok(plan)
 }
 
-#[allow(dead_code)] // Used by uploads (Task 6).
 fn mtime(m: &Metadata) -> Option<u64> {
     let t = m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
     Some(t.as_secs())
