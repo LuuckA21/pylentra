@@ -10,7 +10,7 @@ use pylentra_core::error::CoreError;
 use pylentra_core::known_hosts::KnownHosts;
 use pylentra_core::model::{AuthMethod, Connection};
 use pylentra_core::secrets::{MemorySecretStore, SecretKind, SecretStore};
-use pylentra_core::ssh::events::{SessionEvent, Stage};
+use pylentra_core::ssh::events::{SessionEvent, SkipReason, Stage};
 use pylentra_core::ssh::sftp::{EntryKind, Listing};
 use pylentra_core::ssh::{SessionId, SessionManager, SessionOptions};
 use support::{CollectSink, Hostile, TestServer, TestServerConfig};
@@ -208,5 +208,56 @@ async fn list_marks_links() {
     let l = env.mgr.sftp_list(id, String::new()).await.unwrap();
     assert_eq!(names(&l), ["l"]);
     assert_eq!(l.entries[0].kind, EntryKind::Link);
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_tree() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir_all(root.path().join("a/b")).unwrap();
+    fs::write(root.path().join("a/b/c.txt"), "abc").unwrap();
+    fs::write(root.path().join("a/x.txt"), "xy").unwrap();
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let id = open_ready(&env).await;
+
+    let plan = env.mgr.sftp_scan(id, vec!["/a/".into()]).await.unwrap();
+    assert_eq!(plan.dirs, ["a", "a/b"]);
+    let mut files: Vec<_> = plan.files.iter().map(|f| f.rel.as_str()).collect();
+    files.sort();
+    assert_eq!(files, ["a/b/c.txt", "a/x.txt"]);
+    assert_eq!((plan.total_bytes, plan.skipped.len()), (5, 0));
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_endless_dirs_stop() {
+    let root = TempDir::new().unwrap();
+    let env = env(Some(root.path()), Hostile::EndlessDirs, true).await;
+    let id = open_ready(&env).await;
+
+    fs::create_dir(root.path().join("top")).unwrap();
+    let err = env
+        .mgr
+        .sftp_scan(id, vec!["/top".into()])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, CoreError::SftpLimit { what } if what == "depth"),
+        "{err:?}"
+    );
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_bad_names_skipped() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("top")).unwrap();
+    let env = env(Some(root.path()), Hostile::Names(vec!["../x".into()]), true).await;
+    let id = open_ready(&env).await;
+
+    let plan = env.mgr.sftp_scan(id, vec!["/top".into()]).await.unwrap();
+    assert_eq!(plan.skipped.len(), 1);
+    assert_eq!(plan.skipped[0].path, "top/../x");
+    assert_eq!(plan.skipped[0].reason, SkipReason::InvalidName);
     env.mgr.close(id).await.unwrap();
 }

@@ -206,6 +206,19 @@ impl SessionManager {
         answer.await.map_err(|_| not_found(id))?
     }
 
+    /// Test hook: scans remote `items` through the session's SFTP channel.
+    #[cfg(feature = "test-util")]
+    pub async fn sftp_scan(
+        &self,
+        id: SessionId,
+        items: Vec<String>,
+    ) -> Result<super::sftp::scan::Plan, CoreError> {
+        let (reply, answer) = oneshot::channel();
+        self.send(id, Command::Sftp(SftpCmd::Scan { items, reply }))
+            .await?;
+        answer.await.map_err(|_| not_found(id))?
+    }
+
     pub fn pending_prompts(&self) -> usize {
         self.broker.len()
     }

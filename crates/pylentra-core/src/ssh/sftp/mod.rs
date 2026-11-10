@@ -1,6 +1,7 @@
 //! The SFTP channel of a session: its own task, so a long transfer never slows the terminal.
 
 pub(crate) mod names;
+pub mod scan;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,12 +67,22 @@ pub(crate) enum SftpCmd {
         dir: String,
         reply: oneshot::Sender<Result<Listing, CoreError>>,
     },
+    /// Test hook: runs `scan_remote` on the open channel.
+    #[cfg(feature = "test-util")]
+    Scan {
+        items: Vec<String>,
+        reply: oneshot::Sender<Result<scan::Plan, CoreError>>,
+    },
 }
 
 impl SftpCmd {
     pub(crate) fn fail(self, e: CoreError) {
         match self {
             Self::List { reply, .. } => {
+                let _ = reply.send(Err(e));
+            }
+            #[cfg(feature = "test-util")]
+            Self::Scan { reply, .. } => {
                 let _ = reply.send(Err(e));
             }
         }
@@ -211,6 +222,10 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
                     return refuse(&mut rx, closed).await;
                 }
             }
+            #[cfg(feature = "test-util")]
+            SftpCmd::Scan { items, reply } => {
+                let _ = reply.send(scan::scan_remote(&server.raw, &items).await);
+            }
         }
     }
 }
@@ -250,16 +265,27 @@ async fn list(raw: &RawSftpSession, dir: &str) -> Result<Listing, SftpError> {
     let handle = raw.opendir(dir.as_str()).await?.handle;
     let read = read_dir(raw, &handle).await;
     let _ = raw.close(handle).await;
-    let (entries, truncated) = read?;
+    let read = read?;
     Ok(Listing {
         dir,
-        entries,
-        truncated,
+        entries: read.entries,
+        truncated: read.truncated,
     })
 }
 
-async fn read_dir(raw: &RawSftpSession, handle: &str) -> Result<(Vec<Entry>, bool), SftpError> {
-    let mut entries = Vec::new();
+/// What one directory holds: usable entries, names unsafe here, and whether it was cut short.
+struct Dir {
+    entries: Vec<Entry>,
+    invalid: Vec<String>,
+    truncated: bool,
+}
+
+async fn read_dir(raw: &RawSftpSession, handle: &str) -> Result<Dir, SftpError> {
+    let mut dir = Dir {
+        entries: Vec::new(),
+        invalid: Vec::new(),
+        truncated: false,
+    };
     // Every name counts, valid or not, so a hostile server cannot keep this loop going.
     let mut seen = 0;
     loop {
@@ -273,20 +299,26 @@ async fn read_dir(raw: &RawSftpSession, handle: &str) -> Result<(Vec<Entry>, boo
             break;
         }
         for f in files {
+            if matches!(f.filename.as_str(), "." | "..") {
+                continue;
+            }
             if seen == MAX_LISTING {
-                return Ok((entries, true));
+                dir.truncated = true;
+                return Ok(dir);
             }
             seen += 1;
             if valid_name(&f.filename, LOCAL_WINDOWS) {
-                entries.push(entry(f));
+                dir.entries.push(entry(f));
+            } else {
+                dir.invalid.push(f.filename);
             }
         }
     }
-    Ok((entries, false))
+    Ok(dir)
 }
 
 /// The type comes from `readdir`'s own attributes, which describe links, not their targets.
-fn entry(f: File) -> Entry {
+pub(crate) fn entry(f: File) -> Entry {
     let kind = match f.attrs.permissions.map(|p| p & 0o170_000) {
         Some(0o040_000) => EntryKind::Dir,
         Some(0o100_000) => EntryKind::File,
