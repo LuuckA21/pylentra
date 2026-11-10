@@ -476,14 +476,21 @@ async fn write_loop(
                 // Not cached when ended: a failed open or a lost channel is retried here.
                 let s = match sftp.take() {
                     Some(s) if !s.ended() => s,
-                    _ => Sftp::start(
-                        handle.clone(),
-                        ctx.id,
-                        ctx.sink.clone(),
-                        ctx.broker.clone(),
-                        ctx.transfer_ids.clone(),
-                        ctx.opts.connect_timeout,
-                    ),
+                    old => {
+                        // A lost channel's transfer may still be removing its temp file;
+                        // bounded by the shutdown budget, and never awaited here.
+                        if let Some(old) = old {
+                            tokio::spawn(old.shutdown());
+                        }
+                        Sftp::start(
+                            handle.clone(),
+                            ctx.id,
+                            ctx.sink.clone(),
+                            ctx.broker.clone(),
+                            ctx.transfer_ids.clone(),
+                            ctx.opts.connect_timeout,
+                        )
+                    }
                 };
                 s.send(cmd);
                 *sftp = Some(s);

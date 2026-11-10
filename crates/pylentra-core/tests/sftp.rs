@@ -690,3 +690,114 @@ async fn close_during_transfer() {
     );
     assert_eq!(tree(local.path()), ["f"]);
 }
+
+#[tokio::test]
+async fn download_failed_read_skips_only_that_file() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("bad"), "x").unwrap();
+    fs::write(root.path().join("good"), "g").unwrap();
+    fs::write(root.path().join("next"), "n").unwrap();
+    let env = env(Some(root.path()), Hostile::FailRead("bad".into()), true).await;
+    let (id, sink) = open_with_sink(&env).await;
+    let local = TempDir::new().unwrap();
+
+    let items = ["/bad", "/good"].map(String::from).to_vec();
+    let first = env
+        .mgr
+        .sftp_download(id, items, local.path().into())
+        .await
+        .unwrap();
+    let second = env
+        .mgr
+        .sftp_download(id, vec!["/next".into()], local.path().into())
+        .await
+        .unwrap();
+    let end = wait_end(&sink, first).await;
+    let TransferState::Finished { files: 1, skipped } = &end else {
+        panic!("{end:?}");
+    };
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].path, "bad");
+    assert!(
+        matches!(&skipped[0].reason, SkipReason::Error { error } if error.code == "ssh.protocol"),
+        "{end:?}"
+    );
+    let end = wait_end(&sink, second).await;
+    assert!(
+        matches!(end, TransferState::Finished { files: 1, .. }),
+        "{end:?}"
+    );
+    assert_eq!(tree(local.path()), ["good", "next"]);
+    env.mgr.close(id).await.unwrap();
+}
+
+/// Waits until the transfer has made its temp file, so it is inside the copy.
+async fn wait_temp(dir: &Path) {
+    tokio::time::timeout(T, async {
+        while !tree(dir).iter().any(|n| n.ends_with(".pylentra-tmp")) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("temp file");
+}
+
+#[tokio::test]
+async fn cancel_wakes_a_stalled_read() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("f"), "data").unwrap();
+    let env = env(Some(root.path()), Hostile::StallReads, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+    let local = TempDir::new().unwrap();
+
+    let t = env
+        .mgr
+        .sftp_download(id, vec!["/f".into()], local.path().into())
+        .await
+        .unwrap();
+    wait_temp(local.path()).await;
+    let started = std::time::Instant::now();
+    env.mgr.sftp_cancel(id, t).await.unwrap();
+    assert_eq!(
+        wait_end(&sink, t).await,
+        TransferState::Cancelled { files: 0 }
+    );
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn close_during_stalled_read_cleans_up() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("f"), "data").unwrap();
+    let env = env(Some(root.path()), Hostile::StallReads, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+    let local = TempDir::new().unwrap();
+
+    let t = env
+        .mgr
+        .sftp_download(id, vec!["/f".into()], local.path().into())
+        .await
+        .unwrap();
+    wait_temp(local.path()).await;
+    let started = std::time::Instant::now();
+    env.mgr.close(id).await.unwrap();
+    assert!(started.elapsed() < Duration::from_millis(500));
+    // Cleaned up by the transfer itself, before the session reported `Closed`.
+    let events = sink.events.lock().unwrap().clone();
+    let cancelled = events.iter().position(|e| {
+        *e == SessionEvent::Transfer {
+            transfer_id: t,
+            state: TransferState::Cancelled { files: 0 },
+        }
+    });
+    let closed = events
+        .iter()
+        .position(|e| matches!(e, SessionEvent::Closed { .. }));
+    assert!(
+        matches!((cancelled, closed), (Some(a), Some(b)) if a < b),
+        "{events:?}"
+    );
+    assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
+}

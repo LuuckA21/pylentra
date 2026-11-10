@@ -9,7 +9,7 @@ use russh_sftp::client::RawSftpSession;
 use russh_sftp::protocol::File;
 
 use super::names::{LOCAL_WINDOWS, remote_join, remote_split, valid_name};
-use super::{EntryKind, entry, lost, named, read_dir};
+use super::{EntryKind, StepError, entry, lost, named, read_dir, step_error};
 use crate::error::CoreError;
 use crate::ssh::events::{SkipReason, Skipped};
 
@@ -157,11 +157,11 @@ fn error(e: CoreError) -> SkipReason {
 pub(crate) async fn scan_remote(
     sftp: &RawSftpSession,
     items: &[String],
-) -> Result<Plan, CoreError> {
+) -> Result<Plan, StepError> {
     remote(sftp, items, MAX_ENTRIES).await
 }
 
-async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<Plan, CoreError> {
+async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<Plan, StepError> {
     let mut plan = Plan::new(max);
     for item in items {
         let name = remote_split(item).1;
@@ -172,7 +172,7 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
         let attrs = sftp
             .lstat(item.as_str())
             .await
-            .map_err(|e| named(e, item))?;
+            .map_err(|e| step_error(e, item))?;
         let root = entry(File::new(name, attrs.attrs));
         let mut stack = vec![(item.clone(), name.to_string(), 1, root)];
         while let Some((path, rel, depth, e)) = stack.pop() {
@@ -192,14 +192,14 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
                     };
                     let dir = match read {
                         Ok(d) => d,
-                        Err(e) if lost(&e) => return Err(e.into()),
+                        Err(e) if lost(&e) => return Err(step_error(e, &path)),
                         Err(e) => {
                             plan.skip(rel, error(named(e, &path)))?;
                             continue;
                         }
                     };
                     if dir.truncated {
-                        return Err(limit("entries"));
+                        return Err(limit("entries").into());
                     }
                     for bad in dir.invalid {
                         plan.skip(join(&rel, &bad), SkipReason::InvalidName)?;

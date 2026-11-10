@@ -3,16 +3,15 @@
 mod copy;
 pub(crate) mod names;
 pub mod scan;
+mod transfer;
 
-use std::collections::{HashMap, VecDeque};
-use std::fs;
+use std::collections::VecDeque;
 use std::future::{self, Future};
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use russh::ChannelMsg;
 use russh::client::Handle;
@@ -21,18 +20,16 @@ use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::protocol::{File, StatusCode};
 use serde::Serialize;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use ts_rs::TS;
 
-use super::events::{
-    ConflictChoice, PromptAnswer, SessionEvent, SkipReason, Skipped, TransferState,
-};
+use super::events::{SessionEvent, TransferState};
 use super::handler::ClientHandler;
 use super::session::CLOSE_TIMEOUT;
 use super::{PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
-use names::{LOCAL_WINDOWS, remote_join, remote_split, valid_name};
+use names::{LOCAL_WINDOWS, remote_split, valid_name};
 
 /// At most this many names are read from one directory (spec §4.6).
 const MAX_LISTING: usize = 100_000;
@@ -122,8 +119,21 @@ impl SftpCmd {
 /// The open SFTP channel: dropping the queue ends the task, which closes the channel.
 pub(crate) struct Sftp {
     tx: mpsc::Sender<SftpCmd>,
-    task: JoinHandle<()>,
+    task: Task,
 }
+
+/// Aborted when dropped, so the task (and the connection it holds) never outlives its
+/// session, even when the session task itself is aborted.
+struct Task(JoinHandle<()>);
+
+impl Drop for Task {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Below the session's own close deadline, so cleanup ends before the session is aborted.
+const SHUTDOWN_BUDGET: Duration = CLOSE_TIMEOUT.saturating_sub(Duration::from_secs(1));
 
 struct Server {
     raw: RawSftpSession,
@@ -160,7 +170,10 @@ impl Sftp {
                 Err(e) => refuse(&mut rx, || again(&e)).await,
             }
         });
-        Sftp { tx, task }
+        Sftp {
+            tx,
+            task: Task(task),
+        }
     }
 
     /// The task is gone (failed open, lost channel): the next command needs a new one.
@@ -178,15 +191,12 @@ impl Sftp {
     }
 
     /// Stops the running transfer, which removes its temp file; queued ones are dropped.
+    /// Aborted once `SHUTDOWN_BUDGET` is spent: a cancel wakes every wait, so it never is
+    /// unless the local disk hangs.
     pub(crate) async fn shutdown(self) {
-        drop(self.tx);
-        let mut task = self.task;
-        if tokio::time::timeout(CLOSE_TIMEOUT, &mut task)
-            .await
-            .is_err()
-        {
-            task.abort();
-        }
+        let Sftp { tx, mut task } = self;
+        drop(tx);
+        let _ = tokio::time::timeout(SHUTDOWN_BUDGET, &mut task.0).await;
     }
 }
 
@@ -254,6 +264,48 @@ async fn refuse(rx: &mut mpsc::Receiver<SftpCmd>, err: impl Fn() -> CoreError) {
     }
 }
 
+/// A failed step of a transfer, and whether it lost the channel: only that ends the queue
+/// (spec §3 step 5), which `CoreError` alone cannot tell (status replies also become `Ssh`).
+pub(crate) struct StepError {
+    pub(crate) error: CoreError,
+    pub(crate) lost: bool,
+}
+
+impl From<CoreError> for StepError {
+    fn from(error: CoreError) -> Self {
+        Self { error, lost: false }
+    }
+}
+
+impl From<std::io::Error> for StepError {
+    fn from(e: std::io::Error) -> Self {
+        CoreError::Io(e).into()
+    }
+}
+
+/// `e` with `path` filled in, judged before the conversion loses the difference.
+fn step_error(e: SftpError, path: &str) -> StepError {
+    StepError {
+        lost: lost(&e),
+        error: named(e, path),
+    }
+}
+
+/// `io`, unless the transfer is cancelled first. Polled once before the cancel is checked,
+/// so a request (a close, say) still goes out even when cancelled already.
+async fn or_cancel<T>(
+    cancel: &watch::Receiver<bool>,
+    io: impl Future<Output = Result<T, StepError>>,
+) -> Result<T, StepError> {
+    let mut cancel = cancel.clone();
+    tokio::select! {
+        biased;
+        r = io => r,
+        // A dropped sender (the queue gone) cancels too.
+        _ = cancel.wait_for(|c| *c) => Err(CoreError::Cancelled.into()),
+    }
+}
+
 struct Job {
     id: u32,
     items: Vec<String>,
@@ -263,7 +315,7 @@ struct Job {
 /// The transfer in progress: ends `true` when it lost the channel.
 type Running<'a> = (
     u32,
-    Arc<AtomicBool>,
+    watch::Sender<bool>,
     Pin<Box<dyn Future<Output = bool> + Send + 'a>>,
 );
 
@@ -278,9 +330,10 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
             && !gone
             && let Some(job) = queue.pop_front()
         {
-            let cancel = Arc::new(AtomicBool::new(false));
+            let (cancel, cancelled) = watch::channel(false);
             let id = job.id;
-            running = Some((id, cancel.clone(), Box::pin(download(&server, job, cancel))));
+            let t = Box::pin(transfer::download(&server, job, cancelled));
+            running = Some((id, cancel, t));
         }
         let ended = async {
             match &mut running {
@@ -327,8 +380,8 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
                     #[cfg(feature = "test-util")]
                     SftpCmd::Scan { items, reply } => {
                         let r = scan::scan_remote(&server.raw, &items).await;
-                        let lost = matches!(&r, Err(e) if channel_error(e));
-                        let _ = reply.send(r);
+                        let lost = matches!(&r, Err(e) if e.lost);
+                        let _ = reply.send(r.map_err(|e| e.error));
                         lost
                     }
                 };
@@ -340,16 +393,17 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
         }
     }
     // The queue is closed: a lost channel fails what waits, a shutdown drops it.
-    if let Some((_, flag, t)) = running {
+    if let Some((_, cancel, t)) = running {
+        // On a lost channel the transfer fails on its own; only a question would keep it.
         if !gone {
-            flag.store(true, Ordering::Relaxed);
-            server.broker.cancel(server.id);
+            cancel.send_replace(true);
         }
+        server.broker.cancel(server.id);
         t.await;
     }
     if gone {
         for job in queue {
-            server.emit(job.id, failed(&closed(), 0, vec![]));
+            server.emit(job.id, transfer::failed(&closed(), 0, vec![]));
         }
     }
 }
@@ -363,8 +417,8 @@ fn cancel(
     if let Some(i) = queue.iter().position(|j| j.id == transfer_id) {
         queue.remove(i);
         server.emit(transfer_id, TransferState::Cancelled { files: 0 });
-    } else if let Some((_, flag, _)) = running.as_ref().filter(|r| r.0 == transfer_id) {
-        flag.store(true, Ordering::Relaxed);
+    } else if let Some((_, cancel, _)) = running.as_ref().filter(|r| r.0 == transfer_id) {
+        cancel.send_replace(true);
         // After `Ready` the only prompt a session asks is this transfer's conflict question.
         server.broker.cancel(server.id);
     } else {
@@ -380,178 +434,6 @@ impl Server {
         self.sink
             .event(SessionEvent::Transfer { transfer_id, state });
     }
-}
-
-// shortcut: status replies other than "no such file" and "permission denied" also become
-// `Ssh`, so they end the queue as if the channel were lost; upgrade if real servers send them.
-fn channel_error(e: &CoreError) -> bool {
-    matches!(e, CoreError::Ssh(_))
-}
-
-fn failed(e: &CoreError, files: u32, skipped: Vec<Skipped>) -> TransferState {
-    TransferState::Failed {
-        error: e.to_api(),
-        files,
-        skipped,
-    }
-}
-
-fn error_skip(path: &str, e: &CoreError) -> Skipped {
-    Skipped {
-        path: path.into(),
-        reason: SkipReason::Error { error: e.to_api() },
-    }
-}
-
-/// `rel` (`/`-separated, every name validated by the scan) under `dir`.
-fn local_path(dir: &Path, rel: &str) -> PathBuf {
-    rel.split('/').fold(dir.to_path_buf(), |p, n| p.join(n))
-}
-
-fn under(rel: &str, dir: &str) -> bool {
-    rel.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))
-}
-
-/// Runs one download to its last event; `true` when the channel was lost.
-async fn download(server: &Server, job: Job, cancel: Arc<AtomicBool>) -> bool {
-    let id = job.id;
-    let plan = match scan::scan_remote(&server.raw, &job.items).await {
-        Ok(p) => p,
-        Err(e) => {
-            server.emit(id, failed(&e, 0, vec![]));
-            return channel_error(&e);
-        }
-    };
-    let mut skipped = plan.skipped;
-    // Folders that are links or files locally: skipped with all they hold (spec §4.4).
-    let mut skipped_dirs: Vec<&str> = vec![];
-    for rel in &plan.dirs {
-        if skipped_dirs.iter().any(|d| under(rel, d)) {
-            continue;
-        }
-        let path = local_path(&job.local_dir, rel);
-        let reason = match fs::create_dir(&path) {
-            Ok(()) => continue,
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => match fs::symlink_metadata(&path) {
-                Ok(m) if m.is_dir() => continue,
-                Ok(m) if m.file_type().is_symlink() => SkipReason::Symlink,
-                Ok(_) => SkipReason::Exists,
-                Err(e) => error_skip(rel, &e.into()).reason,
-            },
-            Err(e) => error_skip(rel, &e.into()).reason,
-        };
-        skipped.push(Skipped {
-            path: rel.clone(),
-            reason,
-        });
-        skipped_dirs.push(rel);
-    }
-    // Item name to its remote parent; two items of one name land on one local path anyway.
-    let parents: HashMap<_, _> = job
-        .items
-        .iter()
-        .map(|i| {
-            let (parent, name) = remote_split(i);
-            (name, parent)
-        })
-        .collect();
-    let (mut files, mut done) = (0, 0);
-    let mut every: Option<ConflictChoice> = None;
-    let mut last: Option<Instant> = None;
-    let running = |done_bytes, files_done, current: &str| TransferState::Running {
-        done_bytes,
-        total_bytes: Some(plan.total_bytes),
-        files_done,
-        current: current.into(),
-    };
-    for f in &plan.files {
-        if skipped_dirs.iter().any(|d| under(&f.rel, d)) {
-            done += f.size;
-            continue;
-        }
-        if cancel.load(Ordering::Relaxed) {
-            server.emit(id, TransferState::Cancelled { files });
-            return false;
-        }
-        let local = local_path(&job.local_dir, &f.rel);
-        if let Ok(m) = fs::symlink_metadata(&local) {
-            let choice = if m.file_type().is_symlink() {
-                ConflictChoice::Skip
-            } else if let Some(c) = every {
-                c
-            } else {
-                let ask = TransferState::Conflict {
-                    name: f.rel.clone(),
-                };
-                let ask = SessionEvent::Transfer {
-                    transfer_id: id,
-                    state: ask,
-                };
-                match server.broker.ask(server.id, &*server.sink, ask).await {
-                    PromptAnswer::Conflict { choice, all } => {
-                        every = all.then_some(choice);
-                        choice
-                    }
-                    _ => ConflictChoice::Cancel,
-                }
-            };
-            match choice {
-                ConflictChoice::Overwrite => {}
-                ConflictChoice::Skip => {
-                    let reason = if m.file_type().is_symlink() {
-                        SkipReason::Symlink
-                    } else {
-                        SkipReason::Exists
-                    };
-                    skipped.push(Skipped {
-                        path: f.rel.clone(),
-                        reason,
-                    });
-                    done += f.size;
-                    continue;
-                }
-                ConflictChoice::Cancel => {
-                    server.emit(id, TransferState::Cancelled { files });
-                    return false;
-                }
-            }
-        }
-        let first = f.rel.split('/').next().unwrap_or_default();
-        let remote = remote_join(parents.get(first).copied().unwrap_or("."), &f.rel);
-        let mut progress = |n: u64| {
-            if last.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
-                last = Some(Instant::now());
-                server.emit(id, running(done + n, files, &f.rel));
-            }
-        };
-        let r = copy::download_file(
-            server,
-            &remote,
-            &local,
-            f.size,
-            f.modified,
-            &cancel,
-            &mut progress,
-        )
-        .await;
-        done += f.size;
-        match r {
-            Ok(()) => files += 1,
-            Err(CoreError::Cancelled) => {
-                server.emit(id, TransferState::Cancelled { files });
-                return false;
-            }
-            Err(e) if channel_error(&e) => {
-                server.emit(id, failed(&e, files, skipped));
-                return true;
-            }
-            Err(e) => skipped.push(error_skip(&f.rel, &e)),
-        }
-        last = Some(Instant::now());
-        server.emit(id, running(done, files, &f.rel));
-    }
-    server.emit(id, TransferState::Finished { files, skipped });
-    false
 }
 
 /// Not a status reply: the channel is gone or the server broke the protocol.

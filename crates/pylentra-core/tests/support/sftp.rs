@@ -27,6 +27,10 @@ pub enum Hostile {
     HalfReads,
     /// Every file ends, when read, at half the size it is listed with.
     ShortFile,
+    /// Reads of files with this name answer a plain "failure" status (an EIO, say).
+    FailRead(String),
+    /// No read is ever answered, and nothing after it either: the server is stuck.
+    StallReads,
 }
 
 pub struct SftpFs {
@@ -35,8 +39,8 @@ pub struct SftpFs {
     hostile: Hostile,
     /// Open directory handles and the entries not yet returned.
     dirs: HashMap<String, Vec<File>>,
-    /// Open file handles, with the length reads stop at.
-    files: HashMap<String, (fs::File, u64)>,
+    /// Open file handles, with the length reads stop at and whether reads fail.
+    files: HashMap<String, (fs::File, u64, bool)>,
     next_handle: u64,
 }
 
@@ -111,7 +115,9 @@ impl SftpFs {
             | Hostile::NeverAnswer
             | Hostile::EndlessDots
             | Hostile::HalfReads
-            | Hostile::ShortFile => {}
+            | Hostile::ShortFile
+            | Hostile::FailRead(_)
+            | Hostile::StallReads => {}
             Hostile::Names(names) => {
                 let mut file = FileAttributes::default();
                 file.set_regular(true);
@@ -249,7 +255,9 @@ impl russh_sftp::server::Handler for SftpFs {
         }
         self.next_handle += 1;
         let handle = self.next_handle.to_string();
-        self.files.insert(handle.clone(), (f, len));
+        let fail =
+            matches!(&self.hostile, Hostile::FailRead(n) if filename.rsplit('/').next() == Some(n));
+        self.files.insert(handle.clone(), (f, len, fail));
         Ok(Handle { id, handle })
     }
 
@@ -260,7 +268,13 @@ impl russh_sftp::server::Handler for SftpFs {
         offset: u64,
         len: u32,
     ) -> Result<Data, Self::Error> {
-        let (f, end) = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
+        if matches!(self.hostile, Hostile::StallReads) {
+            std::future::pending::<()>().await;
+        }
+        let (f, end, fail) = self.files.get_mut(&handle).ok_or(StatusCode::Failure)?;
+        if *fail {
+            return Err(StatusCode::Failure);
+        }
         if offset >= *end {
             return Err(StatusCode::Eof);
         }
