@@ -1,5 +1,6 @@
 //! Name rules for entries a server sends us (spec §4.2).
 
+pub(crate) const TEMP_SUFFIX: &str = "pylentra-tmp";
 pub(crate) const LOCAL_WINDOWS: bool = cfg!(windows);
 
 /// True when `name` is one path component that is safe to create on a `windows` or Unix side.
@@ -19,11 +20,9 @@ pub(crate) fn valid_name(name: &str, windows: bool) -> bool {
     if name.contains(['<', '>', ':', '"', '|', '?', '*']) || name.ends_with(['.', ' ']) {
         return false;
     }
-    let stem = name
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_uppercase();
+    // Win32 drops trailing spaces and dots of the stem, so "CON .txt" is the CON device.
+    let stem = name.split('.').next().unwrap_or_default();
+    let stem = stem.trim_end_matches([' ', '.']).to_ascii_uppercase();
     let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (stem.len() == 4
             && (stem.starts_with("COM") || stem.starts_with("LPT"))
@@ -37,7 +36,7 @@ pub(crate) fn remote_join(dir: &str, name: &str) -> String {
 }
 
 pub(crate) fn temp_name(name: &str, n: u32) -> String {
-    format!("{name}.{n}.pylentra-tmp")
+    format!("{name}.{n}.{TEMP_SUFFIX}")
 }
 
 #[cfg(test)]
@@ -54,7 +53,7 @@ mod tests {
         }
         for win in [
             "CON", "con.txt", "NUL", "COM1", "lpt9.log", "a:b", "a?", "a*", "a<", "a|", "a\"",
-            "a.", "a ",
+            "a.", "a ", "CON .txt", "nul .", "Aux  .x",
         ] {
             assert!(!valid_name(win, true), "{win}");
             assert!(valid_name(win, false) || win.contains(['/', '\\']), "{win}");
