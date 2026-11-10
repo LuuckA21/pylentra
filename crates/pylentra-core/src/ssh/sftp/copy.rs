@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use futures_util::{StreamExt, stream};
@@ -26,6 +26,18 @@ fn changed() -> StepError {
     .into()
 }
 
+/// Removes the temp file when dropped, unless it was renamed: every exit, an aborted task
+/// included, leaves nothing behind.
+struct Temp(Option<PathBuf>);
+
+impl Drop for Temp {
+    fn drop(&mut self) {
+        if let Some(p) = &self.0 {
+            let _ = fs::remove_file(p);
+        }
+    }
+}
+
 /// Downloads `remote` (`size` bytes, as scanned) over `local` through a fresh temp file, which
 /// any failure or cancel removes. `progress` gets the bytes done in this file. A cancel ends
 /// any wait on the server at once.
@@ -39,41 +51,37 @@ pub(crate) async fn download_file(
     progress: &mut impl FnMut(u64),
 ) -> Result<(), StepError> {
     let (tmp, mut file) = create_temp(local, TEMP_SUFFIX)?;
-    let r: Result<(), StepError> = async {
-        let open = async {
-            let flags = OpenFlags::READ;
-            let opened = sftp
-                .raw
-                .open(remote, flags, FileAttributes::default())
-                .await;
-            opened.map_err(|e| step_error(e, remote))
-        };
-        let handle = or_cancel(cancel, open).await?.handle;
-        let read = read_into(sftp, &handle, remote, &mut file, size, cancel, progress);
-        let read = or_cancel(cancel, read).await;
-        // Sent even after a cancel, but never waited for then.
-        let close = async { Ok(sftp.raw.close(handle).await) };
-        let _ = or_cancel(cancel, close).await;
-        read?;
-        // Off the runtime: a slow disk must not stall the session (spec §3).
-        let (tmp, local) = (tmp.clone(), local.to_path_buf());
-        let finish = move || -> io::Result<()> {
-            if let Some(secs) = modified {
-                file.set_modified(UNIX_EPOCH + Duration::from_secs(secs))?;
-            }
-            // On disk before it replaces anything, so a crash never trades a good file for a hole.
-            file.sync_all()?;
-            fs::rename(&tmp, &local)
-        };
-        Ok(tokio::task::spawn_blocking(finish)
-            .await
-            .map_err(io::Error::other)??)
-    }
-    .await;
-    if r.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    r
+    let mut guard = Temp(Some(tmp.clone()));
+    let open = async {
+        let flags = OpenFlags::READ;
+        let opened = sftp
+            .raw
+            .open(remote, flags, FileAttributes::default())
+            .await;
+        opened.map_err(|e| step_error(e, remote))
+    };
+    let handle = or_cancel(cancel, open).await?.handle;
+    let read = read_into(sftp, &handle, remote, &mut file, size, cancel, progress);
+    let read = or_cancel(cancel, read).await;
+    // Sent even after a cancel, but never waited for then.
+    let close = async { Ok(sftp.raw.close(handle).await) };
+    let _ = or_cancel(cancel, close).await;
+    read?;
+    // Off the runtime: a slow disk must not stall the session (spec §3).
+    let local = local.to_path_buf();
+    let finish = move || -> io::Result<()> {
+        if let Some(secs) = modified {
+            file.set_modified(UNIX_EPOCH + Duration::from_secs(secs))?;
+        }
+        // On disk before it replaces anything, so a crash never trades a good file for a hole.
+        file.sync_all()?;
+        fs::rename(&tmp, &local)
+    };
+    tokio::task::spawn_blocking(finish)
+        .await
+        .map_err(io::Error::other)??;
+    guard.0 = None;
+    Ok(())
 }
 
 /// Writes in offset order, so the temp file never has holes.

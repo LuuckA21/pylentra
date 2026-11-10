@@ -357,6 +357,8 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
                 }
                 let lost = match cmd {
                     SftpCmd::List { dir, reply } => {
+                        // shortcut: a listing in flight delays cancel and close handling up to
+                        // the SFTP request timeout; upgrade by serving List concurrently.
                         let r = list(&server.raw, &dir).await;
                         let lost = matches!(&r, Err(e) if lost(e));
                         let _ = reply.send(r.map_err(|e| named(e, &dir)));
@@ -393,11 +395,9 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
         }
     }
     // The queue is closed: a lost channel fails what waits, a shutdown drops it.
+    // Stopped even on a lost channel, so it never asks over the next channel's question.
     if let Some((_, cancel, t)) = running {
-        // On a lost channel the transfer fails on its own; only a question would keep it.
-        if !gone {
-            cancel.send_replace(true);
-        }
+        cancel.send_replace(true);
         server.broker.cancel(server.id);
         t.await;
     }

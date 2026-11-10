@@ -801,3 +801,28 @@ async fn close_during_stalled_read_cleans_up() {
     );
     assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
 }
+
+#[tokio::test]
+async fn close_with_stalled_listing_leaves_no_temp() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("f"), "data").unwrap();
+    let env = env(Some(root.path()), Hostile::StallReads, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+    let local = TempDir::new().unwrap();
+
+    env.mgr
+        .sftp_download(id, vec!["/f".into()], local.path().into())
+        .await
+        .unwrap();
+    wait_temp(local.path()).await;
+    let started = std::time::Instant::now();
+    // `join!` polls in order: the listing is queued, and stuck on the server, before the close.
+    let (listed, closed) = tokio::join!(env.mgr.sftp_list(id, String::new()), env.mgr.close(id));
+    closed.unwrap();
+    assert!(listed.is_err());
+    // The SFTP task is aborted at its budget, mid-copy: the temp file goes with it.
+    assert!(started.elapsed() < Duration::from_secs(2));
+    sink.wait_event(|e| matches!(e, SessionEvent::Closed { .. }), T)
+        .await;
+    assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
+}
