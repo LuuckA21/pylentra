@@ -15,7 +15,8 @@
   let { pane }: { pane: PaneState } = $props();
 
   let listing = $state<Listing>();
-  let selected = $state<string[]>([]);
+  // A Set: a listing can hold 100 000 entries, all selected at once.
+  let selected = $state.raw(new Set<string>());
   // The focused row, and where a Shift range starts.
   let cursor = $state(0);
   let anchor = 0;
@@ -33,7 +34,7 @@
       ),
   );
   // Hidden rows stay selected but out of reach while the switch is off.
-  const chosen = $derived(rows.filter((e) => selected.includes(e.name)));
+  const chosen = $derived(rows.filter((e) => selected.has(e.name)));
   // The row reached with Tab, kept in range when the list shrinks.
   const tabRow = $derived(Math.min(cursor, rows.length - 1));
 
@@ -51,7 +52,7 @@
       const l = await api.sftpList(sessionId, path);
       if (mine !== request) return;
       listing = l;
-      selected = [];
+      selected = new Set();
       cursor = anchor = 0;
       if (hadFocus) {
         await tick();
@@ -69,14 +70,14 @@
 
   function range(to: number) {
     const [lo, hi] = anchor < to ? [anchor, to] : [to, anchor];
-    selected = rows.slice(lo, hi + 1).map((e) => e.name);
+    selected = new Set(rows.slice(lo, hi + 1).map((e) => e.name));
   }
 
   function toggle(i: number) {
     const name = rows[i].name;
-    selected = selected.includes(name)
-      ? selected.filter((n) => n !== name)
-      : [...selected, name];
+    selected = selected.has(name)
+      ? new Set([...selected].filter((n) => n !== name))
+      : new Set([...selected, name]);
     anchor = i;
   }
 
@@ -84,7 +85,7 @@
     cursor = i;
     if (e.shiftKey) return range(i);
     if (e.ctrlKey || e.metaKey) return toggle(i);
-    selected = [rows[i].name];
+    selected = new Set([rows[i].name]);
     anchor = i;
   }
 
@@ -197,9 +198,9 @@
     {#each rows as e, i (e.name)}
       <li
         role="option"
-        aria-selected={chosen.includes(e)}
+        aria-selected={selected.has(e.name)}
         tabindex={i === tabRow ? 0 : -1}
-        class:selected={chosen.includes(e)}
+        class:selected={selected.has(e.name)}
         onfocus={() => (cursor = i)}
         onclick={(ev) => click(ev, i)}
         ondblclick={() => open(e)}

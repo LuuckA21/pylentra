@@ -145,3 +145,25 @@ test("a truncated listing says so", async () => {
   await shown();
   expect(screen.getByRole("status").textContent).toMatch(/first 100 000/);
 });
+
+test("a range over 5 000 rows stays quick and downloads them all", async () => {
+  const many = Array.from({ length: 5_000 }, (_, i) =>
+    file(`f${String(i).padStart(5, "0")}`),
+  );
+  vi.mocked(api.sftpList).mockResolvedValue({
+    dir: "/big",
+    entries: many,
+    truncated: false,
+  });
+  await shown();
+  const rows = screen.getAllByRole("option");
+  await fireEvent.click(rows[0]);
+  const start = performance.now();
+  await fireEvent.keyDown(rows[0], { key: "End", shiftKey: true });
+  await fireEvent.click(screen.getByRole("button", { name: "Download" }));
+  // A scan of the selection per row would take seconds here.
+  expect(performance.now() - start).toBeLessThan(2000);
+  const items = vi.mocked(api.sftpDownload).mock.calls[0][1];
+  expect(items).toHaveLength(5_000);
+  expect(items.at(-1)).toBe("/big/f04999");
+}, 15_000);
