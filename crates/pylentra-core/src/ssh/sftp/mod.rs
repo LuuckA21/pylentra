@@ -3,6 +3,7 @@
 pub(crate) mod names;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use russh::ChannelMsg;
 use russh::client::Handle;
@@ -10,6 +11,7 @@ use russh_sftp::client::RawSftpSession;
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::protocol::{File, StatusCode};
 use serde::Serialize;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use ts_rs::TS;
@@ -96,53 +98,38 @@ struct Server {
 }
 
 impl Sftp {
-    pub(crate) async fn open(
+    /// Returns at once: the task opens the channel itself, within `open_timeout`, and keeps
+    /// the commands sent meanwhile. A failed open answers them all and ends the task.
+    pub(crate) fn start(
         target: Arc<Handle<ClientHandler>>,
         id: SessionId,
         sink: Arc<dyn SessionSink>,
         broker: Arc<PromptBroker>,
-    ) -> Result<Sftp, CoreError> {
-        let mut channel = target.channel_open_session().await?;
-        channel.request_subsystem(true, "sftp").await?;
-        loop {
-            match channel.wait().await {
-                Some(ChannelMsg::Success) => break,
-                Some(ChannelMsg::Failure | ChannelMsg::Close) | None => {
-                    return Err(CoreError::SftpUnavailable);
-                }
-                Some(_) => {}
+        open_timeout: Duration,
+    ) -> Sftp {
+        let (tx, mut rx) = mpsc::channel(16);
+        let task = tokio::spawn(async move {
+            let opened = tokio::time::timeout(open_timeout, open(&target, id, sink, broker)).await;
+            match opened.unwrap_or(Err(CoreError::SftpUnavailable)) {
+                Ok(server) => serve(server, rx).await,
+                Err(e) => refuse(&mut rx, || again(&e)).await,
             }
-        }
-        let raw = RawSftpSession::new(channel.into_stream());
-        let version = raw.init().await?;
-        // A server that advertises limits but cannot state them gets the defaults.
-        let limits = if version
-            .extensions
-            .contains_key(russh_sftp::extensions::LIMITS)
-        {
-            raw.limits().await.ok()
-        } else {
-            None
-        };
-        // 0 means "no limit" in the extension.
-        let nonzero = |n: u64| (n > 0).then_some(n);
-        let server = Server {
-            posix_rename: version.extensions.contains_key(POSIX_RENAME),
-            max_read: limits.as_ref().and_then(|l| nonzero(l.max_read_len)),
-            max_write: limits.as_ref().and_then(|l| nonzero(l.max_write_len)),
-            raw,
-            id,
-            sink,
-            broker,
-        };
-        let (tx, rx) = mpsc::channel(16);
-        let task = tokio::spawn(serve(server, rx));
-        Ok(Sftp { tx, task })
+        });
+        Sftp { tx, task }
     }
 
-    /// A command the task can no longer take is dropped, so its caller sees no answer.
-    pub(crate) async fn send(&self, cmd: SftpCmd) {
-        let _ = self.tx.send(cmd).await;
+    /// The task is gone (failed open, lost channel): the next command needs a new one.
+    pub(crate) fn ended(&self) -> bool {
+        self.tx.is_closed()
+    }
+
+    /// Never waits, so the session task never stalls behind SFTP work.
+    pub(crate) fn send(&self, cmd: SftpCmd) {
+        match self.tx.try_send(cmd) {
+            Ok(()) => {}
+            Err(TrySendError::Full(cmd)) => cmd.fail(CoreError::Ssh("sftp busy".into())),
+            Err(TrySendError::Closed(cmd)) => cmd.fail(closed()),
+        }
     }
 
     pub(crate) async fn shutdown(self) {
@@ -151,39 +138,119 @@ impl Sftp {
     }
 }
 
+async fn open(
+    target: &Handle<ClientHandler>,
+    id: SessionId,
+    sink: Arc<dyn SessionSink>,
+    broker: Arc<PromptBroker>,
+) -> Result<Server, CoreError> {
+    let mut channel = target.channel_open_session().await?;
+    channel.request_subsystem(true, "sftp").await?;
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Success) => break,
+            Some(ChannelMsg::Failure | ChannelMsg::Close) | None => {
+                return Err(CoreError::SftpUnavailable);
+            }
+            Some(_) => {}
+        }
+    }
+    let raw = RawSftpSession::new(channel.into_stream());
+    let version = raw.init().await?;
+    // A server that advertises limits but cannot state them gets the defaults.
+    let limits = if version
+        .extensions
+        .contains_key(russh_sftp::extensions::LIMITS)
+    {
+        raw.limits().await.ok()
+    } else {
+        None
+    };
+    // 0 means "no limit" in the extension.
+    let nonzero = |n: u64| (n > 0).then_some(n);
+    Ok(Server {
+        posix_rename: version.extensions.contains_key(POSIX_RENAME),
+        max_read: limits.as_ref().and_then(|l| nonzero(l.max_read_len)),
+        max_write: limits.as_ref().and_then(|l| nonzero(l.max_write_len)),
+        raw,
+        id,
+        sink,
+        broker,
+    })
+}
+
+fn closed() -> CoreError {
+    CoreError::Ssh("sftp channel closed".into())
+}
+
+/// `CoreError` is not `Clone` (it can hold an `io::Error`), so each queued command gets a copy.
+fn again(e: &CoreError) -> CoreError {
+    match e {
+        CoreError::SftpUnavailable => CoreError::SftpUnavailable,
+        CoreError::Ssh(m) => CoreError::Ssh(m.clone()),
+        other => CoreError::Ssh(other.to_string()),
+    }
+}
+
+/// Closed first, so `ended` is true before any queued command is answered.
+async fn refuse(rx: &mut mpsc::Receiver<SftpCmd>, err: impl Fn() -> CoreError) {
+    rx.close();
+    while let Some(cmd) = rx.recv().await {
+        cmd.fail(err());
+    }
+}
+
 async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
     while let Some(cmd) = rx.recv().await {
         match cmd {
             SftpCmd::List { dir, reply } => {
-                let _ = reply.send(list(&server.raw, dir).await);
+                let r = list(&server.raw, &dir).await;
+                let lost = matches!(&r, Err(e) if lost(e));
+                let _ = reply.send(r.map_err(|e| named(e, &dir)));
+                if lost {
+                    return refuse(&mut rx, closed).await;
+                }
             }
         }
     }
 }
 
-/// `dir` empty is the home. Entries with names unsafe here are left out (spec §4.2).
-async fn list(raw: &RawSftpSession, dir: String) -> Result<Listing, CoreError> {
-    let asked = if dir.is_empty() { "." } else { dir.as_str() };
-    let named = |e: SftpError| match CoreError::from(e) {
-        CoreError::SftpPermissionDenied { .. } => {
-            CoreError::SftpPermissionDenied { path: asked.into() }
-        }
-        CoreError::NotFound { .. } => CoreError::NotFound { what: asked.into() },
+/// Not a status reply: the channel is gone or the server broke the protocol.
+fn lost(e: &SftpError) -> bool {
+    !matches!(e, SftpError::Status(_) | SftpError::Limited(_))
+}
+
+fn home(dir: &str) -> &str {
+    if dir.is_empty() { "." } else { dir }
+}
+
+/// The error with the path asked for, where the UI can show it.
+fn named(e: SftpError, dir: &str) -> CoreError {
+    match CoreError::from(e) {
+        CoreError::SftpPermissionDenied { .. } => CoreError::SftpPermissionDenied {
+            path: home(dir).into(),
+        },
+        CoreError::NotFound { .. } => CoreError::NotFound {
+            what: home(dir).into(),
+        },
         other => other,
-    };
+    }
+}
+
+/// `dir` empty is the home. Entries with names unsafe here are left out (spec §4.2).
+async fn list(raw: &RawSftpSession, dir: &str) -> Result<Listing, SftpError> {
     let dir = raw
-        .realpath(asked)
-        .await
-        .map_err(named)?
+        .realpath(home(dir))
+        .await?
         .files
         .into_iter()
         .next()
-        .ok_or_else(|| CoreError::Ssh("empty realpath reply".into()))?
+        .ok_or_else(|| SftpError::UnexpectedBehavior("empty realpath reply".into()))?
         .filename;
-    let handle = raw.opendir(dir.as_str()).await.map_err(named)?.handle;
+    let handle = raw.opendir(dir.as_str()).await?.handle;
     let read = read_dir(raw, &handle).await;
     let _ = raw.close(handle).await;
-    let (entries, truncated) = read.map_err(named)?;
+    let (entries, truncated) = read?;
     Ok(Listing {
         dir,
         entries,

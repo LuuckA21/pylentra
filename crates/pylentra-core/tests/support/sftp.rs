@@ -19,6 +19,8 @@ pub enum Hostile {
     Names(Vec<String>),
     /// Every directory contains a subdirectory `d`, which is another such directory.
     EndlessDirs,
+    /// The "sftp" subsystem is accepted, but no SFTP reply ever comes.
+    NeverAnswer,
 }
 
 pub struct SftpFs {
@@ -96,7 +98,7 @@ impl SftpFs {
             files.push(File::new(e.file_name().to_string_lossy(), attrs(&meta)));
         }
         match &self.hostile {
-            Hostile::None => {}
+            Hostile::None | Hostile::NeverAnswer => {}
             Hostile::Names(names) => {
                 let mut file = FileAttributes::default();
                 file.set_regular(true);

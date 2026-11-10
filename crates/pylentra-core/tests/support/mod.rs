@@ -155,6 +155,7 @@ impl Server for Acceptor {
             listeners: HashMap::new(),
             relayed: HashSet::new(),
             sessions: HashMap::new(),
+            silent: Vec::new(),
             otp_pending: false,
             failures: 0,
         }
@@ -177,6 +178,8 @@ struct ConnHandler {
     /// Session channels until their pty or subsystem request. Shell channels are dropped
     /// there: the echo shell answers through `data`, and an undrained channel would stall.
     sessions: HashMap<ChannelId, Channel<Msg>>,
+    /// `Hostile::NeverAnswer` channels, kept open and never read.
+    silent: Vec<Channel<Msg>>,
     /// The first keyboard-interactive round passed; the OTP round is next.
     otp_pending: bool,
     /// Rejected auth attempts so far, for `max_auth_attempts`.
@@ -341,6 +344,10 @@ impl Handler for ConnHandler {
             ("sftp", Some(root), Some(ch)) => {
                 self.relayed.insert(channel);
                 session.channel_success(channel)?;
+                if matches!(self.cfg.sftp_hostile, Hostile::NeverAnswer) {
+                    self.silent.push(ch);
+                    return Ok(());
+                }
                 let fs = sftp::SftpFs::new(root, self.cfg.sftp_hostile.clone());
                 // Spawns its own task, which ends with the channel.
                 russh_sftp::server::run(ch.into_stream(), fs).await;

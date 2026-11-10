@@ -171,6 +171,31 @@ async fn sftp_refused() {
     env.mgr.close(id).await.unwrap();
 }
 
+#[tokio::test]
+async fn stuck_sftp_never_blocks_terminal() {
+    let root = TempDir::new().unwrap();
+    let env = env(Some(root.path()), Hostile::NeverAnswer, true).await;
+    // Bounds the SFTP handshake as well as the connection.
+    env.mgr.set_timeouts(Duration::from_secs(2), None);
+    let sink = Arc::new(CollectSink::default());
+    let id = env.mgr.open(vec![conn(&env)], 80, 24, sink.clone());
+    let ready = SessionEvent::Status {
+        stage: Stage::Ready,
+    };
+    sink.wait_event(|e| *e == ready, T).await;
+
+    // `join!` polls in order, so the list command is queued before the write.
+    let typed = async {
+        env.mgr.write(id, b"hi".to_vec()).await.unwrap();
+        // Well before the SFTP handshake gives up.
+        sink.wait_data_len(2, Duration::from_millis(1000)).await;
+    };
+    let (listed, ()) = tokio::join!(env.mgr.sftp_list(id, String::new()), typed);
+    let err = listed.unwrap_err();
+    assert!(matches!(err, CoreError::SftpUnavailable), "{err:?}");
+    env.mgr.close(id).await.unwrap();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn list_marks_links() {

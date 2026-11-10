@@ -431,22 +431,19 @@ async fn write_loop(
                 continue;
             }
             Some(Command::Sftp(cmd)) => {
-                if sftp.is_none() {
-                    let opened =
-                        Sftp::open(handle.clone(), ctx.id, ctx.sink.clone(), ctx.broker.clone())
-                            .await;
-                    match opened {
-                        Ok(s) => *sftp = Some(s),
-                        // Not kept: the next command asks the server again.
-                        Err(e) => {
-                            cmd.fail(e);
-                            continue;
-                        }
-                    }
-                }
-                if let Some(s) = sftp {
-                    s.send(cmd).await;
-                }
+                // Not cached when ended: a failed open or a lost channel is retried here.
+                let s = match sftp.take() {
+                    Some(s) if !s.ended() => s,
+                    _ => Sftp::start(
+                        handle.clone(),
+                        ctx.id,
+                        ctx.sink.clone(),
+                        ctx.broker.clone(),
+                        ctx.opts.connect_timeout,
+                    ),
+                };
+                s.send(cmd);
+                *sftp = Some(s);
                 continue;
             }
             Some(Command::Close) | None => {
