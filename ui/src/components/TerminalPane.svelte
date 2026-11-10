@@ -176,14 +176,17 @@
 
   const onanswer = (a: PromptAnswer) => answer(pane.paneId, a);
 
-  // "<transfer id>/<file>" of the pending conflict: the core asks one question
-  // per session at a time. A skipped file sends no event of its own, so the
-  // prompt hides on the answer rather than on the next state.
+  // "<session id>:<transfer id>/<file>" of the pending conflict: the core asks
+  // one question per session at a time. A skipped file sends no event of its
+  // own, so the prompt hides on the answer rather than on the next state. The
+  // session id is there because transfer ids restart after a reconnect.
   let answered = $state<string>();
   const conflict = $derived(
     Object.entries(pane.transfers)
       .map(([id, x]) =>
-        x.state.type === "Conflict" ? `${id}/${x.state.name}` : "",
+        x.state.type === "Conflict"
+          ? `${pane.sessionId}:${id}/${x.state.name}`
+          : "",
       )
       .find((k) => k && k !== answered),
   );

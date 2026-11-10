@@ -712,3 +712,19 @@ test("a transfer conflict asks in the pane; the answer goes to the session and h
   await rerender(props(conflict("site/b.html")));
   expect(screen.getByRole("dialog").textContent).toContain("site/b.html");
 });
+
+test("after a reconnect the same transfer id and file ask again", async () => {
+  const conflict = (sessionId: string): PaneState => ({
+    ...readyPane,
+    sessionId,
+    transfers: {
+      1: { name: "site", state: { type: "Conflict", name: "site/index.html" } },
+    },
+  });
+  const { rerender } = render(TerminalPane, props(conflict("s1")));
+  await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  // Transfer ids start again at 1 in each session.
+  await rerender(props(conflict("s2")));
+  expect(screen.getByRole("dialog").textContent).toContain("site/index.html");
+});
