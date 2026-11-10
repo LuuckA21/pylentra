@@ -19,6 +19,8 @@ export const settings = $state<Settings>({
   auto_reconnect: false,
   confirm_close_active: true,
   check_updates: true,
+  sftp_show_hidden: false,
+  sftp_panel_width: 0.3,
 });
 
 // "system" | "light" | "dark": the CSS decides what "system" looks like.

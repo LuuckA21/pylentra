@@ -11,6 +11,7 @@ pub const MAX_JUMP_DEPTH: usize = 5;
 pub const MAX_NOTES_BYTES: usize = 4_096;
 const CONNECT_TIMEOUT_SECS: (u16, u16) = (5, 120);
 const KEEPALIVE_SECS: (u16, u16) = (5, 300);
+const SFTP_PANEL_WIDTH: (f32, f32) = (0.15, 0.6);
 
 fn default_port() -> u16 {
     22
@@ -245,6 +246,9 @@ pub struct Settings {
     pub auto_reconnect: bool,
     pub confirm_close_active: bool,
     pub check_updates: bool,
+    pub sftp_show_hidden: bool,
+    /// Fraction of the window width, within `SFTP_PANEL_WIDTH`.
+    pub sftp_panel_width: f32,
     #[serde(flatten, deserialize_with = "lenient_extra")]
     #[ts(skip)]
     pub extra: toml::Table,
@@ -269,6 +273,8 @@ impl Default for Settings {
             auto_reconnect: false,
             confirm_close_active: true,
             check_updates: true,
+            sftp_show_hidden: false,
+            sftp_panel_width: 0.3,
             extra: toml::Table::new(),
         }
     }
@@ -303,6 +309,13 @@ impl Settings {
                 lo.into(),
                 hi.into(),
             )?;
+        }
+        let (lo, hi) = SFTP_PANEL_WIDTH;
+        if !(lo..=hi).contains(&self.sftp_panel_width) {
+            return Err(CoreError::invalid(
+                "sftp_panel_width",
+                format!("must be between {lo} and {hi}"),
+            ));
         }
         if self
             .default_user
@@ -792,6 +805,37 @@ mod tests {
         };
         assert_eq!(field_of(&with_user("  ")).as_deref(), Some("default_user"));
         assert_eq!(field_of(&with_user("luca")), None);
+    }
+
+    #[test]
+    fn sftp_settings_defaults_and_range() {
+        let d = Settings::default();
+        assert!(!d.sftp_show_hidden);
+        assert_eq!(d.sftp_panel_width, 0.3);
+        let with = |sftp_panel_width| Settings {
+            sftp_panel_width,
+            ..Settings::default()
+        };
+        for bad in [0.1, 0.7, f32::NAN, f32::INFINITY] {
+            match with(bad).validate() {
+                Err(CoreError::InvalidInput { field, .. }) => assert_eq!(field, "sftp_panel_width"),
+                other => panic!("{bad}: {other:?}"),
+            }
+        }
+        for ok in [0.15, 0.6] {
+            assert!(with(ok).validate().is_ok(), "{ok}");
+        }
+        let s = Settings {
+            sftp_show_hidden: true,
+            sftp_panel_width: 0.45,
+            ..Settings::default()
+        };
+        let back: Settings = toml::from_str(&toml::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back, s);
+        // A 0.7.2 file has neither field.
+        let old: Settings = toml::from_str("font_size = 12").unwrap();
+        assert!(!old.sftp_show_hidden);
+        assert_eq!(old.sftp_panel_width, 0.3);
     }
 
     #[test]
