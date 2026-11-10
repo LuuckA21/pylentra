@@ -4,7 +4,11 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.2] - 2026-11-10
+
+Nothing saved changes format: going back to 0.7.1 loses nothing. A connection
+already saved with an empty forward destination still opens, but needs one
+before it can be saved again.
 
 ### Fixed
 

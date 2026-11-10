@@ -69,6 +69,9 @@ cover it.
 3. Stop each forward: the port is released immediately.
 4. Bind a local forward to a port already in use: the panel shows an error and
    the session stays open.
+5. In the connection form, clear a local forward's destination host and save:
+   the field shows "required" and nothing is saved. Same in the port
+   forwarding panel's "Add tunnel" form.
 
 ## Keychain
 
