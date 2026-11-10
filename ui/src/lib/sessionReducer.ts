@@ -18,7 +18,8 @@ export type PaneState = {
   /** Epoch ms of the first Ready; kept after the session closes. */
   readyAt?: number;
   forwards: Record<number, { rule: ForwardRule; state: ForwardState }>;
-  transfers: Record<number, TransferState>;
+  /** `name` comes with Queued only: the row keeps it for the later states. */
+  transfers: Record<number, { name: string; state: TransferState }>;
 };
 
 export const initialPane = (
@@ -67,7 +68,16 @@ export function reduce(s: PaneState, e: SessionEvent): PaneState {
     case "Transfer":
       return {
         ...s,
-        transfers: { ...s.transfers, [e.transfer_id]: e.state },
+        transfers: {
+          ...s.transfers,
+          [e.transfer_id]: {
+            name:
+              e.state.type === "Queued"
+                ? e.state.name
+                : (s.transfers[e.transfer_id]?.name ?? ""),
+            state: e.state,
+          },
+        },
       };
     case "Closed":
       return {
@@ -76,7 +86,10 @@ export function reduce(s: PaneState, e: SessionEvent): PaneState {
         closed: e.reason,
         prompt: undefined,
         transfers: Object.fromEntries(
-          Object.entries(s.transfers).map(([id, t]) => [id, settle(t)]),
+          Object.entries(s.transfers).map(([id, t]) => [
+            id,
+            { ...t, state: settle(t.state) },
+          ]),
         ),
       };
   }

@@ -33,6 +33,7 @@
   import { saveSettings, settings } from "../lib/stores/settings.svelte";
   import { toastError } from "../lib/stores/toasts.svelte";
   import ForwardPanel from "./ForwardPanel.svelte";
+  import ConflictPrompt from "./ConflictPrompt.svelte";
   import ErrorOverlay from "./ErrorOverlay.svelte";
   import FilePanel from "./FilePanel.svelte";
   import HostKeyDialog from "./HostKeyDialog.svelte";
@@ -175,6 +176,18 @@
 
   const onanswer = (a: PromptAnswer) => answer(pane.paneId, a);
 
+  // "<transfer id>/<file>" of the pending conflict: the core asks one question
+  // per session at a time. A skipped file sends no event of its own, so the
+  // prompt hides on the answer rather than on the next state.
+  let answered = $state<string>();
+  const conflict = $derived(
+    Object.entries(pane.transfers)
+      .map(([id, x]) =>
+        x.state.type === "Conflict" ? `${id}/${x.state.name}` : "",
+      )
+      .find((k) => k && k !== answered),
+  );
+
   onMount(() => {
     const tm = new Terminal(options());
     const fa = new FitAddon();
@@ -260,7 +273,7 @@
   // When an overlay opens or closes, only if the focus is free: a window
   // dialog or field keeps it.
   $effect(() => {
-    void [pane.prompt, pane.closed, waiting];
+    void [pane.prompt, pane.closed, waiting, conflict];
     if (untrack(() => active) && free()) focusInside();
   });
 
@@ -482,6 +495,19 @@
       />
     {/if}
   {/key}
+
+  {#if conflict}
+    {@const key = conflict}
+    {#key key}
+      <ConflictPrompt
+        name={key.slice(key.indexOf("/") + 1)}
+        onanswer={(a) => {
+          answered = key;
+          onanswer(a);
+        }}
+      />
+    {/key}
+  {/if}
 
   {#if confirming}
     {@const s = confirming}

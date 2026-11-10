@@ -16,7 +16,32 @@ vi.mock("./lib/api", () => ({
     settingsGet: vi.fn().mockResolvedValue({}),
     snippetsGet: vi.fn().mockResolvedValue([]),
     libraryImportPreview: vi.fn(),
+    sftpList: vi.fn().mockResolvedValue({
+      dir: "/srv",
+      entries: [],
+      truncated: false,
+    }),
+    sftpUploadDrop: vi.fn().mockResolvedValue(3),
   },
+}));
+// The window's drag and drop events, as the backend and the webview send them.
+const tauri = vi.hoisted(() => ({
+  listeners: {} as Record<string, (e: { payload: unknown }) => void>,
+  drag: undefined as ((e: { payload: unknown }) => void) | undefined,
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (name: string, cb: (e: { payload: unknown }) => void) => {
+    tauri.listeners[name] = cb;
+    return Promise.resolve(() => {});
+  },
+}));
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: (cb: (e: { payload: unknown }) => void) => {
+      tauri.drag = cb;
+      return Promise.resolve(() => {});
+    },
+  }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
   check: vi.fn().mockResolvedValue(null),
@@ -74,8 +99,10 @@ vi.mock("./components/TerminalPane.svelte", async () => {
 import { check } from "@tauri-apps/plugin-updater";
 import { warn } from "@tauri-apps/plugin-log";
 import App from "./App.svelte";
+import FilePanel from "./components/FilePanel.svelte";
 import { api } from "./lib/api";
 import { setLang } from "./lib/i18n";
+import { initialPane } from "./lib/sessionReducer";
 import {
   closePane,
   focusPane,
@@ -460,4 +487,38 @@ test("Shift+F10 opens the tab menu from the keyboard; Escape gives the focus bac
   await fireEvent.keyDown(menu, { key: "Escape" });
   expect(screen.queryByRole("menu")).toBeNull();
   expect(document.activeElement).toBe(tab);
+});
+
+test("files dropped on a file panel upload to its folder; elsewhere nothing happens", async () => {
+  render(App);
+  render(FilePanel, {
+    pane: { ...initialPane("t9", "c1"), sessionId: "s9", phase: "ready" },
+  });
+  await waitFor(() => expect(screen.getByText("/srv")).toBeTruthy());
+  const panel = document.querySelector<HTMLElement>("[data-sftp-pane='t9']")!;
+  // The backend sends physical pixels.
+  vi.stubGlobal("devicePixelRatio", 2);
+  const at = vi.fn((x: number, y: number) =>
+    x === 300 && y === 100 ? panel.querySelector(".list") : document.body,
+  );
+  document.elementFromPoint = at;
+
+  tauri.drag!({ payload: { type: "over", position: { x: 600, y: 200 } } });
+  await tick();
+  expect(panel.hasAttribute("data-drop")).toBe(true);
+  tauri.drag!({ payload: { type: "leave" } });
+  expect(panel.hasAttribute("data-drop")).toBe(false);
+
+  tauri.listeners["files-dropped"]({
+    payload: { drop_id: 7, names: ["a.txt"], x: 600, y: 200 },
+  });
+  await waitFor(() =>
+    expect(api.sftpUploadDrop).toHaveBeenCalledWith("s9", 7, "/srv"),
+  );
+  tauri.listeners["files-dropped"]({
+    payload: { drop_id: 8, names: ["b.txt"], x: 10, y: 10 },
+  });
+  await tick();
+  expect(api.sftpUploadDrop).toHaveBeenCalledTimes(1);
+  vi.unstubAllGlobals();
 });

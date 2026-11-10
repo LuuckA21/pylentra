@@ -6,6 +6,7 @@ vi.mock("../lib/api", () => ({
     sftpList: vi.fn(),
     sftpDownload: vi.fn(),
     sftpUploadPick: vi.fn(),
+    sftpUploadDrop: vi.fn(),
     settingsSave: vi.fn(),
   },
 }));
@@ -14,6 +15,7 @@ import { api } from "../lib/api";
 import type { Entry } from "../lib/bindings/Entry";
 import { initialPane, type PaneState } from "../lib/sessionReducer";
 import { settings } from "../lib/stores/settings.svelte";
+import { toasts } from "../lib/stores/toasts.svelte";
 import FilePanel from "./FilePanel.svelte";
 
 const pane: PaneState = {
@@ -167,3 +169,42 @@ test("a range over 5 000 rows stays quick and downloads them all", async () => {
   expect(items).toHaveLength(5_000);
   expect(items.at(-1)).toBe("/big/f04999");
 }, 15_000);
+
+test("an upload into the shown folder refreshes it when it ends", async () => {
+  const { rerender } = render(FilePanel, { pane });
+  await waitFor(() => expect(screen.getByText("/home/u")).toBeTruthy());
+  await fireEvent.click(screen.getByRole("button", { name: "Upload files" }));
+  const listed = () => vi.mocked(api.sftpList).mock.calls.length;
+  const before = listed();
+  const up = (state: PaneState["transfers"][number]["state"]) =>
+    rerender({ pane: { ...pane, transfers: { 1: { name: "a", state } } } });
+  await up({
+    type: "Running",
+    done_bytes: 1,
+    total_bytes: 2,
+    files_done: 0,
+    current: "a",
+  });
+  expect(listed()).toBe(before);
+  await up({ type: "Finished", files: 1, skipped: [] });
+  await waitFor(() => expect(listed()).toBe(before + 1));
+  expect(api.sftpList).toHaveBeenLastCalledWith("s1", "/home/u");
+  // Once only.
+  await up({ type: "Finished", files: 1, skipped: [] });
+  expect(listed()).toBe(before + 1);
+  expect(screen.getByText("1 file")).toBeTruthy();
+});
+
+test("a drop that is gone asks to drop the files again", async () => {
+  vi.mocked(api.sftpUploadDrop).mockRejectedValue({
+    code: "not_found",
+    params: { what: "drop" },
+  });
+  toasts.splice(0);
+  await shown();
+  document
+    .querySelector("[data-sftp-pane]")!
+    .dispatchEvent(new CustomEvent("sftp-drop", { detail: { dropId: 3 } }));
+  expect(api.sftpUploadDrop).toHaveBeenCalledWith("s1", 3, "/home/u");
+  await waitFor(() => expect(toasts[0]?.message).toMatch(/drop them again/));
+});

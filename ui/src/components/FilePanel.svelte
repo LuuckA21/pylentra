@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { api } from "../lib/api";
   import type { Entry } from "../lib/bindings/Entry";
   import type { Listing } from "../lib/bindings/Listing";
@@ -8,8 +8,9 @@
   import { byName } from "../lib/search";
   import type { PaneState } from "../lib/sessionReducer";
   import { saveSettings, settings } from "../lib/stores/settings.svelte";
-  import { toastError } from "../lib/stores/toasts.svelte";
+  import { isApiError, toast, toastError } from "../lib/stores/toasts.svelte";
   import Toggle from "./settings/Toggle.svelte";
+  import TransferList from "./TransferList.svelte";
 
   // Shown by TerminalPane only while the session is ready.
   let { pane }: { pane: PaneState } = $props();
@@ -21,6 +22,9 @@
   let cursor = $state(0);
   let anchor = 0;
   let list = $state<HTMLElement>();
+  let root: HTMLElement;
+  // Transfer id → the folder this panel uploads into, until the transfer ends.
+  let uploads = $state<Record<number, string>>({});
   // Only the latest listing request counts: a slow one must not land late.
   let request = 0;
 
@@ -63,7 +67,33 @@
     }
   }
 
-  onMount(() => void load(""));
+  // App finds the panel under a drop and hands it the drop's id.
+  onMount(() => {
+    void load("");
+    const ondrop = (e: Event) => {
+      const { dropId } = (e as CustomEvent<{ dropId: number }>).detail;
+      if (pane.sessionId && dir)
+        started(api.sftpUploadDrop(pane.sessionId, dropId, dir), dir, true);
+    };
+    root.addEventListener("sftp-drop", ondrop);
+    return () => root.removeEventListener("sftp-drop", ondrop);
+  });
+
+  // An upload into the shown folder that copied something refreshes it.
+  $effect(() => {
+    for (const [id, target] of Object.entries(uploads)) {
+      const s = pane.transfers[Number(id)]?.state;
+      if (
+        s?.type !== "Finished" &&
+        s?.type !== "Failed" &&
+        s?.type !== "Cancelled"
+      )
+        continue;
+      delete uploads[Number(id)];
+      if ((s.type === "Finished" || s.files > 0) && target === dir)
+        void untrack(() => load(dir));
+    }
+  });
 
   const rowAt = (i: number) =>
     list?.querySelectorAll<HTMLElement>("[role=option]")[i];
@@ -129,9 +159,22 @@
       api.sftpDownload(pane.sessionId, items).catch(failed);
   }
 
+  function started(call: Promise<number | null>, target: string, drop = false) {
+    call.then(
+      (id) => {
+        if (id !== null) uploads[id] = target;
+      },
+      // A drop is used once, even by a failed upload: never try it again.
+      (e) =>
+        drop && isApiError(e) && e.params.what === "drop"
+          ? toast(t("sftp.dropExpired"))
+          : toastError(e),
+    );
+  }
+
   function upload(folder: boolean) {
     if (pane.sessionId && dir)
-      api.sftpUploadPick(pane.sessionId, dir, folder).catch(failed);
+      started(api.sftpUploadPick(pane.sessionId, dir, folder), dir);
   }
 
   const UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -156,6 +199,7 @@
 
 <section
   class="files"
+  bind:this={root}
   data-sftp-pane={pane.paneId}
   aria-label={t("sftp.title")}
 >
@@ -231,6 +275,7 @@
       onclick={download}>{t("sftp.download")}</button
     >
   </div>
+  <TransferList {pane} />
 </section>
 
 <style>
@@ -243,6 +288,11 @@
     padding: var(--space-3);
     background: var(--surface-2);
     font-size: 12.5px;
+  }
+  /* Set by App while files are dragged over the panel. */
+  .files:global([data-drop]) {
+    outline: 2px dashed var(--accent);
+    outline-offset: -4px;
   }
   .bar,
   .actions {

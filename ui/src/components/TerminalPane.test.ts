@@ -75,6 +75,7 @@ import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
 import { initialPane, type PaneState } from "../lib/sessionReducer";
 import {
+  answer,
   connect,
   cycleTab,
   focusPane,
@@ -689,4 +690,25 @@ test("File opens the panel beside the terminal; its edge clamps and saves the wi
   expect(api.settingsSave).toHaveBeenCalledWith(
     expect.objectContaining({ sftp_panel_width: expect.closeTo(0.55) }),
   );
+});
+
+test("a transfer conflict asks in the pane; the answer goes to the session and hides it", async () => {
+  const conflict = (name: string): PaneState => ({
+    ...readyPane,
+    transfers: { 3: { name: "site", state: { type: "Conflict", name } } },
+  });
+  const { rerender } = render(TerminalPane, props(conflict("site/a.html")));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("site/a.html");
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Overwrite" }));
+  expect(answer).toHaveBeenCalledWith("t1", {
+    type: "Conflict",
+    choice: "Overwrite",
+    all: false,
+  });
+  // A skipped or overwritten file may send nothing before the next question.
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await rerender(props(conflict("site/b.html")));
+  expect(screen.getByRole("dialog").textContent).toContain("site/b.html");
 });

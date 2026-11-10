@@ -233,6 +233,12 @@ export async function answer(paneId: string, a: PromptAnswer): Promise<void> {
   }
 }
 
+// A finished row leaves the transfer list.
+export function dismissTransfer(paneId: string, transferId: number): void {
+  const p = paneOf(paneId);
+  if (p) delete p.transfers[transferId];
+}
+
 // The node that takes a pane's place when it is removed.
 // Closes the pane's session if it is live; the focus goes to the sibling's
 // first pane, and the last pane takes its tab along.

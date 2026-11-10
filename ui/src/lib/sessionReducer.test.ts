@@ -133,7 +133,11 @@ test("a Transfer event sets that transfer's state", () => {
       current: "a.txt",
     },
   });
-  expect(running.transfers[4].type).toBe("Running");
+  // The name only comes with Queued; the row keeps it.
+  expect(running.transfers[4]).toMatchObject({
+    name: "a.txt",
+    state: { type: "Running" },
+  });
   expect(initialPane("t1", "c1").transfers).toEqual({});
 });
 
@@ -167,10 +171,11 @@ test("Closed cancels the transfers still in progress, keeps the final ones", () 
     },
     { type: "Closed", reason: { type: "UserClosed" } },
   );
-  expect(s.transfers).toEqual({
-    1: { type: "Cancelled", files: 0 },
-    2: { type: "Cancelled", files: 3 },
-    3: { type: "Cancelled", files: 0 },
-    4: { type: "Finished", files: 2, skipped: [] },
-  });
+  expect(Object.values(s.transfers).map((t) => t.state)).toEqual([
+    { type: "Cancelled", files: 0 },
+    { type: "Cancelled", files: 3 },
+    { type: "Cancelled", files: 0 },
+    { type: "Finished", files: 2, skipped: [] },
+  ]);
+  expect(s.transfers[1].name).toBe("q");
 });
