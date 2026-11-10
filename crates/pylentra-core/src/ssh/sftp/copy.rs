@@ -158,8 +158,12 @@ pub(crate) async fn upload_file(
     // shortcut: opening and reading the local file block the runtime thread for one 32 KiB
     // read at a time; upgrade to spawn_blocking if users report stalls on slow disks.
     let mut file = fs::File::open(local)?;
-    let (tmp, handle) = or_cancel(cancel, create_remote_temp(sftp, remote)).await?;
+    // Never cut short by a cancel: the temp would be created with no one to remove it.
+    let (tmp, handle) = create_remote_temp(sftp, remote).await?;
     let wrote = async {
+        if *cancel.borrow() {
+            return Err(CoreError::Cancelled.into());
+        }
         write_from(sftp, &handle, remote, &mut file, size, cancel, progress).await?;
         if let Some(t) = modified.and_then(|m| u32::try_from(m).ok()) {
             let attrs = FileAttributes {
@@ -182,7 +186,8 @@ pub(crate) async fn upload_file(
     };
     let close = or_cancel(cancel, close).await;
     let done = match wrote.and(close) {
-        Ok(_) => or_cancel(cancel, replace(sftp, &tmp, remote)).await,
+        // Not cut short either: between its remove and its rename, a cancel would lose both.
+        Ok(_) => replace(sftp, &tmp, remote).await,
         Err(e) => Err(e),
     };
     let Err(e) = done else { return Ok(()) };

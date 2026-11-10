@@ -1094,3 +1094,81 @@ async fn connection_drop_during_upload() {
     sink.wait_event(|e| matches!(e, SessionEvent::Closed { .. }), T)
         .await;
 }
+
+#[tokio::test]
+async fn upload_denied_folder_skipped() {
+    let local = TempDir::new().unwrap();
+    fs::create_dir_all(local.path().join("top/a")).unwrap();
+    fs::create_dir_all(local.path().join("top/b")).unwrap();
+    fs::write(local.path().join("top/a/x"), "x").unwrap();
+    fs::write(local.path().join("top/b/y"), "y").unwrap();
+    let root = TempDir::new().unwrap();
+    // Exists, so mkdir fails and the denied lstat decides.
+    fs::create_dir_all(root.path().join("top/a")).unwrap();
+    let env = env(Some(root.path()), Hostile::DenyLstat("a".into()), true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("top")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    let end = wait_end(&sink, t).await;
+    let TransferState::Finished { files: 1, skipped } = &end else {
+        panic!("{end:?}");
+    };
+    assert_eq!(skipped.len(), 1, "{end:?}");
+    assert_eq!(skipped[0].path, "top/a");
+    assert!(
+        matches!(&skipped[0].reason, SkipReason::Error { error } if error.code == "sftp.permission_denied"),
+        "{end:?}"
+    );
+    assert_eq!(tree(root.path()), ["top/", "top/a/", "top/b/", "top/b/y"]);
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn cancel_during_temp_create_leaves_nothing() {
+    let local = TempDir::new().unwrap();
+    fs::write(local.path().join("f"), "new").unwrap();
+    let root = TempDir::new().unwrap();
+    let env = env(Some(root.path()), Hostile::SlowCreate, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("f")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    // Created on the server, its handle not yet answered.
+    wait_temp(root.path()).await;
+    env.mgr.sftp_cancel(id, t).await.unwrap();
+    assert_eq!(
+        wait_end(&sink, t).await,
+        TransferState::Cancelled { files: 0 }
+    );
+    assert!(tree(root.path()).is_empty(), "{:?}", tree(root.path()));
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn cancel_during_replace_keeps_a_file() {
+    let local = TempDir::new().unwrap();
+    fs::write(local.path().join("f"), "new").unwrap();
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("f"), "old").unwrap();
+    let env = env(Some(root.path()), Hostile::SlowReplace, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = vec![local.path().join("f")];
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    wait_conflicts(&sink, t, 1).await;
+    answer(&env, id, ConflictChoice::Overwrite, false);
+    // The old file is removed, the rename not yet sent.
+    tokio::time::timeout(T, async {
+        while root.path().join("f").exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let _ = env.mgr.sftp_cancel(id, t).await;
+    wait_end(&sink, t).await;
+    assert_eq!(fs::read_to_string(root.path().join("f")).unwrap(), "new");
+    assert_eq!(tree(root.path()), ["f"]);
+    env.mgr.close(id).await.unwrap();
+}

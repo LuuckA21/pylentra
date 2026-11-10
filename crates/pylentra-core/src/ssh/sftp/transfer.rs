@@ -237,7 +237,14 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
                 });
                 skipped_dirs.push(rel);
             }
-            Err(e) => return end(server, id, e, 0, skipped),
+            Err(e) if e.lost || matches!(e.error, CoreError::Cancelled) => {
+                return end(server, id, e, 0, skipped);
+            }
+            // Spec §3 step 5: a folder that cannot be checked is skipped with its content.
+            Err(e) => {
+                skipped.push(error_skip(rel, &e.error));
+                skipped_dirs.push(rel);
+            }
         }
     }
     let index = side.index();

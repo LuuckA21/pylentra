@@ -39,7 +39,16 @@ pub enum Hostile {
     NoPosixRename,
     /// The whole SSH connection is closed once this many bytes of writes have arrived.
     DropAfterWrite(u64),
+    /// lstat of entries with this name answers "permission denied".
+    DenyLstat(String),
+    /// Opens for writing create the file, then wait `SLOW` before answering.
+    SlowCreate,
+    /// No posix-rename; removing a file that is not a temp deletes it, then waits `SLOW`.
+    SlowReplace,
 }
+
+/// Long enough for a test to act between a request's effect and its reply.
+const SLOW: Duration = Duration::from_millis(300);
 
 pub struct SftpFs {
     /// Canonical, so followed paths can be checked against it.
@@ -139,7 +148,10 @@ impl SftpFs {
             | Hostile::FailRead(_)
             | Hostile::StallReads
             | Hostile::NoPosixRename
-            | Hostile::DropAfterWrite(_) => {}
+            | Hostile::DropAfterWrite(_)
+            | Hostile::DenyLstat(_)
+            | Hostile::SlowCreate
+            | Hostile::SlowReplace => {}
             Hostile::Names(names) => {
                 let mut file = FileAttributes::default();
                 file.set_regular(true);
@@ -221,7 +233,7 @@ impl russh_sftp::server::Handler for SftpFs {
         _extensions: HashMap<String, String>,
     ) -> Result<Version, Self::Error> {
         let mut v = Version::new();
-        if !matches!(self.hostile, Hostile::NoPosixRename) {
+        if !matches!(self.hostile, Hostile::NoPosixRename | Hostile::SlowReplace) {
             v.extensions.insert(POSIX_RENAME.into(), "1".into());
         }
         Ok(v)
@@ -294,6 +306,9 @@ impl russh_sftp::server::Handler for SftpFs {
                 o.create(pflags.contains(OpenFlags::CREATE));
             }
             let f = o.open(self.lstat_path(&filename)?).map_err(status)?;
+            if matches!(self.hostile, Hostile::SlowCreate) {
+                tokio::time::sleep(SLOW).await;
+            }
             let handle = self.handle(f, 0, false);
             return Ok(Handle { id, handle });
         }
@@ -355,6 +370,9 @@ impl russh_sftp::server::Handler for SftpFs {
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
         fs::remove_file(self.lstat_path(&filename)?).map_err(status)?;
+        if matches!(self.hostile, Hostile::SlowReplace) && !filename.ends_with(".pylentra-tmp") {
+            tokio::time::sleep(SLOW).await;
+        }
         Ok(ok(id))
     }
 
@@ -390,7 +408,9 @@ impl russh_sftp::server::Handler for SftpFs {
         request: String,
         data: Vec<u8>,
     ) -> Result<Packet, Self::Error> {
-        if request != POSIX_RENAME || matches!(self.hostile, Hostile::NoPosixRename) {
+        if request != POSIX_RENAME
+            || matches!(self.hostile, Hostile::NoPosixRename | Hostile::SlowReplace)
+        {
             return Err(StatusCode::OpUnsupported);
         }
         let Some([old, new]) = strings(&data).and_then(|s| <[String; 2]>::try_from(s).ok()) else {
@@ -428,6 +448,9 @@ impl russh_sftp::server::Handler for SftpFs {
     }
 
     async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        if matches!(&self.hostile, Hostile::DenyLstat(n) if path.rsplit('/').next() == Some(n)) {
+            return Err(StatusCode::PermissionDenied);
+        }
         let meta = self.lstat_path(&path)?.symlink_metadata().map_err(status)?;
         Ok(Attrs {
             id,
