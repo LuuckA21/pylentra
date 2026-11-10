@@ -72,6 +72,17 @@ pub struct Listing {
     pub truncated: bool,
 }
 
+/// Files dropped on the window; the paths stay in the backend, keyed by `drop_id`.
+#[derive(Serialize, Clone, Debug, PartialEq, TS)]
+#[ts(export)]
+pub struct FilesDropped {
+    #[ts(type = "number")]
+    pub drop_id: u64,
+    pub names: Vec<String>,
+    pub x: f64,
+    pub y: f64,
+}
+
 pub(crate) enum SftpCmd {
     List {
         dir: String,

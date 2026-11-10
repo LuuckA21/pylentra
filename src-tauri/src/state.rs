@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use pylentra_core::error::{ApiError, CoreError};
@@ -18,6 +19,9 @@ pub struct AppState {
     pub warnings: Vec<ApiError>,
     /// The file the last import preview read; `library_import` reads it again.
     pub pending_import: Mutex<Option<PathBuf>>,
+    /// The last files dropped on the window; the UI only ever sees their id.
+    pub pending_drop: Mutex<Option<(u64, Vec<PathBuf>)>>,
+    pub next_drop: AtomicU64,
 }
 
 impl AppState {
@@ -74,6 +78,8 @@ impl AppState {
             known_hosts,
             warnings,
             pending_import: Mutex::new(None),
+            pending_drop: Mutex::new(None),
+            next_drop: AtomicU64::new(1),
         })
     }
 
@@ -92,6 +98,23 @@ impl AppState {
         self.pending_import
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Keeps `paths` (replacing any earlier drop) and returns its id.
+    pub fn store_drop(&self, paths: Vec<PathBuf>) -> u64 {
+        let id = self.next_drop.fetch_add(1, Ordering::Relaxed);
+        *self.pending_drop.lock().unwrap_or_else(|e| e.into_inner()) = Some((id, paths));
+        id
+    }
+
+    /// Single use: only the stored id matches, and it empties the slot.
+    pub fn take_drop(&self, id: u64) -> Option<Vec<PathBuf>> {
+        let mut slot = self.pending_drop.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|(stored, _)| *stored == id) {
+            slot.take().map(|(_, paths)| paths)
+        } else {
+            None
+        }
     }
 
     pub fn settings(&self) -> MutexGuard<'_, SettingsStore> {
