@@ -79,6 +79,18 @@ test("wrappers use snake_case command names and camelCase args", async () => {
     sessionId: "s",
     forwardId: 3,
   });
+  await api.sftpUploadPick("s", "/home/u", true);
+  expect(invoke).toHaveBeenCalledWith("sftp_upload_pick", {
+    sessionId: "s",
+    remoteDir: "/home/u",
+    folder: true,
+  });
+  await api.sftpUploadDrop("s", 7, "/tmp");
+  expect(invoke).toHaveBeenCalledWith("sftp_upload_drop", {
+    sessionId: "s",
+    dropId: 7,
+    remoteDir: "/tmp",
+  });
   await api.logDir();
   expect(invoke).toHaveBeenCalledWith("log_dir");
 });

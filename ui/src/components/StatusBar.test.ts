@@ -26,6 +26,7 @@ const pane = (readyAt: number): PaneState => ({
     1: { rule, state: { type: "Active", bound_port: 5432 } },
     2: { rule: { ...rule, bind_port: 9 }, state: { type: "Stopped" } },
   },
+  transfers: {},
 });
 
 test("shows the group pill, one pill per active forward and the connected time", async () => {
@@ -139,4 +140,20 @@ test("the split buttons split right and down, disabled without room", async () =
   await rerender({ canSplit: false });
   expect(right).toHaveProperty("disabled", true);
   expect(down).toHaveProperty("disabled", true);
+});
+
+test("the File button works only once the session is ready", async () => {
+  const onfiles = vi.fn();
+  const props = { connection, groups, onforwards: () => {}, onfiles };
+  const { rerender } = render(StatusBar, {
+    ...props,
+    pane: { ...pane(Date.now()), phase: "connecting" },
+  });
+  const files = () => screen.getByRole("button", { name: "Files" });
+  expect((files() as HTMLButtonElement).disabled).toBe(true);
+  await rerender({ ...props, pane: pane(Date.now()), filesOpen: true });
+  expect((files() as HTMLButtonElement).disabled).toBe(false);
+  expect(files().getAttribute("aria-expanded")).toBe("true");
+  await fireEvent.click(files());
+  expect(onfiles).toHaveBeenCalledTimes(1);
 });

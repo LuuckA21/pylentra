@@ -7,4 +7,8 @@ export type Settings = { theme: Theme, font_family: string, font_size: number, l
 /**
  * 0 turns the keepalive off.
  */
-keepalive_secs: number, auto_reconnect: boolean, confirm_close_active: boolean, check_updates: boolean, };
+keepalive_secs: number, auto_reconnect: boolean, confirm_close_active: boolean, check_updates: boolean, sftp_show_hidden: boolean, 
+/**
+ * Fraction of the window width, within `SFTP_PANEL_WIDTH`.
+ */
+sftp_panel_width: number, };

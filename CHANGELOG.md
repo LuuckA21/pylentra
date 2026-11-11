@@ -4,6 +4,35 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-11-10
+
+Nothing saved changes format: going back to 0.7.x loses nothing. Settings gain
+two fields (whether hidden files are shown and the width of the file panel),
+which older versions ignore and keep.
+
+### Added
+
+- SFTP file panel: the "Files" button in a session's status bar opens a panel
+  on the right of that terminal (30% of its width; drag its edge to resize).
+  It starts in your home directory on the server and lets you browse, download
+  and upload files and whole folders. It works on every session, including
+  quick connect and sessions through jump hosts, and uses the same login as
+  the terminal.
+- Select several items with Ctrl/Shift + click, or with Space and
+  Shift+arrows. Downloads ask for the destination folder in the system dialog
+  each time. Uploads take files or folders from the system dialog or dragged
+  from your file manager onto the panel.
+- Transfers go into a queue per session, one at a time, with progress and a
+  Cancel button. When a file already exists, Pylentra asks per file to
+  overwrite, skip or cancel, with "Apply to all" for the rest of the transfer.
+- An interrupted or cancelled transfer never leaves a truncated file: data is
+  written to a temporary file and renamed when complete. The modification
+  date is kept; other permissions are the destination's defaults.
+- Symbolic links, special files and names that are not valid on this system
+  (for example on Windows) are skipped and listed with the reason.
+- A "Show hidden" toggle; it and the panel width are remembered between
+  runs.
+
 ## [0.7.2] - 2026-11-10
 
 Nothing saved changes format: going back to 0.7.1 loses nothing. A connection

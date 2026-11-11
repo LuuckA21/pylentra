@@ -14,6 +14,8 @@ secrets stored in the OS keychain and signed automatic updates.
 - Split tabs: up to 4 panes per tab, each with its own session
   (Ctrl+Shift+D / Ctrl+Shift+E to split, Alt+arrows to move between panes;
   merge open tabs from a tab's menu).
+- SFTP file panel on every session: browse the server, download and upload
+  files and folders by dialog or drag-and-drop, with a queue and progress.
 - Terminal themes (Dracula, Nord, Solarized), automatic reconnection and
   confirmation before closing live sessions.
 
@@ -53,6 +55,15 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
 - **`known_hosts`:** `@revoked` and `@cert-authority` markers and wildcard host
   patterns in `~/.ssh/known_hosts` are not honoured. Pylentra only reads that
   file and never writes to `~/.ssh`.
+- **SFTP.** No rename, delete, new folder or permission editing yet.
+  Symbolic links and special files are skipped. If the connection drops during
+  an upload, a `<name>.<n>.pylentra-tmp` file can remain on the server (never
+  a corrupted destination). Without the server's `posix-rename` extension, a
+  close or dropped connection right between removing the old file and
+  renaming the new one leaves the complete new file under its temp name. Very
+  large folders (tens of thousands of entries) list slowly. Files with very
+  long names (over about 240 bytes) are skipped with an error, since the
+  temp name would exceed the system's file name limit.
 - **macOS is not supported** in v1.
 
 ## Build from source

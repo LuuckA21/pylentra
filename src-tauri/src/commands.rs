@@ -14,13 +14,14 @@ use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings,
 use pylentra_core::secrets::SecretKind;
 use pylentra_core::snippets::Snippet;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
+use pylentra_core::ssh::sftp::Listing;
 use pylentra_core::ssh::{SessionId, SessionSink};
 use pylentra_core::ssh_config::{ScanResult, parse};
 use pylentra_core::store::{Library, atomic_write};
 use tauri::http::HeaderMap;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
-use tauri_plugin_dialog::{DialogExt, FilePath};
+use tauri::{AppHandle, Manager, State, WebviewWindow, Wry};
+use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, FilePath};
 use uuid::Uuid;
 
 use crate::sink::ChannelSink;
@@ -605,6 +606,112 @@ pub fn session_answer(
 #[tauri::command]
 pub async fn session_close(state: State<'_, AppState>, id: SessionId) -> Result<(), ApiError> {
     Ok(state.sessions.close(id).await?)
+}
+
+#[tauri::command]
+pub async fn sftp_list(
+    state: State<'_, AppState>,
+    session_id: SessionId,
+    dir: String,
+) -> Result<Listing, ApiError> {
+    Ok(state.sessions.sftp_list(session_id, dir).await?)
+}
+
+/// Runs a blocking dialog of `window` off the async runtime.
+async fn pick<T: Send + 'static>(
+    window: &WebviewWindow,
+    run: impl FnOnce(FileDialogBuilder<Wry>) -> T + Send + 'static,
+) -> Result<T, CoreError> {
+    let window = window.clone();
+    tauri::async_runtime::spawn_blocking(move || run(window.dialog().file().set_parent(&window)))
+        .await
+        .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))
+}
+
+// The destination folder is picked here, so no local path comes from the webview.
+#[tauri::command]
+pub async fn sftp_download(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    session_id: SessionId,
+    items: Vec<String>,
+) -> Result<Option<u32>, ApiError> {
+    let picked = pick(&window, |d| d.blocking_pick_folder()).await?;
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let dir = picked_path(picked)?;
+    Ok(Some(
+        state.sessions.sftp_download(session_id, items, dir).await?,
+    ))
+}
+
+#[tauri::command]
+pub async fn sftp_upload_pick(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    session_id: SessionId,
+    remote_dir: String,
+    folder: bool,
+) -> Result<Option<u32>, ApiError> {
+    let items = pick(&window, move |d| {
+        if folder {
+            d.blocking_pick_folder().map(|f| vec![f])
+        } else {
+            d.blocking_pick_files()
+        }
+    })
+    .await?;
+    let Some(items) = items else {
+        return Ok(None);
+    };
+    let items = items
+        .into_iter()
+        .map(picked_path)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(
+        state
+            .sessions
+            .sftp_upload(session_id, items, remote_dir)
+            .await?,
+    ))
+}
+
+#[tauri::command]
+pub async fn sftp_upload_drop(
+    state: State<'_, AppState>,
+    session_id: SessionId,
+    drop_id: u64,
+    remote_dir: String,
+) -> Result<u32, ApiError> {
+    do_sftp_upload_drop(&state, session_id, drop_id, remote_dir).await
+}
+
+/// The paths come from the drop stored by the window event, never from the UI.
+pub async fn do_sftp_upload_drop(
+    state: &AppState,
+    session_id: SessionId,
+    drop_id: u64,
+    remote_dir: String,
+) -> Result<u32, ApiError> {
+    let items = state
+        .take_drop(drop_id)
+        .ok_or_else(|| CoreError::NotFound {
+            what: "drop".into(),
+        })?;
+    Ok(state
+        .sessions
+        .sftp_upload(session_id, items, remote_dir)
+        .await?)
+}
+
+#[tauri::command]
+pub async fn sftp_cancel(
+    state: State<'_, AppState>,
+    session_id: SessionId,
+    transfer_id: u32,
+) -> Result<(), ApiError> {
+    Ok(state.sessions.sftp_cancel(session_id, transfer_id).await?)
 }
 
 #[tauri::command]
@@ -1574,5 +1681,34 @@ mod tests {
         let bad = InvokeBody::Json(serde_json::json!([256]));
         assert!(write_args(&headers, &bad).is_err());
         assert!(write_args(&HeaderMap::new(), &raw).is_err());
+    }
+
+    #[test]
+    fn drop_is_single_use() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let id = state.store_drop(vec![PathBuf::from("a")]);
+        assert_eq!(state.take_drop(id), Some(vec![PathBuf::from("a")]));
+        assert_eq!(state.take_drop(id), None);
+    }
+
+    #[test]
+    fn drop_wrong_id_refused() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let id = state.store_drop(vec![PathBuf::from("a")]);
+        assert_eq!(state.take_drop(id + 1), None);
+        assert_eq!(state.take_drop(id), Some(vec![PathBuf::from("a")]));
+    }
+
+    #[test]
+    fn upload_drop_unknown_id() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let err = tauri::async_runtime::block_on(do_sftp_upload_drop(
+            &state,
+            Uuid::new_v4(),
+            7,
+            "/".into(),
+        ))
+        .unwrap_err();
+        assert_eq!(err.code, "not_found");
     }
 }

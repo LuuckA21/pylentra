@@ -8,6 +8,7 @@ import type { ImportCounts } from "./bindings/ImportCounts";
 import type { ImportPick } from "./bindings/ImportPick";
 import type { KnownHostEntry } from "./bindings/KnownHostEntry";
 import type { Library } from "./bindings/Library";
+import type { Listing } from "./bindings/Listing";
 import type { PromptAnswer } from "./bindings/PromptAnswer";
 import type { SessionEvent } from "./bindings/SessionEvent";
 import type { ScanResult } from "./bindings/ScanResult";
@@ -121,6 +122,25 @@ export const forwardStart = (sessionId: string, rule: ForwardRule) =>
   invoke<number>("forward_start", { sessionId, rule });
 export const forwardStop = (sessionId: string, forwardId: number) =>
   invoke<void>("forward_stop", { sessionId, forwardId });
+// An empty dir lists the remote home. Transfers answer with their id; the
+// pick and download dialogs open on the Rust side (`null`: cancelled).
+export const sftpList = (sessionId: string, dir: string) =>
+  invoke<Listing>("sftp_list", { sessionId, dir });
+export const sftpDownload = (sessionId: string, items: string[]) =>
+  invoke<number | null>("sftp_download", { sessionId, items });
+export const sftpUploadPick = (
+  sessionId: string,
+  remoteDir: string,
+  folder: boolean,
+) =>
+  invoke<number | null>("sftp_upload_pick", { sessionId, remoteDir, folder });
+export const sftpUploadDrop = (
+  sessionId: string,
+  dropId: number,
+  remoteDir: string,
+) => invoke<number>("sftp_upload_drop", { sessionId, dropId, remoteDir });
+export const sftpCancel = (sessionId: string, transferId: number) =>
+  invoke<void>("sftp_cancel", { sessionId, transferId });
 export const knownHostForget = (host: string, port: number) =>
   invoke<number>("known_host_forget", { host, port });
 export const knownHostsClear = () => invoke<void>("known_hosts_clear");
@@ -154,6 +174,11 @@ export const api = {
   sessionClose,
   forwardStart,
   forwardStop,
+  sftpList,
+  sftpDownload,
+  sftpUploadPick,
+  sftpUploadDrop,
+  sftpCancel,
   knownHostForget,
   knownHostsClear,
   knownHostsList,

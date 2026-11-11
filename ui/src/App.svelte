@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { warn } from "@tauri-apps/plugin-log";
   import QuickConnect from "./components/QuickConnect.svelte";
@@ -19,6 +21,7 @@
   import { colorOf } from "./lib/appearance";
   import { fromOtherModal, shortcutFor } from "./lib/shortcuts";
   import type { Connection } from "./lib/bindings/Connection";
+  import type { FilesDropped } from "./lib/bindings/FilesDropped";
   import type { ImportPick } from "./lib/bindings/ImportPick";
   import { t } from "./lib/i18n";
   import { exportLibrary, pickImport } from "./lib/libraryTransfer";
@@ -154,7 +157,37 @@
     }
   }
 
+  // The file panel under a point in physical pixels, as the backend and the
+  // webview give it.
+  const panelAt = (x: number, y: number) =>
+    document
+      .elementFromPoint(x / devicePixelRatio, y / devicePixelRatio)
+      ?.closest<HTMLElement>("[data-sftp-pane]") ?? null;
+
+  // Only a highlight: the paths never come from the webview's events.
+  let dropTarget: HTMLElement | null = null;
+  function highlight(el: HTMLElement | null) {
+    dropTarget?.removeAttribute("data-drop");
+    el?.setAttribute("data-drop", "");
+    dropTarget = el;
+  }
+
   onMount(() => {
+    // The panel under the drop uploads it; elsewhere the drop just expires.
+    const dropped = listen<FilesDropped>("files-dropped", ({ payload }) => {
+      highlight(null);
+      panelAt(payload.x, payload.y)?.dispatchEvent(
+        new CustomEvent("sftp-drop", { detail: { dropId: payload.drop_id } }),
+      );
+    });
+    const dragged = getCurrentWebview().onDragDropEvent(({ payload }) =>
+      highlight(
+        payload.type === "over"
+          ? panelAt(payload.position.x, payload.position.y)
+          : null,
+      ),
+    );
+
     // Updater failures (offline, endpoint down) are never shown at startup.
     Promise.all([
       loadSettings().then(() => {
@@ -183,7 +216,9 @@
             .catch(toastError),
       };
     });
-    return () => void unlisten.then((f) => f());
+    return () => {
+      for (const u of [unlisten, dropped, dragged]) void u.then((f) => f());
+    };
   });
 </script>
 

@@ -63,10 +63,19 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
   write: vi.fn(),
 }));
 
+vi.mock("../lib/api", () => ({
+  api: {
+    sftpList: vi.fn(async () => ({ dir: "/", entries: [], truncated: false })),
+    settingsSave: vi.fn(async () => {}),
+  },
+}));
+
+import { api } from "../lib/api";
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
 import { initialPane, type PaneState } from "../lib/sessionReducer";
 import {
+  answer,
   connect,
   cycleTab,
   focusPane,
@@ -666,4 +675,56 @@ test("the terminal takes the keyboard focus when its pane gets the focus", async
   expect(made.terms[0].focus).not.toHaveBeenCalled();
   await rerender({ ...p, focused: true });
   expect(made.terms[0].focus).toHaveBeenCalled();
+});
+
+test("File opens the panel beside the terminal; its edge clamps and saves the width", async () => {
+  settings.sftp_panel_width = 0.9;
+  render(TerminalPane, props({ ...readyPane, sessionId: "s1" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Files" }));
+  expect(screen.getByRole("region", { name: "Remote files" })).toBeTruthy();
+  const edge = screen.getByRole("separator", { name: "Resize the file panel" });
+  // 0.9 is out of range: the panel takes 60%, the terminal the other 40%.
+  expect(edge.getAttribute("aria-valuenow")).toBe("40");
+  await fireEvent.keyDown(edge, { key: "ArrowRight" });
+  expect(edge.getAttribute("aria-valuenow")).toBe("45");
+  expect(api.settingsSave).toHaveBeenCalledWith(
+    expect.objectContaining({ sftp_panel_width: expect.closeTo(0.55) }),
+  );
+});
+
+test("a transfer conflict asks in the pane; the answer goes to the session and hides it", async () => {
+  const conflict = (name: string): PaneState => ({
+    ...readyPane,
+    transfers: { 3: { name: "site", state: { type: "Conflict", name } } },
+  });
+  const { rerender } = render(TerminalPane, props(conflict("site/a.html")));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.textContent).toContain("site/a.html");
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Overwrite" }));
+  expect(answer).toHaveBeenCalledWith("t1", {
+    type: "Conflict",
+    choice: "Overwrite",
+    all: false,
+  });
+  // A skipped or overwritten file may send nothing before the next question.
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await rerender(props(conflict("site/b.html")));
+  expect(screen.getByRole("dialog").textContent).toContain("site/b.html");
+});
+
+test("after a reconnect the same transfer id and file ask again", async () => {
+  const conflict = (sessionId: string): PaneState => ({
+    ...readyPane,
+    sessionId,
+    transfers: {
+      1: { name: "site", state: { type: "Conflict", name: "site/index.html" } },
+    },
+  });
+  const { rerender } = render(TerminalPane, props(conflict("s1")));
+  await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  // Transfer ids start again at 1 in each session.
+  await rerender(props(conflict("s2")));
+  expect(screen.getByRole("dialog").textContent).toContain("site/index.html");
 });

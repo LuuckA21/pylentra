@@ -21,5 +21,8 @@ export const CORE_CODES = [
   "network.unreachable",
   "not_found",
   "secret.unavailable",
+  "sftp.limit",
+  "sftp.permission_denied",
+  "sftp.unavailable",
   "ssh.protocol",
 ] as const;

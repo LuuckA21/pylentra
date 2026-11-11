@@ -4,6 +4,7 @@ mod forward;
 mod handler;
 mod jump;
 mod session;
+pub mod sftp;
 mod socks;
 
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ use uuid::Uuid;
 
 use crate::error::CoreError;
 
-pub use session::{SessionManager, SessionOptions};
+pub use session::{CLOSE_TIMEOUT, SessionManager, SessionOptions};
 
 pub type SessionId = Uuid;
 

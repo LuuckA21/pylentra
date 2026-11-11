@@ -9,8 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pylentra_core::secrets::KeyringStore;
+use pylentra_core::ssh::sftp::FilesDropped;
 use tauri::webview::PageLoadEvent;
-use tauri::{Manager, RunEvent};
+use tauri::{DragDropEvent, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 use tauri_plugin_window_state::StateFlags;
 
@@ -68,6 +69,25 @@ fn main() {
                 });
             }
         })
+        .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, position }) = event
+                && let Some(state) = window.try_state::<AppState>()
+            {
+                let names = paths
+                    .iter()
+                    .filter_map(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .collect();
+                let drop_id = state.store_drop(paths.clone());
+                let payload = FilesDropped {
+                    drop_id,
+                    names,
+                    x: position.x,
+                    y: position.y,
+                };
+                let _ = window.emit("files-dropped", payload);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::library_get,
             commands::startup_warnings,
@@ -92,6 +112,11 @@ fn main() {
             commands::session_resize,
             commands::session_answer,
             commands::session_close,
+            commands::sftp_list,
+            commands::sftp_download,
+            commands::sftp_upload_pick,
+            commands::sftp_upload_drop,
+            commands::sftp_cancel,
             commands::forward_start,
             commands::forward_stop,
             commands::known_host_forget,
