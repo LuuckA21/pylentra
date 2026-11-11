@@ -24,13 +24,13 @@ which older versions ignore and keep.
   from your file manager onto the panel.
 - Transfers go into a queue per session, one at a time, with progress and a
   Cancel button. When a file already exists, Pylentra asks per file to
-  overwrite, skip or cancel, with "apply to all" for the rest of the transfer.
+  overwrite, skip or cancel, with "Apply to all" for the rest of the transfer.
 - An interrupted or cancelled transfer never leaves a truncated file: data is
   written to a temporary file and renamed when complete. The modification
   date is kept; other permissions are the destination's defaults.
 - Symbolic links, special files and names that are not valid on this system
   (for example on Windows) are skipped and listed with the reason.
-- A "Show hidden files" toggle; it and the panel width are remembered between
+- A "Show hidden" toggle; it and the panel width are remembered between
   runs.
 
 ## [0.7.2] - 2026-11-10

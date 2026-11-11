@@ -287,10 +287,10 @@ cover it.
    `a:b`, `CON`, or a trailing dot): those items are skipped and listed with
    the reason; the rest arrives.
 7. Transfer a folder where several files already exist: a question appears
-   per file; "Overwrite" with "apply to all" stops further questions, and so
-   does "Skip" with "apply to all"; "Cancel" stops the transfer.
+   per file; "Overwrite" with "Apply to all" stops further questions, and so
+   does "Skip" with "Apply to all"; "Cancel" stops the transfer.
 8. Symbolic links in a folder are skipped and listed.
-9. Resize the panel, turn on "Show hidden files" and restart the app: the
+9. Resize the panel, turn on "Show hidden" and restart the app: the
    width and the toggle are as left.
 
 ## Settings
