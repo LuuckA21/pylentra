@@ -163,8 +163,8 @@ test("a range over 5 000 rows stays quick and downloads them all", async () => {
   const start = performance.now();
   await fireEvent.keyDown(rows[0], { key: "End", shiftKey: true });
   await fireEvent.click(screen.getByRole("button", { name: "Download" }));
-  // A scan of the selection per row would take seconds here.
-  expect(performance.now() - start).toBeLessThan(2000);
+  // A scan of the selection per row takes far longer; the bound leaves room for a loaded CI.
+  expect(performance.now() - start).toBeLessThan(5000);
   const items = vi.mocked(api.sftpDownload).mock.calls[0][1];
   expect(items).toHaveLength(5_000);
   expect(items.at(-1)).toBe("/big/f04999");

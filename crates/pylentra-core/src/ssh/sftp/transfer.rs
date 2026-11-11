@@ -2,9 +2,9 @@
 //! Both directions share this flow; `Side` holds what differs: where the scan reads, how a
 //! folder is made, how a destination is checked, and which way a file is copied.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, ErrorKind};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -31,10 +31,10 @@ pub(super) fn failed(e: &CoreError, files: u32, skipped: Vec<Skipped>) -> Transf
     }
 }
 
-fn error_skip(path: &str, e: &CoreError) -> Skipped {
+fn error_skip(path: &str, e: CoreError) -> Skipped {
     Skipped {
         path: path.into(),
-        reason: SkipReason::Error { error: e.to_api() },
+        reason: scan::error(e),
     }
 }
 
@@ -43,8 +43,10 @@ fn local_path(dir: &Path, rel: &str) -> PathBuf {
     rel.split('/').fold(dir.to_path_buf(), |p, n| p.join(n))
 }
 
-fn under(rel: &str, dir: &str) -> bool {
-    rel.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))
+/// Whether a folder above `rel` was skipped; `rel` has at most 32 levels (the scan's limit).
+fn under_skipped(rel: &str, skipped: &HashSet<&str>) -> bool {
+    rel.match_indices('/')
+        .any(|(i, _)| skipped.contains(&rel[..i]))
 }
 
 /// The items of a transfer and where they go.
@@ -113,38 +115,27 @@ impl Side {
     /// Makes the folder `rel` unless it is already a real one; `Some` skips it with all it
     /// holds (spec §3 step 2, §4.4).
     async fn mkdir(&self, server: &Server, rel: &str) -> Result<Option<SkipReason>, StepError> {
-        let reason = match self {
-            Side::Down { local_dir, .. } => {
-                let path = local_path(local_dir, rel);
-                match fs::create_dir(&path) {
-                    Ok(()) => return Ok(None),
-                    Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                        match fs::symlink_metadata(&path) {
-                            Ok(m) if m.is_dir() => return Ok(None),
-                            Ok(m) if m.file_type().is_symlink() => SkipReason::Symlink,
-                            Ok(_) => SkipReason::Exists,
-                            Err(e) => error_skip(rel, &e.into()).reason,
-                        }
-                    }
-                    Err(e) => error_skip(rel, &e.into()).reason,
-                }
-            }
+        let failed = match self {
+            Side::Down { local_dir, .. } => match fs::create_dir(local_path(local_dir, rel)) {
+                Ok(()) => return Ok(None),
+                Err(e) => CoreError::Io(e),
+            },
             Side::Up { remote_dir, .. } => {
                 let path = remote_join(remote_dir, rel);
                 let made = server.raw.mkdir(path.as_str(), FileAttributes::default());
-                let e = match made.await {
+                match made.await {
                     Ok(_) => return Ok(None),
                     Err(e) if lost(&e) => return Err(step_error(e, &path)),
-                    Err(e) => e,
-                };
-                // SFTPv3 has no "exists" status, so a failed mkdir is looked at.
-                match self.existing(server, rel).await? {
-                    Some(EntryKind::Dir) => return Ok(None),
-                    Some(EntryKind::Link) => SkipReason::Symlink,
-                    Some(_) => SkipReason::Exists,
-                    None => error_skip(rel, &named(e, &path)).reason,
+                    Err(e) => named(e, &path),
                 }
             }
+        };
+        // A failed mkdir is looked at (SFTPv3 has no "exists" status).
+        let reason = match self.existing(server, rel).await? {
+            Some(EntryKind::Dir) => return Ok(None),
+            Some(EntryKind::Link) => SkipReason::Symlink,
+            Some(_) => SkipReason::Exists,
+            None => scan::error(failed),
         };
         Ok(Some(reason))
     }
@@ -223,9 +214,9 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
         Err(e) => return end(server, id, e, 0, vec![]),
     };
     let mut skipped = plan.skipped;
-    let mut skipped_dirs: Vec<&str> = vec![];
+    let mut skipped_dirs: HashSet<&str> = HashSet::new();
     for rel in &plan.dirs {
-        if skipped_dirs.iter().any(|d| under(rel, d)) {
+        if under_skipped(rel, &skipped_dirs) {
             continue;
         }
         match or_cancel(&cancel, side.mkdir(server, rel)).await {
@@ -235,20 +226,20 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
                     path: rel.clone(),
                     reason,
                 });
-                skipped_dirs.push(rel);
+                skipped_dirs.insert(rel);
             }
             Err(e) if e.lost || matches!(e.error, CoreError::Cancelled) => {
                 return end(server, id, e, 0, skipped);
             }
             // Spec §3 step 5: a folder that cannot be checked is skipped with its content.
             Err(e) => {
-                skipped.push(error_skip(rel, &e.error));
-                skipped_dirs.push(rel);
+                skipped.push(error_skip(rel, e.error));
+                skipped_dirs.insert(rel);
             }
         }
     }
     let index = side.index();
-    let (mut files, mut done) = (0, 0);
+    let (mut files, mut done) = (0, 0u64);
     let mut every: Option<ConflictChoice> = None;
     let mut last: Option<Instant> = None;
     let running = |done_bytes, files_done, current: &str| TransferState::Running {
@@ -258,8 +249,8 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
         current: current.into(),
     };
     for f in &plan.files {
-        if skipped_dirs.iter().any(|d| under(&f.rel, d)) {
-            done += f.size;
+        if under_skipped(&f.rel, &skipped_dirs) {
+            done = done.saturating_add(f.size);
             continue;
         }
         if cancelled() {
@@ -317,14 +308,14 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
             let mut progress = |n: u64| {
                 if last.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
                     last = Some(Instant::now());
-                    server.emit(id, running(done + n, files, &f.rel));
+                    server.emit(id, running(done.saturating_add(n), files, &f.rel));
                 }
             };
             side.copy(server, item, f, &cancel, &mut progress).await?;
             Ok(true)
         };
         let copied: Result<bool, StepError> = copied.await;
-        done += f.size;
+        done = done.saturating_add(f.size);
         match copied {
             Ok(true) => files += 1,
             Ok(false) => continue,
@@ -332,7 +323,7 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
                 return end(server, id, e, files, skipped);
             }
             // Spec §3 step 5: one bad file (denied, vanished, unreadable) never stops the rest.
-            Err(e) => skipped.push(error_skip(&f.rel, &e.error)),
+            Err(e) => skipped.push(error_skip(&f.rel, e.error)),
         }
         last = Some(Instant::now());
         server.emit(id, running(done, files, &f.rel));

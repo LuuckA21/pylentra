@@ -54,7 +54,7 @@ impl Plan {
     }
 
     fn file(&mut self, rel: String, size: u64, modified: Option<u64>) -> Result<(), CoreError> {
-        self.total_bytes += size;
+        self.total_bytes = self.total_bytes.saturating_add(size);
         self.files.push(PlannedFile {
             rel,
             size,
@@ -98,7 +98,14 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
             plan.skip(shown.into_owned(), SkipReason::InvalidName)?;
             continue;
         };
-        let meta = fs::symlink_metadata(item)?;
+        // Spec §3 step 5: one missing or unreadable item never stops the others.
+        let meta = match fs::symlink_metadata(item) {
+            Ok(m) => m,
+            Err(e) => {
+                plan.skip(name.into(), error(CoreError::Io(e)))?;
+                continue;
+            }
+        };
         let mut stack = vec![(item.clone(), name.to_string(), 1, meta)];
         while let Some((path, rel, depth, meta)) = stack.pop() {
             let ty = meta.file_type();
@@ -147,7 +154,7 @@ fn mtime(m: &Metadata) -> Option<u64> {
     Some(t.as_secs())
 }
 
-fn error(e: CoreError) -> SkipReason {
+pub(super) fn error(e: CoreError) -> SkipReason {
     SkipReason::Error { error: e.to_api() }
 }
 
@@ -167,11 +174,15 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
             plan.skip(name.into(), SkipReason::InvalidName)?;
             continue;
         }
-        let attrs = sftp
-            .lstat(item.as_str())
-            .await
-            .map_err(|e| step_error(e, item))?;
-        let root = entry(File::new(name, attrs.attrs));
+        let attrs = match sftp.lstat(item.as_str()).await {
+            Ok(a) => a.attrs,
+            Err(e) if lost(&e) => return Err(step_error(e, item)),
+            Err(e) => {
+                plan.skip(name.into(), error(named(e, item)))?;
+                continue;
+            }
+        };
+        let root = entry(File::new(name, attrs));
         let mut stack = vec![(item.clone(), name.to_string(), 1, root)];
         while let Some((path, rel, depth, e)) = stack.pop() {
             match e.kind {
@@ -182,7 +193,7 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
                     plan.dir(rel.clone(), depth)?;
                     let read = match sftp.opendir(path.as_str()).await {
                         Ok(h) => {
-                            let r = read_dir(sftp, &h.handle).await;
+                            let r = read_dir(sftp, &h.handle, true).await;
                             let _ = sftp.close(h.handle).await;
                             r
                         }
@@ -266,6 +277,30 @@ mod tests {
                 ("a/link", &SkipReason::Symlink)
             ]
         );
+    }
+
+    #[test]
+    fn local_missing_item_skips_only_it() {
+        let t = tempfile::tempdir().unwrap();
+        write(&t.path().join("here"), "h");
+        let plan = scan_local(&[t.path().join("gone"), t.path().join("here")]).unwrap();
+        assert_eq!(plan.files.len(), 1);
+        assert_eq!(plan.files[0].rel, "here");
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(plan.skipped[0].path, "gone");
+        assert!(
+            matches!(&plan.skipped[0].reason, SkipReason::Error { error } if error.code == "io"),
+            "{:?}",
+            plan.skipped
+        );
+    }
+
+    #[test]
+    fn huge_sizes_saturate() {
+        let mut plan = Plan::new(10);
+        plan.file("a".into(), u64::MAX - 1, None).unwrap();
+        plan.file("b".into(), u64::MAX - 1, None).unwrap();
+        assert_eq!(plan.total_bytes, u64::MAX);
     }
 
     #[test]

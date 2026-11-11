@@ -5,7 +5,7 @@ pub(crate) mod names;
 pub mod scan;
 mod transfer;
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::future::{self, Future};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -206,8 +206,8 @@ impl Sftp {
     }
 
     /// Stops the running transfer, which removes its temp file; queued ones are dropped.
-    /// Aborted once `SHUTDOWN_BUDGET` is spent: a cancel wakes every wait, so it never is
-    /// unless the local disk hangs.
+    /// Aborted once `SHUTDOWN_BUDGET` is spent: a cancel wakes every wait except a remote temp
+    /// create and a `replace`, never cut short, so only those or a hung local disk reach it.
     pub(crate) async fn shutdown(self) {
         let Sftp { tx, mut task } = self;
         drop(tx);
@@ -495,7 +495,7 @@ async fn list(raw: &RawSftpSession, dir: &str) -> Result<Listing, SftpError> {
         .ok_or_else(|| SftpError::UnexpectedBehavior("empty realpath reply".into()))?
         .filename;
     let handle = raw.opendir(dir.as_str()).await?.handle;
-    let read = read_dir(raw, &handle).await;
+    let read = read_dir(raw, &handle, false).await;
     let _ = raw.close(handle).await;
     let read = read?;
     Ok(Listing {
@@ -505,14 +505,19 @@ async fn list(raw: &RawSftpSession, dir: &str) -> Result<Listing, SftpError> {
     })
 }
 
-/// What one directory holds: usable entries, names unsafe here, and whether it was cut short.
+/// What one directory holds: usable entries, names unsafe here (when asked for), and whether
+/// it was cut short.
 struct Dir {
     entries: Vec<Entry>,
     invalid: Vec<String>,
     truncated: bool,
 }
 
-async fn read_dir(raw: &RawSftpSession, handle: &str) -> Result<Dir, SftpError> {
+async fn read_dir(
+    raw: &RawSftpSession,
+    handle: &str,
+    keep_invalid: bool,
+) -> Result<Dir, SftpError> {
     let mut dir = Dir {
         entries: Vec::new(),
         invalid: Vec::new(),
@@ -520,6 +525,7 @@ async fn read_dir(raw: &RawSftpSession, handle: &str) -> Result<Dir, SftpError> 
     };
     // Every name counts, valid or not, so a hostile server cannot keep this loop going.
     let mut seen = 0;
+    let mut names = HashSet::new();
     loop {
         let files = match raw.readdir(handle).await {
             Ok(name) => name.files,
@@ -536,12 +542,13 @@ async fn read_dir(raw: &RawSftpSession, handle: &str) -> Result<Dir, SftpError> 
                 return Ok(dir);
             }
             seen += 1;
-            if matches!(f.filename.as_str(), "." | "..") {
+            // A repeated name would break the UI's keyed list and plan one file twice.
+            if matches!(f.filename.as_str(), "." | "..") || !names.insert(f.filename.clone()) {
                 continue;
             }
             if valid_name(&f.filename, LOCAL_WINDOWS) {
                 dir.entries.push(entry(f));
-            } else {
+            } else if keep_invalid {
                 dir.invalid.push(f.filename);
             }
         }

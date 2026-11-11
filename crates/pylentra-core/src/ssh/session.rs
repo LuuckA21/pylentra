@@ -24,7 +24,7 @@ use crate::secrets::SecretStore;
 
 const TERM: &str = "xterm-256color";
 /// How long `close` waits for one session to wind down before aborting it.
-pub(super) const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub struct SessionOptions {

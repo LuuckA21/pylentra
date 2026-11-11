@@ -52,6 +52,8 @@ pub(crate) async fn download_file(
     cancel: &watch::Receiver<bool>,
     progress: &mut impl FnMut(u64),
 ) -> Result<(), StepError> {
+    // Local TOCTOU: the folder checked by the transfer could be swapped for a link before this
+    // create, but only by a local user who can already write there.
     let (tmp, mut file) = create_temp(local, TEMP_SUFFIX)?;
     let mut guard = Temp(Some(tmp.clone()));
     let open = async {

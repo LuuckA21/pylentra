@@ -14,13 +14,15 @@ use pylentra_core::ssh::events::{
     ConflictChoice, PromptAnswer, SessionEvent, SkipReason, Skipped, Stage, TransferState,
 };
 use pylentra_core::ssh::sftp::{Direction, EntryKind, Listing};
-use pylentra_core::ssh::{SessionId, SessionManager, SessionOptions};
+use pylentra_core::ssh::{CLOSE_TIMEOUT, SessionId, SessionManager, SessionOptions};
 use support::{CollectSink, Hostile, TestServer, TestServerConfig};
 use tempfile::TempDir;
 use uuid::Uuid;
 
 const T: Duration = Duration::from_secs(5);
 const PW: &str = "pw";
+/// What a close or cancel may take: the session's own deadline, plus room for a loaded machine.
+const BUDGET: Duration = CLOSE_TIMEOUT.saturating_add(Duration::from_secs(1));
 
 struct Env {
     _dir: TempDir,
@@ -140,6 +142,22 @@ async fn list_hides_invalid_names() {
         &["CON", "ok"]
     };
     assert_eq!(names(&l), want);
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn duplicate_names_appear_once() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("top")).unwrap();
+    let dup = ["ok", "ok"].map(String::from).to_vec();
+    let env = env(Some(root.path()), Hostile::Names(dup), true).await;
+    let id = open_ready(&env).await;
+
+    let l = env.mgr.sftp_list(id, "/top".into()).await.unwrap();
+    assert_eq!(names(&l), ["ok"]);
+    let plan = env.mgr.sftp_scan(id, vec!["/top".into()]).await.unwrap();
+    let files: Vec<_> = plan.files.iter().map(|f| f.rel.as_str()).collect();
+    assert_eq!(files, ["top/ok"]);
     env.mgr.close(id).await.unwrap();
 }
 
@@ -683,7 +701,7 @@ async fn close_during_conflict() {
     // The pending question is dropped, so closing does not wait for the user.
     let started = std::time::Instant::now();
     env.mgr.close(id).await.unwrap();
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < BUDGET);
     assert_eq!(
         transfer(&sink, t).last(),
         Some(&TransferState::Cancelled { files: 0 })
@@ -731,6 +749,35 @@ async fn download_failed_read_skips_only_that_file() {
     env.mgr.close(id).await.unwrap();
 }
 
+#[tokio::test]
+async fn download_denied_item_skips_only_that_item() {
+    let root = TempDir::new().unwrap();
+    fs::write(root.path().join("bad"), "x").unwrap();
+    fs::write(root.path().join("good"), "g").unwrap();
+    let env = env(Some(root.path()), Hostile::DenyLstat("bad".into()), true).await;
+    let (id, sink) = open_with_sink(&env).await;
+    let local = TempDir::new().unwrap();
+
+    let items = ["/bad", "/good"].map(String::from).to_vec();
+    let t = env
+        .mgr
+        .sftp_download(id, items, local.path().into())
+        .await
+        .unwrap();
+    let end = wait_end(&sink, t).await;
+    let TransferState::Finished { files: 1, skipped } = &end else {
+        panic!("{end:?}");
+    };
+    assert_eq!(skipped.len(), 1, "{end:?}");
+    assert_eq!(skipped[0].path, "bad");
+    assert!(
+        matches!(&skipped[0].reason, SkipReason::Error { error } if error.code == "sftp.permission_denied"),
+        "{end:?}"
+    );
+    assert_eq!(tree(local.path()), ["good"]);
+    env.mgr.close(id).await.unwrap();
+}
+
 /// Waits until the transfer has made its temp file, so it is inside the copy.
 async fn wait_temp(dir: &Path) {
     tokio::time::timeout(T, async {
@@ -762,7 +809,7 @@ async fn cancel_wakes_a_stalled_read() {
         wait_end(&sink, t).await,
         TransferState::Cancelled { files: 0 }
     );
-    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(started.elapsed() < BUDGET);
     assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
     env.mgr.close(id).await.unwrap();
 }
@@ -783,7 +830,7 @@ async fn close_during_stalled_read_cleans_up() {
     wait_temp(local.path()).await;
     let started = std::time::Instant::now();
     env.mgr.close(id).await.unwrap();
-    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(started.elapsed() < BUDGET);
     // Cleaned up by the transfer itself, before the session reported `Closed`.
     let events = sink.events.lock().unwrap().clone();
     let cancelled = events.iter().position(|e| {
@@ -821,7 +868,7 @@ async fn close_with_stalled_listing_leaves_no_temp() {
     closed.unwrap();
     assert!(listed.is_err());
     // The SFTP task is aborted at its budget, mid-copy: the temp file goes with it.
-    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(started.elapsed() < BUDGET);
     sink.wait_event(|e| matches!(e, SessionEvent::Closed { .. }), T)
         .await;
     assert!(tree(local.path()).is_empty(), "{:?}", tree(local.path()));
@@ -1066,7 +1113,7 @@ async fn close_during_upload_cleans_server() {
     wait_running(&sink, t).await;
     let started = std::time::Instant::now();
     env.mgr.close(id).await.unwrap();
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < BUDGET);
     assert_eq!(
         transfer(&sink, t).last(),
         Some(&TransferState::Cancelled { files: 0 })

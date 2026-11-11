@@ -20,8 +20,8 @@ use pylentra_core::ssh_config::{ScanResult, parse};
 use pylentra_core::store::{Library, atomic_write};
 use tauri::http::HeaderMap;
 use tauri::ipc::{Channel, InvokeBody, InvokeResponseBody, Request};
-use tauri::{AppHandle, Manager, State, WebviewWindow};
-use tauri_plugin_dialog::{DialogExt, FilePath};
+use tauri::{AppHandle, Manager, State, WebviewWindow, Wry};
+use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, FilePath};
 use uuid::Uuid;
 
 use crate::sink::ChannelSink;
@@ -617,6 +617,17 @@ pub async fn sftp_list(
     Ok(state.sessions.sftp_list(session_id, dir).await?)
 }
 
+/// Runs a blocking dialog of `window` off the async runtime.
+async fn pick<T: Send + 'static>(
+    window: &WebviewWindow,
+    run: impl FnOnce(FileDialogBuilder<Wry>) -> T + Send + 'static,
+) -> Result<T, CoreError> {
+    let window = window.clone();
+    tauri::async_runtime::spawn_blocking(move || run(window.dialog().file().set_parent(&window)))
+        .await
+        .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))
+}
+
 // The destination folder is picked here, so no local path comes from the webview.
 #[tauri::command]
 pub async fn sftp_download(
@@ -625,16 +636,7 @@ pub async fn sftp_download(
     session_id: SessionId,
     items: Vec<String>,
 ) -> Result<Option<u32>, ApiError> {
-    let dialog_window = window.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        dialog_window
-            .dialog()
-            .file()
-            .set_parent(&dialog_window)
-            .blocking_pick_folder()
-    })
-    .await
-    .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))?;
+    let picked = pick(&window, |d| d.blocking_pick_folder()).await?;
     let Some(picked) = picked else {
         return Ok(None);
     };
@@ -652,17 +654,14 @@ pub async fn sftp_upload_pick(
     remote_dir: String,
     folder: bool,
 ) -> Result<Option<u32>, ApiError> {
-    let dialog_window = window.clone();
-    let items = tauri::async_runtime::spawn_blocking(move || {
-        let dialog = dialog_window.dialog().file().set_parent(&dialog_window);
+    let items = pick(&window, move |d| {
         if folder {
-            dialog.blocking_pick_folder().map(|f| vec![f])
+            d.blocking_pick_folder().map(|f| vec![f])
         } else {
-            dialog.blocking_pick_files()
+            d.blocking_pick_files()
         }
     })
-    .await
-    .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))?;
+    .await?;
     let Some(items) = items else {
         return Ok(None);
     };
