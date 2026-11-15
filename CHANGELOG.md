@@ -8,6 +8,7 @@ All notable changes to Pylentra are documented here. The format follows
 
 ### Security
 
+- russh updated to 0.65.1 (RUSTSEC-2026-0495, an agent-server bug; Pylentra only uses the agent client, so it was not affected).
 - Channels a server opens on its own (session, X11, agent, direct TCP and Unix socket) are refused; only connections for your remote forwards are accepted, so a hostile server can no longer exhaust memory with them.
 - Editing a connection's host, port or user forgets its saved password and passphrase, so the saved password never reaches the new server; Pylentra asks for them again on the next connection.
 - SHA-1 RSA signatures (`ssh-rsa`) are no longer accepted for host keys or used for RSA user keys, as in OpenSSH 8.8 and later; `rsa-sha2-256` and `rsa-sha2-512` still work. Servers older than OpenSSH 7.2 that only offer `ssh-rsa` now fail with a clear error, for the host key and for RSA user keys.

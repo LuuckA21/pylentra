@@ -11,7 +11,9 @@ use std::time::Duration;
 use pylentra_core::ssh::SessionSink;
 use pylentra_core::ssh::events::SessionEvent;
 use russh::keys::{Algorithm, PrivateKey, PublicKey};
-use russh::server::{Auth, Config, Handler, Msg, Response, Server, Session};
+use russh::server::{
+    Auth, Config, Handler, Msg, PublicKeyOffer, Response, Server, Session, VerifiedPublicKey,
+};
 use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet, Preferred};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -318,17 +320,21 @@ impl Handler for ConnHandler {
     async fn auth_publickey_offered(
         &mut self,
         _user: &str,
-        key: &PublicKey,
+        offer: PublicKeyOffer<'_>,
     ) -> Result<Auth, Self::Error> {
         match &self.cfg.authorized_key {
-            Some(k) if k.key_data() == key.key_data() => Ok(Auth::Accept),
+            Some(k) if k.key_data() == offer.public_key.key_data() => Ok(Auth::Accept),
             _ => self.reject(Auth::reject()),
         }
     }
 
-    async fn auth_publickey(&mut self, _user: &str, key: &PublicKey) -> Result<Auth, Self::Error> {
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        key: VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
         match &self.cfg.authorized_key {
-            Some(k) if k.key_data() == key.key_data() => Ok(self.accept("publickey")),
+            Some(k) if k.key_data() == key.public_key.key_data() => Ok(self.accept("publickey")),
             _ => self.reject(Auth::reject()),
         }
     }
