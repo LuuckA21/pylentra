@@ -67,7 +67,11 @@ pub enum ImportNote {
 }
 
 /// Most bytes (of lines and of pattern-by-alias comparisons) `parse` spends on aliases.
-const MAX_WORK: usize = 5_000_000;
+const MAX_WORK: usize = 20_000_000;
+/// A pattern byte compared with an alias byte costs about this fraction of a line byte visited.
+const GLOB_WEIGHT: usize = 32;
+/// Longest host name `%h` may expand to.
+const MAX_EXPANDED_HOST: usize = 1024;
 const MAX_JUMP_NOTES: usize = 16;
 
 struct Block {
@@ -398,8 +402,9 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
         .take_while(|(a, _)| {
             let own: usize = (by_name.get(&a.to_ascii_lowercase()))
                 .map_or(0, |v| v.iter().map(lines_cost).sum());
-            spent = spent
-                .saturating_add(general_lines + general_pats.saturating_mul(a.len() + 1) + own);
+            spent = spent.saturating_add(
+                general_lines + general_pats.saturating_mul(a.len() + 1) / GLOB_WEIGHT + own,
+            );
             spent <= MAX_WORK
         })
         .count();
@@ -530,20 +535,26 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                 notes.push(ImportNote::ProxyCommand);
             }
 
+            // `%h` is the alias, as in `HostName %h.example.com`.
+            let host = match first.get("hostname") {
+                None => alias.into(),
+                Some(h) if h.len() + h.matches("%h").count() * alias.len() > MAX_EXPANDED_HOST => {
+                    error.get_or_insert(ImportNote::TooComplex);
+                    alias.into()
+                }
+                Some(h) => h.replace("%h", alias),
+            };
             let username = first.get("user").copied().unwrap_or_default().to_string();
             Candidate {
                 needs_user: username.is_empty(),
-                exists: saved.iter().any(|c| c.name.eq_ignore_ascii_case(alias)),
+                exists: saved_ids.contains_key(&alias.to_ascii_lowercase()),
                 error,
                 notes,
                 connection: Connection {
                     id,
                     name: alias.into(),
                     group_id: None,
-                    // `%h` is the alias, as in `HostName %h.example.com`.
-                    host: first
-                        .get("hostname")
-                        .map_or(alias.into(), |h| h.replace("%h", alias)),
+                    host,
                     port,
                     username,
                     auth,
