@@ -607,6 +607,39 @@ async fn local_forward_caps_concurrent_relays() {
 }
 
 #[tokio::test]
+async fn remote_forward_caps_server_opened_channels() {
+    let env = env().await;
+    let echo = spawn_tcp_echo().await;
+    let (id, sink) = open_ready(&env, vec![]).await;
+    let fid = env
+        .mgr
+        .forward_start(id, remote(0, echo.port()))
+        .await
+        .unwrap();
+    let port = bound_port(&sink, fid).await;
+
+    // Each connection to the server's port makes it open a forwarded-tcpip channel.
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        let mut tcp = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        tcp.write_all(b"ping").await.unwrap();
+        tcp.read_exact(&mut [0u8; 4]).await.unwrap();
+        held.push(tcp);
+    }
+    // The 129th channel is refused, so the server closes its connection.
+    let mut extra = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let n = tokio::time::timeout(T, extra.read(&mut [0u8; 1]))
+        .await
+        .unwrap();
+    assert!(matches!(n, Ok(0) | Err(_)));
+    // A slot freed by a closing relay is usable again.
+    held.pop();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    ping(port).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
 async fn remote_forward_never_replaces_an_occupied_route() {
     let env = env_with(ForwardQuirk::ReuseFirstPort, SessionOptions::default()).await;
     let echo = spawn_tcp_echo().await;
