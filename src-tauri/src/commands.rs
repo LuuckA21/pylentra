@@ -70,8 +70,10 @@ pub fn do_connection_save(
     // Sessions read the keychain regardless of the flag, so unticking "save"
     // or switching auth type must forget the secret. Only on that change:
     // a prompt's "save" writes the keychain without setting the flag, and a
-    // later rename must not lose it. Forgetting is best effort, like
-    // delete_connection: a missing keychain must not block the save.
+    // later rename must not lose it. A new host, port or user forgets both
+    // secrets whatever the flags say, so a saved password never reaches
+    // another server. Forgetting is best effort, like delete_connection: a
+    // missing keychain must not block the save.
     let keeps = |auth: &AuthMethod| match auth {
         AuthMethod::Password { save } => (*save, false),
         AuthMethod::Key {
@@ -84,6 +86,9 @@ pub fn do_connection_save(
         (
             keeps(&c.auth),
             std::mem::discriminant(&c.auth) != std::mem::discriminant(&connection.auth),
+            !c.host.eq_ignore_ascii_case(&connection.host)
+                || c.port != connection.port
+                || c.username != connection.username,
         )
     });
     for (kind, keep, value) in [
@@ -91,28 +96,27 @@ pub fn do_connection_save(
         (SecretKind::Passphrase, keep_passphrase, passphrase),
     ] {
         let forget = match old {
-            Some(((old_pw, old_pp), auth_changed)) => {
+            Some(((old_pw, old_pp), auth_changed, moved)) => {
                 let was_kept = if kind == SecretKind::Password {
                     old_pw
                 } else {
                     old_pp
                 };
-                was_kept || auth_changed
+                moved || (!keep && (was_kept || auth_changed))
             }
             None => false,
         };
-        if !keep {
-            if !forget {
-                continue;
+        match value.filter(|_| keep) {
+            Some(value) => state.secrets.set(connection.id, kind, &value.into())?,
+            None if forget => {
+                if let Err(e) = state.secrets.delete(connection.id, kind) {
+                    log::warn!(
+                        "could not delete {kind:?} of connection {}: {e}",
+                        connection.id
+                    );
+                }
             }
-            if let Err(e) = state.secrets.delete(connection.id, kind) {
-                log::warn!(
-                    "could not delete {kind:?} of connection {}: {e}",
-                    connection.id
-                );
-            }
-        } else if let Some(value) = value {
-            state.secrets.set(connection.id, kind, &value.into())?;
+            None => {}
         }
     }
     Ok(store.upsert_connection(connection)?)
@@ -989,6 +993,57 @@ mod tests {
         assert_eq!(
             secret(&state, c.id, SecretKind::Password).as_deref(),
             Some("pw")
+        );
+    }
+
+    #[test]
+    fn connection_save_forgets_secrets_when_the_destination_changes() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let pw = conn("a");
+        let key = Connection {
+            auth: AuthMethod::Key {
+                path: "/k".into(),
+                save_passphrase: true,
+            },
+            ..conn("k")
+        };
+        let moves: [fn(&mut Connection); 3] = [
+            |c| c.host = "elsewhere.example".into(),
+            |c| c.port = 2222,
+            |c| c.username = "root".into(),
+        ];
+        for moved in moves {
+            for c in [&pw, &key] {
+                do_connection_save(&state, c.clone(), Some("pw".into()), Some("pp".into()))
+                    .unwrap();
+                // A secret saved from a connect prompt, whatever the flags say.
+                for kind in [SecretKind::Password, SecretKind::Passphrase] {
+                    state
+                        .secrets
+                        .set(c.id, kind, &"s".to_string().into())
+                        .unwrap();
+                }
+                // Only the case of the host changes: still the same destination.
+                let same = Connection {
+                    host: c.host.to_uppercase(),
+                    ..c.clone()
+                };
+                do_connection_save(&state, same, None, None).unwrap();
+                assert!(secret(&state, c.id, SecretKind::Password).is_some());
+                let mut other = c.clone();
+                moved(&mut other);
+                do_connection_save(&state, other, None, None).unwrap();
+                assert_eq!(secret(&state, c.id, SecretKind::Password), None);
+                assert_eq!(secret(&state, c.id, SecretKind::Passphrase), None);
+            }
+        }
+        // A password typed in the same save is kept for the new destination.
+        let mut other = pw.clone();
+        other.host = "new.example".into();
+        do_connection_save(&state, other, Some("new".into()), None).unwrap();
+        assert_eq!(
+            secret(&state, pw.id, SecretKind::Password).as_deref(),
+            Some("new")
         );
     }
 

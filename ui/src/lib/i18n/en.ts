@@ -87,7 +87,8 @@ export const en = {
   "form.keyPath": "Key path",
   "form.savePassphrase": "Save passphrase in the keychain",
   "form.passphrase": "Passphrase",
-  "form.secretHint": "Leave empty to keep it unchanged.",
+  "form.secretHint":
+    "Leave empty to keep it unchanged. A new host, port or user forgets it.",
   "form.jumpVia": "Connect through",
   "form.addLocal": "Add local forward",
   "form.addRemote": "Add remote forward",

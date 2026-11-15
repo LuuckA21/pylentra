@@ -90,7 +90,8 @@ export const it: Record<MessageKey, string> = {
   "form.keyPath": "Percorso della chiave",
   "form.savePassphrase": "Salva la passphrase nel portachiavi",
   "form.passphrase": "Passphrase",
-  "form.secretHint": "Lascia vuoto per non cambiare.",
+  "form.secretHint":
+    "Lascia vuoto per non cambiarla. Con un nuovo host, porta o utente viene dimenticata.",
   "form.jumpVia": "Connetti tramite",
   "form.addLocal": "Aggiungi inoltro locale",
   "form.addRemote": "Aggiungi inoltro remoto",

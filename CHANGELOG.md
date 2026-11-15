@@ -9,6 +9,7 @@ All notable changes to Pylentra are documented here. The format follows
 ### Security
 
 - Channels a server opens on its own (session, X11, agent, direct TCP and Unix socket) are refused; only connections for your remote forwards are accepted, so a hostile server can no longer exhaust memory with them.
+- Editing a connection's host, port or user forgets its saved password and passphrase, so they are never sent to the new server; Pylentra asks for them again on the next connection.
 
 ## [0.8.0] - 2026-11-10
 
