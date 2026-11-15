@@ -21,6 +21,9 @@ use crate::secrets::{SecretKind, SecretStore};
 
 /// Prompted password attempts per connection, as OpenSSH's `NumberOfPasswordPrompts`.
 const MAX_PASSWORD_PROMPTS: u8 = 3;
+/// Questions in one keyboard-interactive request; real servers ask one or two. A hostile
+/// server could otherwise send tens of thousands, one input each in the prompt.
+const MAX_KBD_PROMPTS: usize = 32;
 
 pub(crate) struct AuthCtx<'a> {
     pub secrets: &'a dyn SecretStore,
@@ -294,6 +297,12 @@ async fn keyboard_interactive<H: Handler>(
                 prompts,
             } => (name, instructions, prompts),
         };
+        if prompts.len() > MAX_KBD_PROMPTS {
+            return Err(CoreError::Ssh(format!(
+                "the server asked {} keyboard-interactive questions at once (limit {MAX_KBD_PROMPTS})",
+                prompts.len()
+            )));
+        }
         let responses = match prompts.as_slice() {
             [] => vec![],
             [p] if !p.echo && !password_sent => {

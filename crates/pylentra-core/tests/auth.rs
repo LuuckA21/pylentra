@@ -383,6 +383,33 @@ async fn keyboard_interactive_custom_prompt_asks_user() {
 }
 
 #[tokio::test]
+async fn keyboard_interactive_prompt_count_is_capped() {
+    for (n, refused) in [(32, false), (33, true)] {
+        let server = TestServer::start(TestServerConfig {
+            allow_password_method: false,
+            kbd_interactive: Some(("Q: ".into(), "a".into())),
+            kbd_echo: true,
+            kbd_repeat: n,
+            ..Default::default()
+        })
+        .await;
+        let env = env();
+        let (_, sink) = env.open(&server, conn(&server, password_auth()));
+        if refused {
+            let error = closed_error(&sink).await;
+            assert_eq!(error.code, "ssh.protocol");
+            assert!(error.params["reason"].contains("keyboard-interactive"));
+            assert!(prompts(&sink).is_empty());
+        } else {
+            match nth_prompt(&sink, 1).await {
+                PromptKind::KeyboardInteractive { prompts, .. } => assert_eq!(prompts.len(), n),
+                other => panic!("unexpected prompt {other:?}"),
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn keyboard_interactive_password_then_otp_saves_password() {
     let server = TestServer::start(TestServerConfig {
         allow_password_method: false,

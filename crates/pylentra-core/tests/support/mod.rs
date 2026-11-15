@@ -27,6 +27,8 @@ pub struct TestServerConfig {
     pub kbd_interactive: Option<(String, String)>,
     /// Whether the keyboard-interactive prompt echoes the answer.
     pub kbd_echo: bool,
+    /// How many times the first keyboard-interactive round repeats its prompt (0 counts as 1).
+    pub kbd_repeat: usize,
     /// A second keyboard-interactive round (echoed "OTP: " prompt) and its expected answer.
     pub kbd_otp: Option<String>,
     pub authorized_key: Option<PublicKey>,
@@ -53,6 +55,7 @@ impl Default for TestServerConfig {
             password: None,
             kbd_interactive: None,
             kbd_echo: false,
+            kbd_repeat: 0,
             kbd_otp: None,
             authorized_key: None,
             allow_password_method: true,
@@ -264,7 +267,10 @@ impl Handler for ConnHandler {
             return Ok(Auth::Partial {
                 name: Cow::Borrowed("test"),
                 instructions: Cow::Borrowed(""),
-                prompts: Cow::Owned(vec![(Cow::Owned(prompt), self.cfg.kbd_echo)]),
+                prompts: Cow::Owned(vec![
+                    (Cow::Owned(prompt), self.cfg.kbd_echo);
+                    self.cfg.kbd_repeat.max(1)
+                ]),
             });
         };
         let got = r.next();

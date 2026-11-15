@@ -11,6 +11,7 @@ All notable changes to Pylentra are documented here. The format follows
 - Channels a server opens on its own (session, X11, agent, direct TCP and Unix socket) are refused; only connections for your remote forwards are accepted, so a hostile server can no longer exhaust memory with them.
 - Editing a connection's host, port or user forgets its saved password and passphrase, so they are never sent to the new server; Pylentra asks for them again on the next connection.
 - SHA-1 RSA signatures (`ssh-rsa`) are no longer accepted for host keys or used for RSA user keys, as in OpenSSH 8.8 and later; `rsa-sha2-256` and `rsa-sha2-512` still work. Servers older than OpenSSH 7.2 that only offer `ssh-rsa` now fail with a clear error.
+- A keyboard-interactive login that asks more than 32 questions at once is refused, so a hostile server can no longer stall the app with a huge prompt.
 
 ## [0.8.0] - 2026-11-10
 
