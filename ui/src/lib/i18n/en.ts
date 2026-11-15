@@ -144,6 +144,10 @@ export const en = {
   "session.connecting": "Connecting\u2026",
   "session.authenticating": "Authenticating\u2026",
   "session.ended": "Session ended. Press Enter to reconnect.",
+  "session.linkTitle": "Open link?",
+  "session.linkBody":
+    "The link goes to {url}, which opens in your browser. Its text may show another address.",
+  "session.linkOpen": "Open",
   "session.retry": "Retry",
   "reconnect.attempt": "Reconnecting\u2026 attempt {n} of {max}",
   "reconnect.cancel": "Cancel",

@@ -47,6 +47,8 @@
   }
   p {
     margin: 0;
+    /* A long address has no spaces to break at. */
+    overflow-wrap: anywhere;
   }
   .actions {
     display: flex;

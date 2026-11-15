@@ -63,6 +63,10 @@ vi.mock("../lib/stores/sessions.svelte", () => ({
   write: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn(async () => {}),
+}));
+
 vi.mock("../lib/api", () => ({
   api: {
     sftpList: vi.fn(async () => ({ dir: "/", entries: [], truncated: false })),
@@ -70,6 +74,7 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../lib/api";
 import type { SessionEvent } from "../lib/bindings/SessionEvent";
 import { RECONNECT_DELAYS } from "../lib/reconnect";
@@ -586,6 +591,32 @@ function setup2() {
   view = render(TerminalPane, props(readyPane));
   return made.terms[0];
 }
+
+test("an OSC 8 link asks with its real address and opens only http(s)", async () => {
+  vi.mocked(openUrl).mockClear();
+  const term = setup();
+  const click = (uri: string) => {
+    const h = term.options.linkHandler as {
+      activate: (e: MouseEvent, uri: string) => void;
+    };
+    h.activate(new MouseEvent("click"), uri);
+    flushSync();
+  };
+  for (const uri of ["javascript:alert(1)", "file:///etc/passwd", "nope"]) {
+    click(uri);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  }
+  // The dialog shows the parsed address: IDN host in punycode, spaces encoded.
+  click("https://bänk.example/a b");
+  const url = "https://xn--bnk-qla.example/a%20b";
+  expect(screen.getByRole("alertdialog").textContent).toContain(url);
+  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(openUrl).not.toHaveBeenCalled();
+  click("https://bänk.example/a b");
+  await fireEvent.click(screen.getByRole("button", { name: "Open" }));
+  expect(openUrl).toHaveBeenCalledExactlyOnceWith(url);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+});
 
 test("xterm leaves F11 to the window", () => {
   const term = setup();

@@ -147,6 +147,10 @@ export const it: Record<MessageKey, string> = {
   "session.connecting": "Connessione\u2026",
   "session.authenticating": "Autenticazione\u2026",
   "session.ended": "Sessione terminata. Premi Invio per riconnetterti.",
+  "session.linkTitle": "Aprire il link?",
+  "session.linkBody":
+    "Il link porta a {url}, che si aprirà nel browser. Il testo può mostrare un altro indirizzo.",
+  "session.linkOpen": "Apri",
   "session.retry": "Riprova",
   "reconnect.attempt": "Riconnessione\u2026 tentativo {n} di {max}",
   "reconnect.cancel": "Annulla",
