@@ -42,15 +42,17 @@ impl SessionSink for ChannelSink {
         }
     }
 
-    // Saturating: acknowledging more than was sent only lifts the webview's own backpressure.
+    // Saturating: a send that failed after its ack can leave `acked` past `sent`.
     fn unacked(&self) -> usize {
         self.sent
             .load(Relaxed)
             .saturating_sub(self.acked.load(Relaxed))
     }
 
+    // Clamped to what was sent: a huge total must not lift backpressure for later output.
     fn ack(&self, total: usize) {
-        self.acked.fetch_max(total, Relaxed);
+        self.acked
+            .fetch_max(total.min(self.sent.load(Relaxed)), Relaxed);
     }
 }
 
@@ -84,6 +86,16 @@ mod tests {
         assert_eq!(s.unacked(), 15);
         s.ack(35);
         assert_eq!(s.unacked(), 0);
+    }
+
+    #[test]
+    fn acks_beyond_what_was_sent_do_not_lift_backpressure() {
+        let s = sink(true);
+        s.data(vec![0; 10]);
+        s.ack(usize::MAX);
+        assert_eq!(s.unacked(), 0);
+        s.data(vec![0; 5]);
+        assert_eq!(s.unacked(), 5);
     }
 
     #[test]
