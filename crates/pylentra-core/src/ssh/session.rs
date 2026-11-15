@@ -159,13 +159,13 @@ impl SessionManager {
         self.send(id, Command::Resize(cols, rows)).await
     }
 
-    /// The consumer of the session's output processed `n` more bytes.
-    pub fn ack(&self, id: SessionId, n: usize) -> Result<(), CoreError> {
+    /// The consumer of the session's output has processed `total` bytes of it so far.
+    pub fn ack(&self, id: SessionId, total: usize) -> Result<(), CoreError> {
         lock(&self.sessions)
             .get(&id)
             .ok_or_else(|| not_found(id))?
             .sink
-            .ack(n);
+            .ack(total);
         Ok(())
     }
 

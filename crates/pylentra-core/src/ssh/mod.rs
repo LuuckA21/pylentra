@@ -33,7 +33,9 @@ pub trait SessionSink: Send + Sync + 'static {
     fn unacked(&self) -> usize {
         0
     }
-    fn ack(&self, _n: usize) {}
+    /// `total`: every byte the consumer has processed so far, so a lost or late
+    /// acknowledgement is made good by the next one.
+    fn ack(&self, _total: usize) {}
 }
 
 /// Prompts waiting for the UI, at most one per session.

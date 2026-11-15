@@ -315,6 +315,8 @@ export const it: Record<MessageKey, string> = {
   "error.auth.key_unreadable": "Impossibile leggere la chiave {path}: {reason}",
   "error.auth.rsa_sha1":
     "Il server accetta chiavi RSA solo con firme SHA-1 (ssh-rsa), non più sicure. Usa una chiave ed25519 o ECDSA, oppure aggiorna il server.",
+  "error.auth.too_many_prompts":
+    "Il server ha posto {count} domande in una volta; Pylentra ne accetta al massimo 32.",
   "error.cancelled": "Annullato.",
   "error.config.invalid": "Valore non valido per {field}: {reason}",
   "error.config.jump_cycle": "La catena di jump host contiene un ciclo.",
@@ -336,6 +338,8 @@ export const it: Record<MessageKey, string> = {
   "error.hostkey.mismatch":
     "La chiave host di {host}:{port} è cambiata. La connessione è stata rifiutata.",
   "error.hostkey.rejected": "Chiave host rifiutata.",
+  "error.hostkey.rsa_sha1":
+    "Il server offre solo una chiave host RSA con SHA-1 (ssh-rsa), non più sicura. Aggiorna il server.",
   "error.io": "Errore di I/O: {reason}",
   "error.network.dns": "Impossibile risolvere l'host {host}.",
   "error.network.refused": "Connessione rifiutata da {host}:{port}.",

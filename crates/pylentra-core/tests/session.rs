@@ -483,14 +483,16 @@ async fn burst_output_arrives_complete_and_ordered() {
 #[derive(Default)]
 struct SlowSink {
     inner: CollectSink,
-    unacked: AtomicUsize,
+    sent: AtomicUsize,
+    acked: AtomicUsize,
     render: AtomicBool,
 }
 
 impl SessionSink for SlowSink {
     fn data(&self, bytes: Vec<u8>) {
-        if !self.render.load(Relaxed) {
-            self.unacked.fetch_add(bytes.len(), Relaxed);
+        let total = self.sent.fetch_add(bytes.len(), Relaxed) + bytes.len();
+        if self.render.load(Relaxed) {
+            self.ack(total);
         }
         self.inner.data(bytes);
     }
@@ -500,11 +502,11 @@ impl SessionSink for SlowSink {
     }
 
     fn unacked(&self) -> usize {
-        self.unacked.load(Relaxed)
+        self.sent.load(Relaxed) - self.acked.load(Relaxed)
     }
 
-    fn ack(&self, n: usize) {
-        self.unacked.fetch_sub(n, Relaxed);
+    fn ack(&self, total: usize) {
+        self.acked.fetch_max(total, Relaxed);
     }
 }
 

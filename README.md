@@ -69,7 +69,8 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   long names (over about 240 bytes) are skipped with an error, since the
   temp name would exceed the system's file name limit.
 - **Very fast output** (for example `cat` of a huge file) is slowed to the
-  speed the terminal can draw it. Until it catches up, file transfers and port
+  speed the terminal can draw it, also while the window is minimized (the
+  system then slows the app down). Until it catches up, file transfers and port
   forwards of that session wait too.
 - **macOS is not supported** in v1.
 

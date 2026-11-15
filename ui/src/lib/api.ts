@@ -74,12 +74,15 @@ function openWithChannels(
   const events = new Channel<SessionEvent>();
   events.onmessage = onEvent;
   const id = invoke<string>(command, { ...args, data, events });
+  // Cumulative, so a lost acknowledgement is made good by the next one.
+  let rendered = 0;
   data.onmessage = (m) => {
     const bytes = toBytes(m);
     onData(bytes, () => {
-      id.then((id) =>
-        invoke<void>("session_ack", { id, n: bytes.length }),
-      ).catch(() => {});
+      const total = (rendered += bytes.length);
+      id.then((id) => invoke<void>("session_ack", { id, total })).catch(
+        () => {},
+      );
     });
   };
   return id;

@@ -311,6 +311,8 @@ export const en = {
   "error.auth.key_unreadable": "Cannot read key {path}: {reason}",
   "error.auth.rsa_sha1":
     "The server only accepts RSA keys with SHA-1 signatures (ssh-rsa), which are no longer safe. Use an ed25519 or ECDSA key, or update the server.",
+  "error.auth.too_many_prompts":
+    "The server asked {count} questions at once; Pylentra allows at most 32.",
   "error.cancelled": "Cancelled.",
   "error.config.invalid": "Invalid value for {field}: {reason}",
   "error.config.jump_cycle": "The jump host chain contains a cycle.",
@@ -331,6 +333,8 @@ export const en = {
   "error.hostkey.mismatch":
     "The host key of {host}:{port} has changed. The connection was refused.",
   "error.hostkey.rejected": "Host key rejected.",
+  "error.hostkey.rsa_sha1":
+    "The server only offers a SHA-1 RSA host key (ssh-rsa), which is no longer safe. Update the server.",
   "error.io": "I/O error: {reason}",
   "error.network.dns": "Cannot resolve host {host}.",
   "error.network.refused": "Connection refused by {host}:{port}.",

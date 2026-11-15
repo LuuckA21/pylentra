@@ -513,11 +513,7 @@ pub async fn session_open(
     events: Channel<SessionEvent>,
 ) -> Result<SessionId, ApiError> {
     let chain = state.store().jump_chain(connection_id)?;
-    let sink = Arc::new(ChannelSink {
-        data,
-        events,
-        unacked: Default::default(),
-    });
+    let sink = Arc::new(ChannelSink::new(data, events));
     Ok(state.sessions.open(chain, cols, rows, sink))
 }
 
@@ -536,11 +532,7 @@ pub async fn session_open_quick(
         connection,
         cols,
         rows,
-        Arc::new(ChannelSink {
-            data,
-            events,
-            unacked: Default::default(),
-        }),
+        Arc::new(ChannelSink::new(data, events)),
     )
 }
 
@@ -606,10 +598,15 @@ pub async fn session_resize(
     Ok(state.sessions.resize(id, cols, rows).await?)
 }
 
-/// The terminal rendered `n` more bytes of the session's output.
-#[tauri::command]
-pub fn session_ack(state: State<'_, AppState>, id: SessionId, n: usize) -> Result<(), ApiError> {
-    Ok(state.sessions.ack(id, n)?)
+/// The terminal has rendered `total` bytes of the session's output so far.
+// Off the main thread: it comes with every chunk of output.
+#[tauri::command(async)]
+pub fn session_ack(
+    state: State<'_, AppState>,
+    id: SessionId,
+    total: usize,
+) -> Result<(), ApiError> {
+    Ok(state.sessions.ack(id, total)?)
 }
 
 #[tauri::command]

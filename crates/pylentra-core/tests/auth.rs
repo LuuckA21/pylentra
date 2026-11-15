@@ -139,7 +139,7 @@ fn ed25519() -> PrivateKey {
 }
 
 fn rsa() -> PrivateKey {
-    // Generating a 2048-bit key takes seconds in a debug build.
+    // Generating an RSA key takes seconds in a debug build.
     PrivateKey::from_openssh(include_str!("fixtures/rsa_test_key")).unwrap()
 }
 
@@ -397,8 +397,8 @@ async fn keyboard_interactive_prompt_count_is_capped() {
         let (_, sink) = env.open(&server, conn(&server, password_auth()));
         if refused {
             let error = closed_error(&sink).await;
-            assert_eq!(error.code, "ssh.protocol");
-            assert!(error.params["reason"].contains("keyboard-interactive"));
+            assert_eq!(error.code, "auth.too_many_prompts");
+            assert_eq!(error.params["count"], "33");
             assert!(prompts(&sink).is_empty());
         } else {
             match nth_prompt(&sink, 1).await {
@@ -535,9 +535,7 @@ async fn sha1_rsa_host_key_is_refused() {
     let c = conn(&server, password_auth());
     env.store(&c, SecretKind::Password, PW);
     let (_, sink) = env.open(&server, c);
-    let error = closed_error(&sink).await;
-    assert_eq!(error.code, "ssh.protocol");
-    assert!(error.params["reason"].contains("ssh-rsa"), "{error:?}");
+    assert_eq!(closed_error(&sink).await.code, "hostkey.rsa_sha1");
 }
 
 #[tokio::test]
@@ -549,6 +547,12 @@ async fn rsa_key_needs_sha2_signatures() {
     let (_, sink) = env.open(&server, conn(&server, key_auth(&path)));
     assert_eq!(closed_error(&sink).await.code, "auth.rsa_sha1");
     assert!(accepted(&server).is_empty());
+
+    // Refused before asking for the passphrase.
+    let path = env.key_file(&key, Some(PASSPHRASE));
+    let (_, sink) = env.open(&server, conn(&server, key_auth(&path)));
+    assert_eq!(closed_error(&sink).await.code, "auth.rsa_sha1");
+    assert!(prompts(&sink).is_empty());
 }
 
 #[tokio::test]
@@ -577,6 +581,16 @@ async fn agent_skips_rsa_keys_the_server_only_takes_with_sha1() {
     let (_, sink) = env.open(&server, conn(&server, AuthMethod::Agent));
     assert_eq!(closed_error(&sink).await.code, "auth.rsa_sha1");
     assert!(accepted(&server).is_empty());
+
+    // Another identity tried and refused: a plain authentication failure.
+    let server = sha1_rsa_server(&ed25519()).await;
+    let (_agent, sock) = spawn_agent(&[rsa.clone(), ed25519()]).await;
+    let env = Env::new(SessionOptions {
+        agent_path: Some(sock),
+        ..Default::default()
+    });
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Agent));
+    assert_eq!(closed_error(&sink).await.code, "auth.all_failed");
 
     // The next identity is still tried.
     let ed = ed25519();

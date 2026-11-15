@@ -8,20 +8,31 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 pub struct ChannelSink {
     pub data: Channel<InvokeResponseBody>,
     pub events: Channel<SessionEvent>,
-    /// Bytes sent that the terminal has not rendered yet (`session_ack`).
-    pub unacked: AtomicUsize,
+    /// Output bytes sent, and the most the terminal has reported rendered (`session_ack`).
+    sent: AtomicUsize,
+    acked: AtomicUsize,
+}
+
+impl ChannelSink {
+    pub fn new(data: Channel<InvokeResponseBody>, events: Channel<SessionEvent>) -> Self {
+        Self {
+            data,
+            events,
+            sent: AtomicUsize::new(0),
+            acked: AtomicUsize::new(0),
+        }
+    }
 }
 
 // Send fails only once the webview is gone, when nobody is left to tell.
 impl SessionSink for ChannelSink {
     fn data(&self, bytes: Vec<u8>) {
         let n = bytes.len();
-        match self.data.send(InvokeResponseBody::Raw(bytes)) {
-            // Counted once sent: a gone webview acknowledges nothing.
-            Ok(()) => {
-                self.unacked.fetch_add(n, Relaxed);
-            }
-            Err(e) => log::debug!("dropping session data: {e}"),
+        // Counted before the send, so no acknowledgement can come before its bytes.
+        self.sent.fetch_add(n, Relaxed);
+        if let Err(e) = self.data.send(InvokeResponseBody::Raw(bytes)) {
+            self.sent.fetch_sub(n, Relaxed);
+            log::debug!("dropping session data: {e}");
         }
     }
 
@@ -31,14 +42,54 @@ impl SessionSink for ChannelSink {
         }
     }
 
+    // Saturating: acknowledging more than was sent only lifts the webview's own backpressure.
     fn unacked(&self) -> usize {
-        self.unacked.load(Relaxed)
+        self.sent
+            .load(Relaxed)
+            .saturating_sub(self.acked.load(Relaxed))
     }
 
-    // Saturating: acknowledging more than was sent only lifts the webview's own backpressure.
-    fn ack(&self, n: usize) {
-        let _ = self
-            .unacked
-            .fetch_update(Relaxed, Relaxed, |u| Some(u.saturating_sub(n)));
+    fn ack(&self, total: usize) {
+        self.acked.fetch_max(total, Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sink(send_ok: bool) -> ChannelSink {
+        let data = Channel::new(move |_| {
+            if send_ok {
+                Ok(())
+            } else {
+                Err(tauri::Error::WebviewNotFound)
+            }
+        });
+        ChannelSink::new(data, Channel::new(|_| Ok(())))
+    }
+
+    #[test]
+    fn late_or_lost_acks_do_not_stall() {
+        let s = sink(true);
+        for _ in 0..3 {
+            s.data(vec![0; 10]);
+        }
+        // The ack for 10 arrives after the one for 20: it changes nothing.
+        s.ack(20);
+        s.ack(10);
+        assert_eq!(s.unacked(), 10);
+        // The ack for 30 is lost; the next one covers it.
+        s.data(vec![0; 5]);
+        assert_eq!(s.unacked(), 15);
+        s.ack(35);
+        assert_eq!(s.unacked(), 0);
+    }
+
+    #[test]
+    fn unsent_bytes_are_not_counted() {
+        let s = sink(false);
+        s.data(vec![0; 10]);
+        assert_eq!(s.unacked(), 0);
     }
 }
