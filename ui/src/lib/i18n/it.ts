@@ -157,6 +157,8 @@ export const it: Record<MessageKey, string> = {
   "session.forget": "Dimentica host",
   "session.opensshHint":
     "La chiave precedente \u00e8 nel known_hosts di OpenSSH. Se il cambio \u00e8 previsto, rimuovila con:",
+  "session.typeChanged":
+    "Il server ha presentato una chiave di tipo diverso da quella nota per questo host, quindi i due fingerprint non possono coincidere. Di rado un server abbandona il vecchio tipo di chiave: verifica che il cambio sia previsto prima di dimenticare la chiave precedente.",
   "session.systemHint":
     "La chiave precedente \u00e8 nel file ssh_known_hosts di sistema, che Pylentra legge soltanto. Se il cambio \u00e8 previsto, chiedi all\u2019amministratore di aggiornarlo.",
   "hostkey.title": "Host key sconosciuta",

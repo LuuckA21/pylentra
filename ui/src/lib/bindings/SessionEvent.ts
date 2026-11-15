@@ -7,7 +7,11 @@ import type { PromptKind } from "./PromptKind";
 import type { Stage } from "./Stage";
 import type { TransferState } from "./TransferState";
 
-export type SessionEvent = { "type": "Status", stage: Stage, } | { "type": "HostKeyPrompt", host: string, port: number, algo: string, fingerprint: string, } | { "type": "HostKeyMismatch", host: string, port: number, expected: string, got: string, source: KeySource, } | { "type": "SecretPrompt", host: string, port: number, kind: PromptKind, 
+export type SessionEvent = { "type": "Status", stage: Stage, } | { "type": "HostKeyPrompt", host: string, port: number, algo: string, fingerprint: string, } | { "type": "HostKeyMismatch", host: string, port: number, expected: string, got: string, source: KeySource, 
+/**
+ * `expected` is a key of another type than `got`.
+ */
+type_changed: boolean, } | { "type": "SecretPrompt", host: string, port: number, kind: PromptKind, 
 /**
  * false: the answer is never saved, so the UI hides its "save" option.
  */

@@ -49,6 +49,7 @@ test("mismatch stored and phase closed on Closed", () => {
     expected: "SHA256:old",
     got: "SHA256:new",
     source: "Pylentra",
+    type_changed: false,
   };
   const error = { code: "hostkey.mismatch", params: { host: "h", port: "22" } };
   const s = run(mismatch, {
@@ -100,6 +101,13 @@ test("ssh-keygen hint uses [host]:port for non-22", () => {
   expect(keygenHint("example.com", 2222)).toBe(
     'ssh-keygen -R "[example.com]:2222"',
   );
+  expect(keygenHint("fe80::1%eth0", 22)).toBe("ssh-keygen -R fe80::1%eth0");
+});
+
+test("ssh-keygen hint is withheld for hosts a shell would read as syntax", () => {
+  for (const host of ["x;id", "$(id)", "a`id`", "a b", "a&b", 'a"b'])
+    for (const port of [22, 2222])
+      expect(keygenHint(host, port), host).toBeNull();
 });
 
 afterEach(() => vi.useRealTimers());

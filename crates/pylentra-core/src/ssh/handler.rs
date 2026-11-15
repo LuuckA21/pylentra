@@ -37,6 +37,7 @@ impl client::Handler for ClientHandler {
             HostKeyStatus::Mismatch {
                 source,
                 expected_fp,
+                type_changed,
             } => {
                 self.sink.event(SessionEvent::HostKeyMismatch {
                     host: self.host.clone(),
@@ -44,6 +45,7 @@ impl client::Handler for ClientHandler {
                     expected: expected_fp,
                     got: fingerprint(key),
                     source,
+                    type_changed,
                 });
                 Err(CoreError::HostKeyMismatch {
                     host: self.host.clone(),

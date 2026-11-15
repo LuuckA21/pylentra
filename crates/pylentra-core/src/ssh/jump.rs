@@ -19,7 +19,7 @@ use super::forward::RemoteRoutes;
 use super::handler::ClientHandler;
 use super::{PromptBroker, SessionId, SessionOptions, SessionSink};
 use crate::error::CoreError;
-use crate::known_hosts::KnownHosts;
+use crate::known_hosts::{KnownHosts, host_key_algorithms, same_key_type};
 use crate::model::{AuthMethod, Connection};
 use crate::secrets::SecretStore;
 
@@ -146,20 +146,8 @@ async fn connect_hop(
 /// `known`: algorithms of the keys recorded for the hop. They go first, so an honest server
 /// presents a key that can be checked; any other type it then picks counts as a changed key.
 fn hop_config(opts: &SessionOptions, known: &[Algorithm]) -> client::Config {
-    // No SHA-1 `ssh-rsa` host key signatures, as in OpenSSH 8.8+; rsa-sha2-* stay.
-    let mut key: Vec<Algorithm> = Preferred::DEFAULT
-        .key
-        .iter()
-        .filter(|a| **a != Algorithm::Rsa { hash: None })
-        .cloned()
-        .collect();
-    // A recorded RSA key is `Rsa { hash: None }` whatever signature hash it is used with.
-    let is_known = |a: &Algorithm| {
-        known
-            .iter()
-            .any(|k| k == a || matches!((k, a), (Algorithm::Rsa { .. }, Algorithm::Rsa { .. })))
-    };
-    key.sort_by_key(|a| !is_known(a));
+    let mut key = host_key_algorithms();
+    key.sort_by_key(|a| !known.iter().any(|k| same_key_type(k, a)));
     client::Config {
         keepalive_interval: opts.keepalive_interval,
         keepalive_max: opts.keepalive_max,

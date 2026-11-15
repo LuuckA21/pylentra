@@ -154,6 +154,8 @@ export const en = {
   "session.forget": "Forget host",
   "session.opensshHint":
     "The old key is in your OpenSSH known_hosts. If the change is expected, remove it with:",
+  "session.typeChanged":
+    "The server presented a key of a different type than the one known for this host, so the two fingerprints cannot match. A server rarely drops its old key type: make sure the change is expected before forgetting the old key.",
   "session.systemHint":
     "The old key is in the system-wide ssh_known_hosts, which Pylentra only reads. If the change is expected, ask the administrator to update it.",
   "hostkey.title": "Unknown host key",

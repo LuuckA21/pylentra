@@ -370,9 +370,16 @@ async fn key_of_an_unknown_type_is_a_mismatch_when_others_are_known() {
     let ev = sink
         .wait_event(|e| matches!(e, SessionEvent::HostKeyMismatch { .. }), T)
         .await;
-    let SessionEvent::HostKeyMismatch { expected, got, .. } = ev else {
+    let SessionEvent::HostKeyMismatch {
+        expected,
+        got,
+        type_changed,
+        ..
+    } = ev
+    else {
         unreachable!()
     };
+    assert!(type_changed);
     assert_eq!(expected, fingerprint(known.public_key()));
     assert_eq!(got, fingerprint(&server.host_key));
     assert_eq!(closed_code(&sink).await, "hostkey.mismatch");

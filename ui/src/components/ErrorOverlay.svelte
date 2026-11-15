@@ -48,9 +48,15 @@
         <dt>{t("session.got")}</dt>
         <dd><code>{mismatch.got}</code></dd>
       </dl>
+      {#if mismatch.type_changed}
+        <p>{t("session.typeChanged")}</p>
+      {/if}
       {#if mismatch.source === "OpenSsh"}
+        {@const hint = keygenHint(mismatch.host, mismatch.port)}
         <p>{t("session.opensshHint")}</p>
-        <pre><code>{keygenHint(mismatch.host, mismatch.port)}</code></pre>
+        {#if hint}
+          <pre><code>{hint}</code></pre>
+        {/if}
       {:else if mismatch.source === "System"}
         <p>{t("session.systemHint")}</p>
       {/if}

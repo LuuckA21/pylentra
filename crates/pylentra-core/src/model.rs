@@ -425,14 +425,17 @@ impl ForwardRule {
     }
 }
 
-/// Refuses what known_hosts reads as a separator, marker or pattern (and control characters),
-/// so a host name can never stand for more than itself there. IPv6 literals are stored
-/// without brackets, so `[`/`]` are never needed.
+/// Allows only what a host name or IP literal needs: ASCII letters and digits, `. - _ : %`
+/// (IPv6 literals are stored without brackets, `%` is a zone) and non-ASCII letters of IDN
+/// names. Anything else could be read as a separator or pattern by known_hosts, or as shell
+/// syntax in the copyable `ssh-keygen -R` hint.
 pub fn check_host_name(host: &str) -> Result<(), CoreError> {
-    if host
-        .chars()
-        .any(|c| c.is_whitespace() || c.is_control() || ",*?!#|@[]".contains(c))
-    {
+    let allowed = |c: char| {
+        c.is_ascii_alphanumeric()
+            || ".-_:%".contains(c)
+            || (!c.is_ascii() && !c.is_whitespace() && !c.is_control())
+    };
+    if !host.chars().all(allowed) {
         return Err(CoreError::invalid(
             "host",
             "contains a character not allowed in a host name",
@@ -602,6 +605,12 @@ mod tests {
             "h#",
             "|1|x",
             "u@h",
+            "x;id",
+            "$(id)",
+            "a`id`",
+            "a&b",
+            "a'b",
+            "a\u{a0}b",
         ] {
             c.host = bad.into();
             assert_eq!(invalid_field(&c), "host", "{bad:?}");
@@ -612,6 +621,7 @@ mod tests {
             "::1",
             "fe80::1%eth0",
             "my-host_1",
+            "bücher.example",
         ] {
             c.host = ok.into();
             assert!(c.validate().is_ok(), "{ok}");
