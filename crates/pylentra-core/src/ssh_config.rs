@@ -58,6 +58,8 @@ pub enum ImportNote {
     ProxyCommand,
     /// Too many wildcard blocks for the number of hosts: the hosts that fit were read.
     TooComplex,
+    /// `HostName` would grow past `MAX_EXPANDED_HOST` once `%h` is expanded.
+    HostNameTooLong,
     InvalidPort {
         value: String,
     },
@@ -539,7 +541,7 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
             let host = match first.get("hostname") {
                 None => alias.into(),
                 Some(h) if h.len() + h.matches("%h").count() * alias.len() > MAX_EXPANDED_HOST => {
-                    error.get_or_insert(ImportNote::TooComplex);
+                    error.get_or_insert(ImportNote::HostNameTooLong);
                     alias.into()
                 }
                 Some(h) => h.replace("%h", alias),

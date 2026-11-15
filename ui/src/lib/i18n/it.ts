@@ -402,6 +402,7 @@ export const it: Record<MessageKey, string> = {
   "import.note.ProxyCommand": "ProxyCommand non è supportato.",
   "import.note.TooComplex":
     "Il file è troppo complesso: sono stati letti solo i primi host.",
+  "import.note.HostNameTooLong": "HostName diventa troppo lungo espandendo %h.",
   "import.note.InvalidPort": "Porta non valida: {value}.",
   "import.note.InvalidForward": "Forward non valido: {value}.",
   "quick.label": "Connessione rapida",

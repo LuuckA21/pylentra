@@ -676,7 +676,7 @@ fn host_name_expansion_is_bounded() {
     );
     let r = parse(&text, &[]);
     assert_eq!(r.candidates.len(), 1);
-    assert_eq!(r.candidates[0].error, Some(ImportNote::TooComplex));
+    assert_eq!(r.candidates[0].error, Some(ImportNote::HostNameTooLong));
     assert!(r.candidates[0].connection.host.len() <= 100_000);
 }
 

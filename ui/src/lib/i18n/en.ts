@@ -393,6 +393,7 @@ export const en = {
   "import.note.ProxyCommand": "ProxyCommand is not supported.",
   "import.note.TooComplex":
     "The file is too complex: only the first hosts were read.",
+  "import.note.HostNameTooLong": "HostName is too long once %h is expanded.",
   "import.note.InvalidPort": "Invalid port: {value}.",
   "import.note.InvalidForward": "Invalid forward: {value}.",
   "quick.label": "Quick connect",
