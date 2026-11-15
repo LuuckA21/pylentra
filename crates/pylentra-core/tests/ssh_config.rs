@@ -613,3 +613,12 @@ fn many_host_blocks_parse_in_linear_time() {
     assert_eq!(r.candidates.len(), 40_000);
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
 }
+
+#[test]
+fn many_wildcard_blocks_are_bounded() {
+    let mut text: String = (0..1_200).map(|i| format!("Host *x{i}\n")).collect();
+    text.extend((0..3_000).map(|i| format!("Host h{i}\n")));
+    let r = parse(&text, &[]);
+    assert!(r.candidates.len() < 3_000);
+    assert!(r.skipped.iter().any(|n| n.note == ImportNote::TooComplex));
+}

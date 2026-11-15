@@ -302,6 +302,7 @@ export const en = {
   "library.via": "via {name}",
   "library.viaExisting": "via {name} (already present)",
   "library.jumpDropped": "will have no jump host ({name} not imported)",
+  "library.networkKey": "key on a network path, read when connecting: {path}",
   "library.forwards": "forwards, not started automatically: {list}",
   "library.summary":
     "Groups in the file: {new} new, {reused} already present. Snippets: {global} new global, {perConnection} tied to connections.",
@@ -386,6 +387,8 @@ export const en = {
   "import.note.UnknownJump": "Jump host {alias} not found: no jump host.",
   "import.note.RemoteBindIgnored": "The remote listen address is ignored.",
   "import.note.ProxyCommand": "ProxyCommand is not supported.",
+  "import.note.TooComplex":
+    "The file is too complex: only the first hosts were read.",
   "import.note.InvalidPort": "Invalid port: {value}.",
   "import.note.InvalidForward": "Invalid forward: {value}.",
   "quick.label": "Quick connect",

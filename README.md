@@ -48,6 +48,9 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   OpenSSH 8.8 and later. A server that only offers it (OpenSSH before 7.2)
   cannot be reached if its host key is RSA, and RSA user keys are refused
   there: use an ed25519 or ECDSA key, or update the server.
+- **Key files on network paths** (`\\host\share`, `//host/share`) are never
+  checked when saving or previewing an import, but they are read when you
+  connect, which on Windows contacts that host. The import preview flags them.
 - **Linux without a Secret Service** (GNOME Keyring, KWallet, ...): saved
   credentials cannot be stored, so they are asked at every connection. If you
   start a keyring after Pylentra, restart the app.

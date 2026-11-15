@@ -374,6 +374,49 @@ impl Group {
 }
 
 impl ForwardRule {
+    /// `L bind:port:dest:port`, `R port:dest:port` or `D bind:port`, as in ssh(1).
+    pub fn summary(&self) -> String {
+        // IPv6 literals are bracketed, as in ssh(1).
+        let b = |h: &str| {
+            if h.contains(':') {
+                format!("[{h}]")
+            } else {
+                h.to_string()
+            }
+        };
+        match self {
+            Self::Local {
+                bind_host,
+                bind_port,
+                dest_host,
+                dest_port,
+                ..
+            } => format!(
+                "L {}:{bind_port}:{}:{dest_port}",
+                b(bind_host),
+                b(dest_host)
+            ),
+            Self::Remote {
+                bind_port,
+                dest_host,
+                dest_port,
+                ..
+            } => format!("R {bind_port}:{}:{dest_port}", b(dest_host)),
+            Self::Dynamic {
+                bind_host,
+                bind_port,
+                ..
+            } => format!("D {}:{bind_port}", b(bind_host)),
+        }
+    }
+
+    pub fn set_auto_start(&mut self, on: bool) {
+        let (Self::Local { auto_start, .. }
+        | Self::Remote { auto_start, .. }
+        | Self::Dynamic { auto_start, .. }) = self;
+        *auto_start = on;
+    }
+
     /// Reports fields as `<prefix>.<field>`, e.g. `forwards[0].bind_port`.
     pub fn validate(&self, prefix: &str) -> Result<(), CoreError> {
         let check_host = |bind_host: &str| {
@@ -444,44 +487,17 @@ pub fn check_host_name(host: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// A network path (`\\\\host\\share`, `//host/share`) is never touched: on Windows that
+/// A network path (see `is_network_path`) is never touched: on Windows that
 /// alone contacts the host (SMB, NTLM). It counts as found.
 pub fn key_found_or_unchecked(path: &Path) -> bool {
-    let s = path.to_string_lossy();
-    s.starts_with(r"\\") || s.starts_with("//") || path.exists()
+    is_network_path(path) || path.exists()
 }
 
-impl ForwardRule {
-    /// `L bind:port:dest:port`, `R port:dest:port` or `D bind:port`, as in ssh(1).
-    pub fn summary(&self) -> String {
-        match self {
-            Self::Local {
-                bind_host,
-                bind_port,
-                dest_host,
-                dest_port,
-                ..
-            } => format!("L {bind_host}:{bind_port}:{dest_host}:{dest_port}"),
-            Self::Remote {
-                bind_port,
-                dest_host,
-                dest_port,
-                ..
-            } => format!("R {bind_port}:{dest_host}:{dest_port}"),
-            Self::Dynamic {
-                bind_host,
-                bind_port,
-                ..
-            } => format!("D {bind_host}:{bind_port}"),
-        }
-    }
-
-    pub fn set_auto_start(&mut self, on: bool) {
-        let (Self::Local { auto_start, .. }
-        | Self::Remote { auto_start, .. }
-        | Self::Dynamic { auto_start, .. }) = self;
-        *auto_start = on;
-    }
+/// Two leading separators in any mix (`\\h\s`, `//h/s`, `\/h/s`) or `\??\` (NT, `\??\UNC\h\s`):
+/// Windows treats all of them as network or device paths.
+pub fn is_network_path(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    matches!(s.as_bytes(), [b'\\' | b'/', b'\\' | b'/' | b'?', ..])
 }
 
 impl Connection {
@@ -966,13 +982,29 @@ mod tests {
     }
 
     #[test]
+    fn forward_summary_brackets_ipv6() {
+        let r = ForwardRule::Dynamic {
+            bind_host: "::1".into(),
+            bind_port: 1080,
+            auto_start: false,
+        };
+        assert_eq!(r.summary(), "D [::1]:1080");
+    }
+
+    #[test]
     fn key_check_skips_network_paths() {
         let d = tempfile::TempDir::new().unwrap();
         let key = d.path().join("id");
         std::fs::write(&key, "k").unwrap();
         assert!(key_found_or_unchecked(&key));
         assert!(!key_found_or_unchecked(&d.path().join("missing")));
-        for unc in [r"\\host\share\id", "//host/share/id"] {
+        for unc in [
+            r"\\host\share\id",
+            "//host/share/id",
+            r"\/host/share\id",
+            r"/\host\share\id",
+            r"\??\UNC\host\share\id",
+        ] {
             assert!(key_found_or_unchecked(Path::new(unc)));
         }
     }

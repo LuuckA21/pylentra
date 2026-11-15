@@ -45,14 +45,29 @@ pub enum ImportNote {
     Match,
     IdentityTokens,
     MultiHopJump,
-    ChainedJump { target: String },
-    JumpNotAlias { value: String },
-    UnknownJump { alias: String },
+    ChainedJump {
+        target: String,
+    },
+    JumpNotAlias {
+        value: String,
+    },
+    UnknownJump {
+        alias: String,
+    },
     RemoteBindIgnored,
     ProxyCommand,
-    InvalidPort { value: String },
-    InvalidForward { value: String },
+    /// Too many wildcard blocks for the number of hosts: the hosts that fit were read.
+    TooComplex,
+    InvalidPort {
+        value: String,
+    },
+    InvalidForward {
+        value: String,
+    },
 }
+
+/// Most (host, wildcard block) pairs `parse` tests; about a second at worst.
+const MAX_PATTERN_CHECKS: usize = 2_000_000;
 
 struct Block {
     /// Empty for a `Match` block, so it applies to no host.
@@ -351,7 +366,6 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
     let mut aliases: Vec<(&str, Uuid)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     // Blocks of literal names only are found by lookup; the others are tested one by one.
-    // shortcut: wildcard blocks are still tried per alias, so many of them stay quadratic.
     let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
     let mut general: Vec<usize> = Vec::new();
     for (bi, b) in blocks.iter().enumerate() {
@@ -367,6 +381,16 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                 aliases.push((p, Uuid::new_v4()));
             }
         }
+    }
+
+    // Wildcard blocks are tried against every alias, so their product is bounded.
+    let keep = MAX_PATTERN_CHECKS.checked_div(general.len());
+    if keep.is_some_and(|k| aliases.len() > k) {
+        aliases.truncate(keep.unwrap_or_default());
+        skipped.push(FileNote {
+            line: text.lines().count(),
+            note: ImportNote::TooComplex,
+        });
     }
 
     // Multi-hop `ProxyJump`s that resolve, and which candidates have no jump of their own.

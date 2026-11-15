@@ -306,6 +306,8 @@ export const it: Record<MessageKey, string> = {
   "library.via": "tramite {name}",
   "library.viaExisting": "tramite {name} (già presente)",
   "library.jumpDropped": "resterà senza jump host ({name} non importato)",
+  "library.networkKey":
+    "chiave su un percorso di rete, letta alla connessione: {path}",
   "library.forwards": "inoltri, non avviati automaticamente: {list}",
   "library.summary":
     "Gruppi nel file: {new} nuovi, {reused} già presenti. Snippet: {global} globali nuovi, {perConnection} legati alle connessioni.",
@@ -394,6 +396,8 @@ export const it: Record<MessageKey, string> = {
   "import.note.RemoteBindIgnored":
     "L'indirizzo di ascolto remoto viene ignorato.",
   "import.note.ProxyCommand": "ProxyCommand non è supportato.",
+  "import.note.TooComplex":
+    "Il file è troppo complesso: sono stati letti solo i primi host.",
   "import.note.InvalidPort": "Porta non valida: {value}.",
   "import.note.InvalidForward": "Forward non valido: {value}.",
   "quick.label": "Connessione rapida",

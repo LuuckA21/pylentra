@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::model::{AuthMethod, Connection, ForwardRule, Group, expand_home};
+use crate::model::{AuthMethod, Connection, ForwardRule, Group, expand_home, is_network_path};
 use crate::snippets::Snippet;
 use crate::store::Library;
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,8 @@ pub struct ImportRow {
     /// A saved connection already has this exact name.
     pub duplicate: bool,
     pub missing_key: Option<String>,
+    /// The key is on a network path: it is not checked here, but read when connecting.
+    pub network_key: Option<String>,
     pub jump: Option<JumpRef>,
     /// Port forwards the connection carries, as `L bind:port:dest:port`. They never start
     /// by themselves after an import.
@@ -180,6 +182,12 @@ pub fn preview(
                 _ => None,
             },
             forwards: c.forwards.iter().map(ForwardRule::summary).collect(),
+            network_key: match &c.auth {
+                AuthMethod::Key { path, .. } if is_network_path(&expand_home(path)) => {
+                    Some(path.display().to_string())
+                }
+                _ => None,
+            },
             // A jump host missing from the file is shown by its id, as dropped.
             jump: c.jump_via.map(|id| match in_file(id) {
                 Some(j) => JumpRef {
@@ -550,6 +558,7 @@ mod tests {
                 group: Some("Prod".into()),
                 duplicate: true,
                 missing_key: Some("~/k".into()),
+                network_key: None,
                 jump: None,
                 forwards: vec![],
             }
