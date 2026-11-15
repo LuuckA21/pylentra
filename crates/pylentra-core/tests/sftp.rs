@@ -333,6 +333,21 @@ async fn endless_dots_end_the_listing() {
     env.mgr.close(id).await.unwrap();
 }
 
+#[tokio::test]
+async fn slow_listing_ends_truncated() {
+    let root = TempDir::new().unwrap();
+    let env = env(Some(root.path()), Hostile::SlowNames, true).await;
+    let id = open_ready(&env).await;
+
+    // Test builds give a listing 2 s instead of 30 s.
+    let l = tokio::time::timeout(T, env.mgr.sftp_list(id, String::new()))
+        .await
+        .expect("listing within its budget")
+        .unwrap();
+    assert!(l.truncated && !l.entries.is_empty(), "{l:?}");
+    env.mgr.close(id).await.unwrap();
+}
+
 /// The transfer events of `transfer_id`, in order.
 fn transfer(sink: &CollectSink, transfer_id: u32) -> Vec<TransferState> {
     sink.events

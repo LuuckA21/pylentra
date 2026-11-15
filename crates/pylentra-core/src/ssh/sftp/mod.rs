@@ -33,6 +33,9 @@ use names::{LOCAL_WINDOWS, MAX_NAME, valid_name};
 
 /// At most this many names are read from one directory (spec §4.6).
 const MAX_LISTING: usize = 100_000;
+/// A listing returns what it has, truncated, after this long, so a server dripping names
+/// cannot hold the SFTP task (and with it cancel) for days. Short in test builds.
+const LIST_BUDGET: Duration = Duration::from_secs(if cfg!(feature = "test-util") { 2 } else { 30 });
 const POSIX_RENAME: &str = "posix-rename@openssh.com";
 const PROGRESS_EVERY: Duration = Duration::from_millis(200);
 
@@ -372,7 +375,8 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
                 let lost = match cmd {
                     SftpCmd::List { dir, reply } => {
                         // shortcut: a listing in flight delays cancel and close handling up to
-                        // the SFTP request timeout; upgrade by serving List concurrently.
+                        // LIST_BUDGET plus one request timeout; upgrade by serving List
+                        // concurrently.
                         let r = list(&server.raw, &dir).await;
                         let lost = matches!(&r, Err(e) if lost(e));
                         let _ = reply.send(r.map_err(|e| named(e, &dir)));
@@ -495,7 +499,8 @@ async fn list(raw: &RawSftpSession, dir: &str) -> Result<Listing, SftpError> {
         .ok_or_else(|| SftpError::UnexpectedBehavior("empty realpath reply".into()))?
         .filename;
     let handle = raw.opendir(dir.as_str()).await?.handle;
-    let read = read_dir(raw, &handle, false).await;
+    let deadline = tokio::time::Instant::now() + LIST_BUDGET;
+    let read = read_dir(raw, &handle, false, Some(deadline)).await;
     let _ = raw.close(handle).await;
     let read = read?;
     Ok(Listing {
@@ -517,6 +522,7 @@ async fn read_dir(
     raw: &RawSftpSession,
     handle: &str,
     keep_invalid: bool,
+    deadline: Option<tokio::time::Instant>,
 ) -> Result<Dir, SftpError> {
     let mut dir = Dir {
         entries: Vec::new(),
@@ -527,6 +533,10 @@ async fn read_dir(
     let mut seen = 0;
     let mut names = HashSet::new();
     loop {
+        if deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+            dir.truncated = true;
+            return Ok(dir);
+        }
         let files = match raw.readdir(handle).await {
             Ok(name) => name.files,
             Err(SftpError::Status(s)) if s.status_code == StatusCode::Eof => break,

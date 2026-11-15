@@ -145,7 +145,7 @@ test("a truncated listing says so", async () => {
     truncated: true,
   });
   await shown();
-  expect(screen.getByRole("status").textContent).toMatch(/first 100 000/);
+  expect(screen.getByRole("status").textContent).toMatch(/more than 100 000/);
 });
 
 test("a range over 5 000 rows stays quick and downloads them all", async () => {

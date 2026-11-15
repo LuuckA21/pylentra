@@ -21,6 +21,7 @@ All notable changes to Pylentra are documented here. The format follows
 - Forwards stored in `connections.toml` that the editor would refuse (a listening address that is not an IP address, port 0) are no longer auto-started; they show as failed in the forwards panel.
 - SFTP names longer than 1 KiB are left out of listings and skipped by transfers, and a folder transfer stops with a safety-limit error once its paths exceed 64 MiB, so a hostile server can no longer exhaust memory with huge names or deep trees.
 - On Windows, SFTP names that Windows treats as devices (`COM¹`–`COM³`, `LPT¹`–`LPT³`, `COM0`, `LPT0`, `CONIN$`, `CONOUT$`, also with an extension) and names shaped like 8.3 short names (`INSTAL~1.EXE`), which could stand for a differently named local file, are left out of listings and skipped by downloads.
+- An SFTP listing returns what it has, marked incomplete, after 30 seconds, so a server sending names very slowly can no longer block cancelling a transfer in that session.
 
 ## [0.8.0] - 2026-11-10
 

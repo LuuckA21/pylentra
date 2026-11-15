@@ -204,7 +204,7 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
                     plan.dir(rel.clone(), depth)?;
                     let read = match sftp.opendir(path.as_str()).await {
                         Ok(h) => {
-                            let r = read_dir(sftp, &h.handle, true).await;
+                            let r = read_dir(sftp, &h.handle, true, None).await;
                             let _ = sftp.close(h.handle).await;
                             r
                         }

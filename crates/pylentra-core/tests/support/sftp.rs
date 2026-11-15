@@ -30,6 +30,8 @@ pub enum Hostile {
     NeverAnswer,
     /// Every readdir answers a batch of "." and ".." and never ends.
     EndlessDots,
+    /// Every readdir answers one new name after `SLOW / 3`, and never ends.
+    SlowNames,
     /// Every read returns half the bytes asked for (at least one).
     HalfReads,
     /// Every file ends, when read, at half the size it is listed with.
@@ -155,6 +157,7 @@ impl SftpFs {
             Hostile::None
             | Hostile::NeverAnswer
             | Hostile::EndlessDots
+            | Hostile::SlowNames
             | Hostile::HalfReads
             | Hostile::ShortFile
             | Hostile::FailRead(_)
@@ -288,6 +291,15 @@ impl russh_sftp::server::Handler for SftpFs {
             return Ok(Name {
                 id,
                 files: dots.iter().cycle().take(1000).cloned().collect(),
+            });
+        }
+        if matches!(self.hostile, Hostile::SlowNames) {
+            tokio::time::sleep(SLOW / 3).await;
+            self.next_handle += 1;
+            let name = format!("n{}", self.next_handle);
+            return Ok(Name {
+                id,
+                files: vec![File::new(name, FileAttributes::empty())],
             });
         }
         if files.is_empty() {

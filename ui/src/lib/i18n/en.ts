@@ -177,7 +177,8 @@ export const en = {
   "sftp.showHidden": "Show hidden",
   "sftp.list": "Folder contents",
   "sftp.empty": "This folder is empty.",
-  "sftp.truncated": "Only the first 100 000 entries are shown.",
+  "sftp.truncated":
+    "Not every entry is shown: the folder holds more than 100 000 or took too long to list.",
   "sftp.folder": "Folder",
   "sftp.link": "Link",
   "sftp.uploadFiles": "Upload files",

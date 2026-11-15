@@ -180,7 +180,8 @@ export const it: Record<MessageKey, string> = {
   "sftp.showHidden": "Mostra nascosti",
   "sftp.list": "Contenuto della cartella",
   "sftp.empty": "La cartella è vuota.",
-  "sftp.truncated": "Sono mostrate solo le prime 100 000 voci.",
+  "sftp.truncated":
+    "Non sono mostrate tutte le voci: la cartella ne contiene più di 100 000 o ha richiesto troppo tempo.",
   "sftp.folder": "Cartella",
   "sftp.link": "Collegamento",
   "sftp.uploadFiles": "Carica file",

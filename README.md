@@ -74,7 +74,8 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   a corrupted destination). Without the server's `posix-rename` extension, a
   close or dropped connection right between removing the old file and
   renaming the new one leaves the complete new file under its temp name. Very
-  large folders (tens of thousands of entries) list slowly. Files with very
+  large folders (tens of thousands of entries) list slowly; a listing stops
+  after 30 seconds and shows what it has. Files with very
   long names (over about 240 bytes) are skipped with an error, since the
   temp name would exceed the system's file name limit; names over 1 KiB are
   not listed at all. A folder transfer whose paths together exceed 64 MiB
