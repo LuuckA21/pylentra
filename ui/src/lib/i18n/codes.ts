@@ -3,6 +3,7 @@ export const CORE_CODES = [
   "auth.agent_unavailable",
   "auth.all_failed",
   "auth.key_unreadable",
+  "auth.rsa_sha1",
   "cancelled",
   "config.invalid",
   "config.jump_cycle",

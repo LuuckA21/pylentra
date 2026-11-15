@@ -313,6 +313,8 @@ export const it: Record<MessageKey, string> = {
   "error.auth.agent_unavailable": "Agente SSH non disponibile: {reason}",
   "error.auth.all_failed": "Autenticazione fallita (provati: {tried}).",
   "error.auth.key_unreadable": "Impossibile leggere la chiave {path}: {reason}",
+  "error.auth.rsa_sha1":
+    "Il server accetta chiavi RSA solo con firme SHA-1 (ssh-rsa), non più sicure. Usa una chiave ed25519 o ECDSA, oppure aggiorna il server.",
   "error.cancelled": "Annullato.",
   "error.config.invalid": "Valore non valido per {field}: {reason}",
   "error.config.jump_cycle": "La catena di jump host contiene un ciclo.",

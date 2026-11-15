@@ -6,7 +6,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use russh::Preferred;
 use russh::client::{self, Handle};
+use russh::keys::Algorithm;
 use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -50,6 +52,16 @@ pub(crate) async fn connect_chain(
     let config = Arc::new(client::Config {
         keepalive_interval: ctx.opts.keepalive_interval,
         keepalive_max: ctx.opts.keepalive_max,
+        // No SHA-1 `ssh-rsa` host key signatures, as in OpenSSH 8.8+; rsa-sha2-* stay.
+        preferred: Preferred {
+            key: Preferred::DEFAULT
+                .key
+                .iter()
+                .filter(|a| **a != Algorithm::Rsa { hash: None })
+                .cloned()
+                .collect(),
+            ..Preferred::DEFAULT
+        },
         ..Default::default()
     });
     let mut bastions: Vec<Handle<ClientHandler>> = Vec::with_capacity(via.len());

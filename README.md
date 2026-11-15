@@ -44,6 +44,10 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   side-channel ([RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071),
   no upstream fix). It is only exploitable by a hostile or compromised server
   that times your signatures during authentication. Prefer ed25519 keys.
+- **SHA-1 RSA (`ssh-rsa`) is refused**, for host keys and RSA user keys, as in
+  OpenSSH 8.8 and later. A server that only offers it (OpenSSH before 7.2)
+  cannot be reached if its host key is RSA, and RSA user keys are refused
+  there: use an ed25519 or ECDSA key, or update the server.
 - **Linux without a Secret Service** (GNOME Keyring, KWallet, ...): saved
   credentials cannot be stored, so they are asked at every connection. If you
   start a keyring after Pylentra, restart the app.

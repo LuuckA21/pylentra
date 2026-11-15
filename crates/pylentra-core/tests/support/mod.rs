@@ -12,7 +12,7 @@ use pylentra_core::ssh::SessionSink;
 use pylentra_core::ssh::events::SessionEvent;
 use russh::keys::{Algorithm, PrivateKey, PublicKey};
 use russh::server::{Auth, Config, Handler, Msg, Response, Server, Session};
-use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
+use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet, Preferred};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
@@ -41,6 +41,10 @@ pub struct TestServerConfig {
     /// Folder served as "/" (and home) by the "sftp" subsystem; `None` refuses the subsystem.
     pub sftp_root: Option<PathBuf>,
     pub sftp_hostile: Hostile,
+    /// `None`: a fresh ed25519 key.
+    pub host_key: Option<PrivateKey>,
+    /// Host key and user signature algorithms (`server-sig-algs`); `None`: russh's defaults.
+    pub key_algos: Option<Vec<Algorithm>>,
 }
 
 impl Default for TestServerConfig {
@@ -56,6 +60,8 @@ impl Default for TestServerConfig {
             max_auth_attempts: None,
             sftp_root: None,
             sftp_hostile: Hostile::None,
+            host_key: None,
+            key_algos: None,
         }
     }
 }
@@ -80,7 +86,9 @@ impl Drop for TestServer {
 
 impl TestServer {
     pub async fn start(cfg: TestServerConfig) -> TestServer {
-        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("host key");
+        let key = cfg.host_key.clone().unwrap_or_else(|| {
+            PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("host key")
+        });
         let host_key = key.public_key().clone();
 
         let mut methods = MethodSet::empty();
@@ -104,6 +112,13 @@ impl TestServer {
             // buffers (Windows loopback). OpenSSH keeps reading; a small window
             // here keeps the client's in-flight data below any socket buffer.
             window_size: 16 * 1024,
+            preferred: match &cfg.key_algos {
+                Some(algos) => Preferred {
+                    key: Cow::Owned(algos.clone()),
+                    ..Preferred::DEFAULT
+                },
+                None => Preferred::DEFAULT,
+            },
             ..Default::default()
         });
 

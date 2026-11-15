@@ -309,6 +309,8 @@ export const en = {
   "error.auth.agent_unavailable": "SSH agent unavailable: {reason}",
   "error.auth.all_failed": "Authentication failed (tried: {tried}).",
   "error.auth.key_unreadable": "Cannot read key {path}: {reason}",
+  "error.auth.rsa_sha1":
+    "The server only accepts RSA keys with SHA-1 signatures (ssh-rsa), which are no longer safe. Use an ed25519 or ECDSA key, or update the server.",
   "error.cancelled": "Cancelled.",
   "error.config.invalid": "Invalid value for {field}: {reason}",
   "error.config.jump_cycle": "The jump host chain contains a cycle.",

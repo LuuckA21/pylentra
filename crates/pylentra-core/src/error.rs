@@ -26,6 +26,8 @@ pub enum CoreError {
     KeyUnreadable { path: String, reason: String },
     #[error("SSH agent unavailable: {reason}")]
     AgentUnavailable { reason: String },
+    #[error("the server only accepts SHA-1 RSA signatures (ssh-rsa)")]
+    RsaSha1Only,
     #[error("secret store unavailable: {reason}")]
     SecretUnavailable { reason: String },
     #[error("port {port} is already in use")]
@@ -115,6 +117,7 @@ impl CoreError {
             Self::AuthFailed { .. } => "auth.all_failed",
             Self::KeyUnreadable { .. } => "auth.key_unreadable",
             Self::AgentUnavailable { .. } => "auth.agent_unavailable",
+            Self::RsaSha1Only => "auth.rsa_sha1",
             Self::SecretUnavailable { .. } => "secret.unavailable",
             Self::PortInUse { .. } => "forward.port_in_use",
             Self::PermissionDenied { .. } => "forward.permission_denied",
@@ -166,6 +169,7 @@ impl CoreError {
             Self::Ssh(reason) => vec![("reason", reason.clone())],
             Self::Io(e) => vec![("reason", e.to_string())],
             Self::HostKeyRejected
+            | Self::RsaSha1Only
             | Self::ForwardRejected
             | Self::JumpCycle
             | Self::JumpTooDeep

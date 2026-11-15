@@ -109,7 +109,7 @@ async fn auto<H: Handler>(
         Err(CoreError::AgentUnavailable { reason }) if offered.is_empty() => {
             log::debug!("no agent: {reason}")
         }
-        Err(CoreError::AuthFailed { .. }) => {}
+        Err(CoreError::AuthFailed { .. } | CoreError::RsaSha1Only) => {}
         Err(e) => return Err(e),
     }
     if !offered.is_empty() {
@@ -124,7 +124,9 @@ async fn auto<H: Handler>(
             Ok(()) => return Ok(()),
             Err(CoreError::AuthFailed { .. }) => note("publickey"),
             // A key we cannot use, or whose passphrase the user would not give: the next one.
-            Err(CoreError::KeyUnreadable { .. } | CoreError::Cancelled) => {}
+            Err(
+                CoreError::KeyUnreadable { .. } | CoreError::Cancelled | CoreError::RsaSha1Only,
+            ) => {}
             Err(e) => return Err(e),
         }
     }
@@ -380,7 +382,8 @@ async fn load_key(
     .unwrap_or(Err(russh::keys::Error::CouldNotReadKey))
 }
 
-/// The server's preferred RSA signature hash; `None` for other key types.
+/// The server's preferred RSA signature hash; `None` for other key types. SHA-1 (`ssh-rsa`)
+/// is refused, as in OpenSSH 8.8+, also when the server does not list its algorithms.
 async fn rsa_hash<H: Handler>(
     handle: &Handle<H>,
     algo: russh::keys::Algorithm,
@@ -388,7 +391,10 @@ async fn rsa_hash<H: Handler>(
     if !algo.is_rsa() {
         return Ok(None);
     }
-    Ok(handle.best_supported_rsa_hash().await?.flatten())
+    match handle.best_supported_rsa_hash().await?.flatten() {
+        Some(hash) => Ok(Some(hash)),
+        None => Err(CoreError::RsaSha1Only),
+    }
 }
 
 /// Tries every agent identity; each one tried is added to `offered`.
@@ -403,10 +409,20 @@ async fn agent<H: Handler>(
         .request_identities()
         .await
         .map_err(agent_unavailable)?;
+    let mut failed = CoreError::AuthFailed {
+        tried: vec!["publickey".into()],
+    };
     for identity in identities {
         let key = identity.public_key().into_owned();
         offered.push(key.clone());
-        let hash = rsa_hash(handle, key.algorithm()).await?;
+        let hash = match rsa_hash(handle, key.algorithm()).await {
+            // The next identity may not be RSA.
+            Err(e @ CoreError::RsaSha1Only) => {
+                failed = e;
+                continue;
+            }
+            other => other?,
+        };
         let result = handle
             .authenticate_publickey_with(user, key, hash, &mut client)
             .await
@@ -419,9 +435,7 @@ async fn agent<H: Handler>(
             return Ok(());
         }
     }
-    Err(CoreError::AuthFailed {
-        tried: vec!["publickey".into()],
-    })
+    Err(failed)
 }
 
 type DynAgent = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
