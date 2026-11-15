@@ -26,6 +26,9 @@ pub enum Hostile {
     /// Every directory contains 150 empty files and a subdirectory named `d` repeated this
     /// many times, which is another such directory.
     LongTree(usize),
+    /// Every path gets a first component of `p` repeated this many times, which is the
+    /// root itself, so a realpath answer is that long.
+    LongPrefix(usize),
     /// The "sftp" subsystem is accepted, but no SFTP reply ever comes.
     NeverAnswer,
     /// Every readdir answers a batch of "." and ".." and never ends.
@@ -103,10 +106,10 @@ impl SftpFs {
                 c => parts.push(c),
             }
         }
-        let endless = self.endless_dir();
+        let phantom = self.phantom_dir();
         let real = parts
             .iter()
-            .filter(|c| endless.as_deref() != Some(**c))
+            .filter(|c| phantom.as_deref() != Some(**c))
             .fold(self.root.clone(), |p, c| p.join(c));
         Ok((format!("/{}", parts.join("/")), real))
     }
@@ -132,11 +135,12 @@ impl SftpFs {
         }
     }
 
-    /// The name of the subdirectory every directory holds, if any.
-    fn endless_dir(&self) -> Option<String> {
+    /// The name of a folder that is not on disk but stands for the one it is in, if any.
+    fn phantom_dir(&self) -> Option<String> {
         match self.hostile {
             Hostile::EndlessDirs => Some("d".into()),
             Hostile::LongTree(n) => Some("d".repeat(n)),
+            Hostile::LongPrefix(n) => Some("p".repeat(n)),
             _ => None,
         }
     }
@@ -158,6 +162,7 @@ impl SftpFs {
             | Hostile::NeverAnswer
             | Hostile::EndlessDots
             | Hostile::SlowNames
+            | Hostile::LongPrefix(_)
             | Hostile::HalfReads
             | Hostile::ShortFile
             | Hostile::FailRead(_)
@@ -267,8 +272,14 @@ impl russh_sftp::server::Handler for SftpFs {
     }
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        let (canonical, real) = self.resolve(&path)?;
+        let (mut canonical, real) = self.resolve(&path)?;
         self.followed(&real)?;
+        if let Hostile::LongPrefix(n) = self.hostile {
+            let prefix = format!("/{}", "p".repeat(n));
+            if !canonical.starts_with(&prefix) {
+                canonical = format!("{prefix}{}", canonical.trim_end_matches('/'));
+            }
+        }
         Ok(Name {
             id,
             files: vec![File::dummy(canonical)],

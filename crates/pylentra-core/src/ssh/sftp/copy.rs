@@ -38,10 +38,12 @@ pub(crate) struct Mode {
 
 impl Mode {
     /// A replaced file keeps its own bits; a new one gets the source's read and write bits at
-    /// most, never execute, and 0600 when they are unknown. `None` on Windows.
+    /// most, never execute, and 0600 when they are unknown. On Windows, which has no bits, a
+    /// new file gets the default (`None`) and only a replaced remote file has known bits.
     pub(crate) fn new(source: Option<u32>, replaced: Option<u32>) -> Option<Mode> {
-        cfg!(unix).then(|| Mode {
-            bits: replaced.unwrap_or(source.map_or(0o600, |m| m & 0o666)),
+        let new = cfg!(unix).then(|| source.map_or(0o600, |m| m & 0o666));
+        Some(Mode {
+            bits: replaced.or(new)?,
             keep: replaced.is_some(),
         })
     }
@@ -58,6 +60,8 @@ fn modes_only_restrict() {
     assert_eq!(bits(Some(0o600), None), Some((0o600, false)));
     assert_eq!(bits(Some(0o777), None), Some((0o666, false)));
     assert_eq!(bits(None, None), Some((0o600, false)));
+    assert_eq!(bits(Some(0o4755), None), Some((0o644, false)));
+    assert_eq!(bits(Some(0o2660), None), Some((0o660, false)));
     assert_eq!(bits(Some(0o600), Some(0o755)), Some((0o755, true)));
 }
 

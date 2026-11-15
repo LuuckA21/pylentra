@@ -72,7 +72,9 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   copied file is never more open than its source: it gets the source's read
   and write permissions at most (0600 when they are unknown), never the
   execute bit, and a replaced file keeps its own permissions. Folders get the
-  default permissions. On Windows, permissions are not handled.
+  default permissions. On Windows, a new uploaded file gets the server's
+  default permissions, a replaced one keeps its own, and downloaded files get
+  the Windows defaults.
   Symbolic links and special files are skipped. If the connection drops during
   an upload, a `<name>.<n>.pylentra-tmp` file can remain on the server (never
   a corrupted destination). Without the server's `posix-rename` extension, a
@@ -82,8 +84,9 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   after 30 seconds and shows what it has. Files with very
   long names (over about 240 bytes) are skipped with an error, since the
   temp name would exceed the system's file name limit; names over 1 KiB are
-  not listed at all. A folder transfer whose paths together exceed 64 MiB
-  stops with a safety-limit error. On Windows, server names shaped like 8.3
+  not listed at all, and a folder whose path exceeds 4 KiB cannot be opened.
+  A folder transfer whose paths together exceed 64 MiB stops with a
+  safety-limit error. On Windows, server names shaped like 8.3
   short names (`INSTAL~1.EXE`) are not listed or downloaded.
 - **Very fast output** (for example `cat` of a huge file) is slowed to the
   speed the terminal can draw it, also while the window is minimized (the

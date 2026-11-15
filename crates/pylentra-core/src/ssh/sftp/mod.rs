@@ -502,6 +502,10 @@ async fn list(raw: &RawSftpSession, dir: &str) -> Result<Listing, SftpError> {
         .next()
         .ok_or_else(|| SftpError::UnexpectedBehavior("empty realpath reply".into()))?
         .filename;
+    // Linux's PATH_MAX: every child's path would repeat a longer one.
+    if dir.len() > 4096 {
+        return Err(SftpError::Limited("path length".into()));
+    }
     let handle = raw.opendir(dir.as_str()).await?.handle;
     let deadline = tokio::time::Instant::now() + LIST_BUDGET;
     let read = read_dir(raw, &handle, false, Some(deadline)).await;

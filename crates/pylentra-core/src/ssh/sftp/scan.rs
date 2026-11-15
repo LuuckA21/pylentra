@@ -250,6 +250,7 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
                     }
                     for c in dir.entries {
                         let child = (remote_join(&path, &c.name), join(&rel, &c.name));
+                        plan.path(&child.0)?;
                         plan.path(&child.1)?;
                         stack.push((child.0, child.1, depth + 1, c));
                         plan.check(stack.len())?;

@@ -291,6 +291,28 @@ async fn remote_long_deep_names_stop() {
     env.mgr.close(id).await.unwrap();
 }
 
+/// A long absolute path counts too: a wide folder under it would fill memory with its
+/// children's remote paths. A home that long is refused outright.
+#[tokio::test]
+async fn long_remote_prefix_stops() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("top")).unwrap();
+    for i in 0..400 {
+        fs::write(root.path().join(format!("top/f{i}")), "").unwrap();
+    }
+    let env = env(Some(root.path()), Hostile::LongPrefix(200_000), true).await;
+    let id = open_ready(&env).await;
+
+    let is_limit =
+        |e: &CoreError| matches!(e, CoreError::SftpLimit { what } if what == "path length");
+    let err = env.mgr.sftp_list(id, String::new()).await.unwrap_err();
+    assert!(is_limit(&err), "{err:?}");
+    let top = format!("/{}/top", "p".repeat(200_000));
+    let err = env.mgr.sftp_scan(id, vec![top]).await.unwrap_err();
+    assert!(is_limit(&err), "{err:?}");
+    env.mgr.close(id).await.unwrap();
+}
+
 #[tokio::test]
 async fn remote_bad_names_skipped() {
     let root = TempDir::new().unwrap();
@@ -527,8 +549,18 @@ fn mode_trees(from: &Path, to: &Path) {
 
 #[cfg(unix)]
 fn assert_modes(to: &Path) {
+    // The umask narrows a new file, as with any other program; a kept mode is exact.
+    let probe = to.join("probe");
+    std::os::unix::fs::OpenOptionsExt::mode(
+        fs::File::options().write(true).create_new(true),
+        0o666,
+    )
+    .open(&probe)
+    .unwrap();
+    let new = mode(&probe);
+    fs::remove_file(probe).unwrap();
     let got = ["secret", "exe", "old"].map(|n| mode(&to.join(n)));
-    assert_eq!(got, [0o600, 0o640, 0o660]);
+    assert_eq!(got, [0o600 & new, 0o640 & new, 0o660]);
     assert_eq!(fs::read(to.join("old")).unwrap(), b"old");
 }
 
