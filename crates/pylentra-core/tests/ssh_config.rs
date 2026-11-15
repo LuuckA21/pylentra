@@ -643,3 +643,26 @@ fn a_huge_implicit_block_is_bounded() {
     assert!(too_complex(&r));
     assert!(r.candidates.len() < 1_000);
 }
+
+#[test]
+fn a_long_hop_list_is_bounded() {
+    let hops: Vec<String> = (0..4_000).map(|i| format!("h{i}")).collect();
+    let mut text = format!("Host *\nProxyJump {}\n", hops.join(","));
+    text.extend(hops.iter().map(|h| format!("Host {h}\n")));
+    let r = parse(&text, &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.len() < 1_000);
+    assert!(r.candidates.iter().all(|c| c.notes.len() <= 17));
+}
+
+#[test]
+fn a_long_wildcard_pattern_against_a_long_alias_is_bounded() {
+    let text = format!(
+        "Host *{}b\nUser x\nHost {}\n",
+        "a".repeat(150_000),
+        "a".repeat(300_000)
+    );
+    let r = parse(&text, &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.is_empty());
+}

@@ -66,8 +66,9 @@ pub enum ImportNote {
     },
 }
 
-/// Most pattern and line visits `parse` spends on aliases; well under a second.
+/// Most bytes (of lines and of pattern-by-alias comparisons) `parse` spends on aliases.
 const MAX_WORK: usize = 5_000_000;
+const MAX_JUMP_NOTES: usize = 16;
 
 struct Block {
     /// Empty for a `Match` block, so it applies to no host.
@@ -225,25 +226,21 @@ const NOT_ALIAS: [char; 3] = ['@', ':', '/'];
 /// marked `exists` and not imported.
 fn resolve_jump(
     hop: &str,
-    saved: &[Connection],
-    aliases: &[(&str, Uuid)],
+    saved: &HashMap<String, Uuid>,
+    aliases: &HashMap<String, Uuid>,
     notes: &mut Vec<ImportNote>,
 ) -> Option<Uuid> {
+    // A candidate lists a few unresolved hops at most, so a huge hop list cannot flood the notes.
+    let room = notes.len() < MAX_JUMP_NOTES;
     if hop.contains(NOT_ALIAS) {
-        notes.push(ImportNote::JumpNotAlias { value: hop.into() });
+        if room {
+            notes.push(ImportNote::JumpNotAlias { value: hop.into() });
+        }
         return None;
     }
-    let id = saved
-        .iter()
-        .find(|c| c.name.eq_ignore_ascii_case(hop))
-        .map(|c| c.id)
-        .or_else(|| {
-            aliases
-                .iter()
-                .find(|(a, _)| a.eq_ignore_ascii_case(hop))
-                .map(|(_, id)| *id)
-        });
-    if id.is_none() {
+    let key = hop.to_ascii_lowercase();
+    let id = saved.get(&key).or_else(|| aliases.get(&key)).copied();
+    if id.is_none() && room {
         notes.push(ImportNote::UnknownJump { alias: hop.into() });
     }
     id
@@ -383,27 +380,42 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
         }
     }
 
-    // Every alias replays the wildcard blocks and its own blocks' lines, so that work is bounded.
-    let cost = |bs: &mut dyn Iterator<Item = &usize>| -> usize {
-        bs.map(|&bi| blocks[bi].patterns.len() + blocks[bi].lines.len() + 1)
+    // Every alias replays the wildcard blocks (each pattern against its name) and the lines of
+    // its own blocks; a line costs its bytes, which also bounds a `ProxyJump` hop list.
+    let lines_cost = |bi: &usize| -> usize {
+        (blocks[*bi].lines.iter())
+            .map(|(_, args)| 1 + args.iter().map(String::len).sum::<usize>())
             .sum()
     };
-    let general_cost = cost(&mut general.iter());
+    let general_lines: usize = general.iter().map(lines_cost).sum();
+    let general_pats: usize = (general.iter())
+        .flat_map(|&bi| &blocks[bi].patterns)
+        .map(|p| p.len() + 1)
+        .sum();
     let mut spent = 0usize;
-    let kept = aliases.iter().take_while(|(a, _)| {
-        let own = by_name
-            .get(&a.to_ascii_lowercase())
-            .map_or(0, |v| cost(&mut v.iter()));
-        spent = spent.saturating_add(general_cost + own);
-        spent <= MAX_WORK
-    });
-    let kept = kept.count();
+    let kept = aliases
+        .iter()
+        .take_while(|(a, _)| {
+            let own: usize = (by_name.get(&a.to_ascii_lowercase()))
+                .map_or(0, |v| v.iter().map(lines_cost).sum());
+            spent = spent
+                .saturating_add(general_lines + general_pats.saturating_mul(a.len() + 1) + own);
+            spent <= MAX_WORK
+        })
+        .count();
     if kept < aliases.len() {
         aliases.truncate(kept);
         skipped.push(FileNote {
             line: text.lines().count(),
             note: ImportNote::TooComplex,
         });
+    }
+    let alias_ids: HashMap<String, Uuid> = (aliases.iter())
+        .map(|(a, id)| (a.to_ascii_lowercase(), *id))
+        .collect();
+    let mut saved_ids: HashMap<String, Uuid> = HashMap::new();
+    for c in saved {
+        saved_ids.entry(c.name.to_ascii_lowercase()).or_insert(c.id);
     }
 
     // Multi-hop `ProxyJump`s that resolve, and which candidates have no jump of their own.
@@ -492,11 +504,11 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
             free.push(no_jump);
             let jump_via = match hops[..] {
                 _ if no_jump => None,
-                [v] => resolve_jump(v, saved, &aliases, &mut notes),
+                [v] => resolve_jump(v, &saved_ids, &alias_ids, &mut notes),
                 _ => {
                     let ids: Vec<Uuid> = hops
                         .iter()
-                        .filter_map(|h| resolve_jump(h, saved, &aliases, &mut notes))
+                        .filter_map(|h| resolve_jump(h, &saved_ids, &alias_ids, &mut notes))
                         .collect();
                     if ids.len() == hops.len() {
                         chains.push((i, ids));
