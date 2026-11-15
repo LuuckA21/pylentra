@@ -4,7 +4,12 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0] - 2026-11-15
+
+Security release (issue #31). Nothing saved changes format: going back to 0.8.x
+loses nothing. Some connections that used to work are now refused on purpose:
+servers that only offer SHA-1 `ssh-rsa`, and host names with spaces, separators
+or invisible characters (see below).
 
 ### Security
 
