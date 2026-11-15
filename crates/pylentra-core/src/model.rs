@@ -471,12 +471,19 @@ impl ForwardRule {
 /// Allows only what a host name or IP literal needs: ASCII letters and digits, `. - _ : %`
 /// (IPv6 literals are stored without brackets, `%` is a zone) and non-ASCII letters of IDN
 /// names. Anything else could be read as a separator or pattern by known_hosts, or as shell
-/// syntax in the copyable `ssh-keygen -R` hint.
+/// syntax in the copyable `ssh-keygen -R` hint. Invisible format characters (soft hyphen,
+/// zero-width, bidi controls, tags) are refused too: they could make a host look like another.
 pub fn check_host_name(host: &str) -> Result<(), CoreError> {
+    let invisible = |c: char| {
+        matches!(c,
+            '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}'
+            | '\u{e0000}'..='\u{e007f}')
+    };
     let allowed = |c: char| {
         c.is_ascii_alphanumeric()
             || ".-_:%".contains(c)
-            || (!c.is_ascii() && !c.is_whitespace() && !c.is_control())
+            || (!c.is_ascii() && !c.is_whitespace() && !c.is_control() && !invisible(c))
     };
     if !host.chars().all(allowed) {
         return Err(CoreError::invalid(
@@ -667,6 +674,26 @@ mod tests {
             "a&b",
             "a'b",
             "a\u{a0}b",
+        ] {
+            c.host = bad.into();
+            assert_eq!(invalid_field(&c), "host", "{bad:?}");
+        }
+        // Invisible format characters could make a host look like another in prompts.
+        for bad in [
+            "a\u{ad}b",
+            "a\u{61c}b",
+            "a\u{180e}b",
+            "a\u{200b}b",
+            "a\u{200f}b",
+            "a\u{202a}b",
+            "a\u{202e}b",
+            "a\u{2060}b",
+            "a\u{2064}b",
+            "a\u{2066}b",
+            "a\u{2069}b",
+            "a\u{feff}b",
+            "a\u{e0000}b",
+            "a\u{e007f}b",
         ] {
             c.host = bad.into();
             assert_eq!(invalid_field(&c), "host", "{bad:?}");
