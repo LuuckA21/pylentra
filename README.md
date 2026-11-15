@@ -78,7 +78,8 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   long names (over about 240 bytes) are skipped with an error, since the
   temp name would exceed the system's file name limit; names over 1 KiB are
   not listed at all. A folder transfer whose paths together exceed 64 MiB
-  stops with a safety-limit error.
+  stops with a safety-limit error. On Windows, server names shaped like 8.3
+  short names (`INSTAL~1.EXE`) are not listed or downloaded.
 - **Very fast output** (for example `cat` of a huge file) is slowed to the
   speed the terminal can draw it, also while the window is minimized (the
   system then slows the app down). Until it catches up, file transfers and port
