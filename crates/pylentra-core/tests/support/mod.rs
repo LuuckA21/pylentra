@@ -21,6 +21,17 @@ use tokio::task::JoinHandle;
 mod sftp;
 pub use sftp::Hostile;
 
+/// How the server misbehaves for `tcpip-forward`.
+#[derive(Clone, Debug, Default)]
+pub enum ForwardQuirk {
+    #[default]
+    None,
+    /// Waits this long before answering (the connection is stuck meanwhile).
+    Stall(std::time::Duration),
+    /// Answers the port of an earlier forward instead of binding a new one; cancels do nothing.
+    ReuseFirstPort,
+}
+
 pub struct TestServerConfig {
     pub password: Option<String>,
     /// (prompt, expected answer)
@@ -43,6 +54,7 @@ pub struct TestServerConfig {
     /// Folder served as "/" (and home) by the "sftp" subsystem; `None` refuses the subsystem.
     pub sftp_root: Option<PathBuf>,
     pub sftp_hostile: Hostile,
+    pub forward_quirk: ForwardQuirk,
     /// `None`: a fresh ed25519 key.
     pub host_key: Option<PrivateKey>,
     /// More host keys, of other types, the server also offers.
@@ -65,6 +77,7 @@ impl Default for TestServerConfig {
             max_auth_attempts: None,
             sftp_root: None,
             sftp_hostile: Hostile::None,
+            forward_quirk: ForwardQuirk::None,
             host_key: None,
             extra_host_keys: Vec::new(),
             key_algos: None,
@@ -474,6 +487,16 @@ impl Handler for ConnHandler {
         port: &mut u32,
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
+        match self.cfg.forward_quirk {
+            ForwardQuirk::Stall(d) => tokio::time::sleep(d).await,
+            ForwardQuirk::ReuseFirstPort => {
+                if let Some(first) = self.listeners.keys().next() {
+                    *port = u32::from(*first);
+                    return Ok(true);
+                }
+            }
+            ForwardQuirk::None => {}
+        }
         let Ok(requested) = u16::try_from(*port) else {
             return Ok(false);
         };
@@ -516,6 +539,9 @@ impl Handler for ConnHandler {
         port: u32,
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
+        if matches!(self.cfg.forward_quirk, ForwardQuirk::ReuseFirstPort) {
+            return Ok(true);
+        }
         let task = u16::try_from(port)
             .ok()
             .and_then(|p| self.listeners.remove(&p));

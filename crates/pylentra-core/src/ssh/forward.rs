@@ -12,6 +12,7 @@ use russh::ChannelOpenFailure;
 use russh::client::Handle;
 use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 use tokio::task::{JoinHandle, JoinSet};
 
 use super::SessionSink;
@@ -25,7 +26,31 @@ use crate::model::ForwardRule;
 const REMOTE_BIND: &str = "127.0.0.1";
 
 /// Remote forwards by the port the server listens on: where its connections must go.
-pub(crate) type RemoteRoutes = Arc<Mutex<HashMap<u16, (String, u16)>>>;
+pub(crate) type RemoteRoutes = Arc<Routes>;
+
+/// Concurrent relays one listener, and the server-opened channels of one session, may hold.
+const MAX_RELAYS: usize = 128;
+
+pub(crate) struct Routes {
+    map: Mutex<HashMap<u16, (String, u16)>>,
+    /// Slots for relays of server-opened channels; the server may not exhaust our sockets.
+    slots: Arc<Semaphore>,
+}
+
+impl Default for Routes {
+    fn default() -> Self {
+        Self {
+            map: Mutex::default(),
+            slots: Arc::new(Semaphore::new(MAX_RELAYS)),
+        }
+    }
+}
+
+impl Routes {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<u16, (String, u16)>> {
+        self.map.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
 
 type Target = Arc<Handle<ClientHandler>>;
 
@@ -40,6 +65,8 @@ enum Active {
 /// Everything forwarded for one session. Dropped with the session: listeners stop silently.
 pub(crate) struct Forwards {
     sink: Arc<dyn SessionSink>,
+    /// Bounds every request that waits on the server or the network.
+    timeout: Duration,
     pub routes: RemoteRoutes,
     next_id: u32,
     active: HashMap<u32, (ForwardRule, Active)>,
@@ -56,9 +83,10 @@ impl Drop for Forwards {
 }
 
 impl Forwards {
-    pub fn new(sink: Arc<dyn SessionSink>) -> Self {
+    pub fn new(sink: Arc<dyn SessionSink>, timeout: Duration) -> Self {
         Self {
             sink,
+            timeout,
             routes: Arc::default(),
             next_id: 1,
             active: HashMap::new(),
@@ -76,18 +104,38 @@ impl Forwards {
                 dest_host,
                 dest_port,
                 ..
-            } => start_local(target, bind_host, *bind_port, dest_host, *dest_port).await,
+            } => {
+                start_local(
+                    target,
+                    self.timeout,
+                    bind_host,
+                    *bind_port,
+                    dest_host,
+                    *dest_port,
+                )
+                .await
+            }
             ForwardRule::Remote {
                 bind_port,
                 dest_host,
                 dest_port,
                 ..
-            } => start_remote(target, &self.routes, *bind_port, dest_host, *dest_port).await,
+            } => {
+                start_remote(
+                    target,
+                    &self.routes,
+                    self.timeout,
+                    *bind_port,
+                    dest_host,
+                    *dest_port,
+                )
+                .await
+            }
             ForwardRule::Dynamic {
                 bind_host,
                 bind_port,
                 ..
-            } => start_dynamic(target, bind_host, *bind_port).await,
+            } => start_dynamic(target, self.timeout, bind_host, *bind_port).await,
         };
         let (state, result) = match started {
             Ok((active, bound_port)) => {
@@ -98,6 +146,18 @@ impl Forwards {
         };
         self.emit(forward_id, rule, state);
         result
+    }
+
+    /// Auto-starts a rule read from the config file, which may have been edited by hand:
+    /// one that `add` would refuse is reported as failed instead of bound.
+    pub async fn start_stored(&mut self, target: &Target, rule: ForwardRule) {
+        if let Err(e) = rule.validate("forwards") {
+            let forward_id = self.next_id;
+            self.next_id += 1;
+            self.emit(forward_id, rule, ForwardState::Failed { error: e.to_api() });
+        } else {
+            let _ = self.start(target, rule).await;
+        }
     }
 
     /// Stops the forward; a local listener is closed once this returns.
@@ -114,16 +174,17 @@ impl Forwards {
                 let _ = task.await;
             }
             Active::Remote { bound_port } => {
-                self.routes
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&bound_port);
-                if let Err(e) = target
-                    .cancel_tcpip_forward(REMOTE_BIND, bound_port.into())
-                    .await
+                self.routes.lock().remove(&bound_port);
+                // Without a route the server's connections are refused anyway.
+                match tokio::time::timeout(
+                    self.timeout,
+                    target.cancel_tcpip_forward(REMOTE_BIND, bound_port.into()),
+                )
+                .await
                 {
-                    // Without a route the server's connections are refused anyway.
-                    log::debug!("cancel-tcpip-forward failed: {e}");
+                    Ok(Err(e)) => log::debug!("cancel-tcpip-forward failed: {e}"),
+                    Err(_) => log::debug!("cancel-tcpip-forward timed out"),
+                    Ok(Ok(())) => {}
                 }
             }
         }
@@ -176,14 +237,20 @@ async fn listen<F: Future<Output = ()> + Send + 'static>(
 ) -> Result<(Active, u16), CoreError> {
     let listener = bind_listener(bind_host, bind_port).await?;
     let bound_port = listener.local_addr()?.port();
+    let slots = Arc::new(Semaphore::new(MAX_RELAYS));
     let task = tokio::spawn(async move {
         let mut relays = JoinSet::new();
         loop {
             tokio::select! {
                 accepted = listener.accept() => match accepted {
-                    Ok((tcp, peer)) => {
-                        relays.spawn(relay(tcp, peer));
-                    }
+                    // Beyond the cap the connection is refused: `tcp` drops.
+                    Ok((tcp, peer)) => if let Ok(slot) = slots.clone().try_acquire_owned() {
+                        let relay = relay(tcp, peer);
+                        relays.spawn(async move {
+                            relay.await;
+                            drop(slot);
+                        });
+                    },
                     Err(e) => {
                         // e.g. out of file descriptors: back off instead of spinning.
                         log::debug!("forward accept failed: {e}");
@@ -200,6 +267,7 @@ async fn listen<F: Future<Output = ()> + Send + 'static>(
 
 async fn start_local(
     target: &Target,
+    timeout: Duration,
     bind_host: &str,
     bind_port: u16,
     dest_host: &str,
@@ -207,63 +275,82 @@ async fn start_local(
 ) -> Result<(Active, u16), CoreError> {
     let (target, dest_host) = (target.clone(), dest_host.to_string());
     listen(bind_host, bind_port, move |tcp, peer| {
-        relay_local(target.clone(), tcp, peer, dest_host.clone(), dest_port)
+        relay_local(
+            target.clone(),
+            timeout,
+            tcp,
+            peer,
+            dest_host.clone(),
+            dest_port,
+        )
     })
     .await
 }
 
 async fn start_dynamic(
     target: &Target,
+    timeout: Duration,
     bind_host: &str,
     bind_port: u16,
 ) -> Result<(Active, u16), CoreError> {
     let target = target.clone();
     listen(bind_host, bind_port, move |tcp, peer| {
-        relay_dynamic(target.clone(), tcp, peer)
+        relay_dynamic(target.clone(), timeout, tcp, peer)
     })
     .await
 }
 
 async fn relay_local(
     target: Target,
+    timeout: Duration,
     mut tcp: TcpStream,
     peer: SocketAddr,
     dest_host: String,
     dest_port: u16,
 ) {
-    let opened = target
-        .channel_open_direct_tcpip(
+    let opened = tokio::time::timeout(
+        timeout,
+        target.channel_open_direct_tcpip(
             dest_host,
             dest_port.into(),
             peer.ip().to_string(),
             peer.port().into(),
-        )
-        .await;
+        ),
+    )
+    .await;
     match opened {
-        Ok(channel) => {
+        Ok(Ok(channel)) => {
             let _ = copy_bidirectional(&mut channel.into_stream(), &mut tcp).await;
         }
         // `tcp` drops: the client sees the connection closed.
-        Err(e) => log::debug!("direct-tcpip open failed: {e}"),
+        Ok(Err(e)) => log::debug!("direct-tcpip open failed: {e}"),
+        Err(_) => log::debug!("direct-tcpip open timed out"),
     }
 }
 
-async fn relay_dynamic(target: Target, mut tcp: TcpStream, peer: SocketAddr) {
+async fn relay_dynamic(target: Target, timeout: Duration, mut tcp: TcpStream, peer: SocketAddr) {
     let (host, port) = match socks::handshake(&mut tcp, HANDSHAKE_TIMEOUT).await {
         Ok(dest) => dest,
         Err(e) => return log::debug!("socks handshake failed: {e}"),
     };
-    let opened = target
-        .channel_open_direct_tcpip(host, port.into(), peer.ip().to_string(), peer.port().into())
-        .await;
+    let opened = tokio::time::timeout(
+        timeout,
+        target.channel_open_direct_tcpip(
+            host,
+            port.into(),
+            peer.ip().to_string(),
+            peer.port().into(),
+        ),
+    )
+    .await;
     match opened {
-        Ok(channel) => {
+        Ok(Ok(channel)) => {
             if socks::reply(&mut tcp, 0x00).await.is_ok() {
                 let _ = copy_bidirectional(&mut channel.into_stream(), &mut tcp).await;
             }
         }
-        Err(e) => {
-            log::debug!("direct-tcpip open failed: {e}");
+        Ok(Err(_)) | Err(_) => {
+            log::debug!("direct-tcpip open failed");
             let _ = socks::reply(&mut tcp, 0x04).await;
         }
     }
@@ -272,39 +359,62 @@ async fn relay_dynamic(target: Target, mut tcp: TcpStream, peer: SocketAddr) {
 async fn start_remote(
     target: &Target,
     routes: &RemoteRoutes,
+    timeout: Duration,
     bind_port: u16,
     dest_host: &str,
     dest_port: u16,
 ) -> Result<(Active, u16), CoreError> {
     let route = (dest_host.to_string(), dest_port);
-    let lock = || routes.lock().unwrap_or_else(|e| e.into_inner());
     // A requested port is known up front, so the first connection cannot beat the route.
     // One already routed belongs to an active forward, which the server would refuse to
     // bind twice: leave its route alone.
     if bind_port != 0 {
-        match lock().entry(bind_port) {
+        match routes.lock().entry(bind_port) {
             Entry::Occupied(_) => return Err(CoreError::ForwardRejected),
             Entry::Vacant(v) => v.insert(route.clone()),
         };
     }
-    let bound_port = match target.tcpip_forward(REMOTE_BIND, bind_port.into()).await {
+    let answer =
+        tokio::time::timeout(timeout, target.tcpip_forward(REMOTE_BIND, bind_port.into())).await;
+    let bound_port = match answer {
         // A server answers 0 when it bound the requested port.
-        Ok(0) => bind_port,
-        Ok(p) => u16::try_from(p).unwrap_or(bind_port),
-        Err(e) => {
-            lock().remove(&bind_port);
-            return Err(match e {
-                russh::Error::RequestDenied => CoreError::ForwardRejected,
-                e => e.into(),
+        Ok(Ok(0)) => bind_port,
+        Ok(Ok(p)) => u16::try_from(p).unwrap_or(bind_port),
+        failed => {
+            if bind_port != 0 {
+                routes.lock().remove(&bind_port);
+            }
+            return Err(match failed {
+                Ok(Err(russh::Error::RequestDenied)) | Err(_) => CoreError::ForwardRejected,
+                Ok(Err(e)) => e.into(),
+                Ok(Ok(_)) => unreachable!(),
             });
         }
     };
-    let mut routes = lock();
-    if bound_port != bind_port {
-        routes.remove(&bind_port);
+    if bind_port == 0 || bound_port != bind_port {
+        // A port the server picked may already carry another forward's route: never replace it.
+        let taken = {
+            let mut map = routes.lock();
+            if bind_port != 0 {
+                map.remove(&bind_port);
+            }
+            match map.entry(bound_port) {
+                Entry::Occupied(_) => true,
+                Entry::Vacant(v) => {
+                    v.insert(route);
+                    false
+                }
+            }
+        };
+        if taken {
+            let _ = tokio::time::timeout(
+                timeout,
+                target.cancel_tcpip_forward(REMOTE_BIND, bound_port.into()),
+            )
+            .await;
+            return Err(CoreError::ForwardRejected);
+        }
     }
-    routes.insert(bound_port, route);
-    drop(routes);
     Ok((Active::Remote { bound_port }, bound_port))
 }
 
@@ -315,24 +425,24 @@ pub(crate) async fn accept_remote(
     connected_port: u32,
     channel: russh::Channel<russh::client::Msg>,
     reply: russh::client::ChannelOpenHandle,
+    connect_timeout: Duration,
 ) {
-    let dest = u16::try_from(connected_port).ok().and_then(|p| {
-        routes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&p)
-            .cloned()
-    });
+    let dest = u16::try_from(connected_port)
+        .ok()
+        .and_then(|p| routes.lock().get(&p).cloned());
     let Some((host, port)) = dest else {
         return reply
             .reject(ChannelOpenFailure::AdministrativelyProhibited)
             .await;
     };
-    match TcpStream::connect((host.as_str(), port)).await {
-        Ok(mut tcp) => {
+    let Ok(_slot) = routes.slots.clone().try_acquire_owned() else {
+        return reply.reject(ChannelOpenFailure::ResourceShortage).await;
+    };
+    match tokio::time::timeout(connect_timeout, TcpStream::connect((host.as_str(), port))).await {
+        Ok(Ok(mut tcp)) => {
             reply.accept().await;
             let _ = copy_bidirectional(&mut channel.into_stream(), &mut tcp).await;
         }
-        Err(_) => reply.reject(ChannelOpenFailure::ConnectFailed).await,
+        Ok(Err(_)) | Err(_) => reply.reject(ChannelOpenFailure::ConnectFailed).await,
     }
 }

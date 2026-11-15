@@ -336,7 +336,7 @@ async fn run(
     rows: u16,
     mut rx: mpsc::Receiver<Command>,
 ) {
-    let mut forwards = Forwards::new(ctx.sink.clone());
+    let mut forwards = Forwards::new(ctx.sink.clone(), ctx.opts.connect_timeout);
     let mut sftp = None;
     let reason = drive(&ctx, &chain, cols, rows, &mut rx, &mut forwards, &mut sftp).await;
     if let Some(sftp) = sftp {
@@ -431,7 +431,7 @@ async fn open_shell(
         .map(|c| c.forwards.as_slice())
         .unwrap_or_default();
     for rule in rules.iter().filter(|r| auto_start(r)) {
-        let _ = forwards.start(&chain.target, rule.clone()).await;
+        forwards.start_stored(&chain.target, rule.clone()).await;
     }
     ctx.sink.event(SessionEvent::Status {
         stage: Stage::Ready,

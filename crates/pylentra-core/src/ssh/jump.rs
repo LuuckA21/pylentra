@@ -112,6 +112,7 @@ async fn connect_hop(
         sink: ctx.sink.clone(),
         prompting,
         routes,
+        connect_timeout: ctx.opts.connect_timeout,
     };
     let attempt = async {
         match via {

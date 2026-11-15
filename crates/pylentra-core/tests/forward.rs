@@ -10,7 +10,7 @@ use pylentra_core::model::{AuthMethod, Connection, ForwardRule};
 use pylentra_core::secrets::{MemorySecretStore, SecretKind, SecretStore};
 use pylentra_core::ssh::events::{ForwardState, SessionEvent, Stage};
 use pylentra_core::ssh::{SessionId, SessionManager, SessionOptions};
-use support::{CollectSink, TestServer, TestServerConfig, spawn_tcp_echo};
+use support::{CollectSink, ForwardQuirk, TestServer, TestServerConfig, spawn_tcp_echo};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -27,16 +27,17 @@ struct Env {
 }
 
 async fn env() -> Env {
+    env_with(ForwardQuirk::None, SessionOptions::default()).await
+}
+
+async fn env_with(forward_quirk: ForwardQuirk, opts: SessionOptions) -> Env {
     let dir = TempDir::new().unwrap();
     let known_hosts = Arc::new(KnownHosts::new(dir.path().join("known_hosts"), None));
     let secrets = Arc::new(MemorySecretStore::default());
-    let mgr = SessionManager::new(
-        secrets.clone(),
-        known_hosts.clone(),
-        SessionOptions::default(),
-    );
+    let mgr = SessionManager::new(secrets.clone(), known_hosts.clone(), opts);
     let server = TestServer::start(TestServerConfig {
         password: Some(PW.into()),
+        forward_quirk,
         ..Default::default()
     })
     .await;
@@ -86,6 +87,15 @@ async fn open_ready(env: &Env, forwards: Vec<ForwardRule>) -> (SessionId, Arc<Co
         .open(vec![conn(env, forwards)], 80, 24, sink.clone());
     sink.wait_event(is_ready, T).await;
     (id, sink)
+}
+
+/// Stored rules must name a port: a free one, as of now.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind(("127.0.0.1", 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 fn local(bind_port: u16, dest: u16, auto_start: bool) -> ForwardRule {
@@ -329,7 +339,7 @@ async fn auto_start_forwards_active_before_ready() {
         .await
         .unwrap();
     let rules = vec![
-        local(0, echo.port(), true),
+        local(free_port(), echo.port(), true),
         // Not started: auto_start is off.
         local(0, echo.port(), false),
         // Fails, yet the session still reaches Ready.
@@ -404,7 +414,7 @@ async fn unknown_session_or_forward_is_not_found() {
 async fn session_close_stops_forwards() {
     let env = env().await;
     let echo = spawn_tcp_echo().await;
-    let (id, sink) = open_ready(&env, vec![local(0, echo.port(), true)]).await;
+    let (id, sink) = open_ready(&env, vec![local(free_port(), echo.port(), true)]).await;
     let fid = env
         .mgr
         .forward_start(id, local(0, echo.port(), false))
@@ -539,7 +549,7 @@ async fn dynamic_forward_stop_frees_port() {
 async fn dynamic_auto_start() {
     let env = env().await;
     let echo = spawn_tcp_echo().await;
-    let (id, sink) = open_ready(&env, vec![dynamic(0, true), dynamic(0, false)]).await;
+    let (id, sink) = open_ready(&env, vec![dynamic(free_port(), true), dynamic(0, false)]).await;
 
     let events = sink.events.lock().unwrap().clone();
     let ready = events.iter().position(is_ready).unwrap();
@@ -561,5 +571,104 @@ async fn dynamic_auto_start() {
         .unwrap();
     assert_eq!(code, 0x00);
     echo_through(&mut tcp).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn local_forward_caps_concurrent_relays() {
+    let env = env().await;
+    let echo = spawn_tcp_echo().await;
+    let (id, sink) = open_ready(&env, vec![]).await;
+    let fid = env
+        .mgr
+        .forward_start(id, local(0, echo.port(), false))
+        .await
+        .unwrap();
+    let port = bound_port(&sink, fid).await;
+
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        let mut tcp = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        tcp.write_all(b"ping").await.unwrap();
+        tcp.read_exact(&mut [0u8; 4]).await.unwrap();
+        held.push(tcp);
+    }
+    // One past the cap is closed without a relay.
+    let mut extra = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let n = tokio::time::timeout(T, extra.read(&mut [0u8; 1]))
+        .await
+        .unwrap();
+    assert!(matches!(n, Ok(0) | Err(_)));
+    // A slot freed by a closing relay is usable again.
+    held.pop();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    ping(port).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_forward_never_replaces_an_occupied_route() {
+    let env = env_with(ForwardQuirk::ReuseFirstPort, SessionOptions::default()).await;
+    let echo = spawn_tcp_echo().await;
+    let (id, sink) = open_ready(&env, vec![]).await;
+    let first = env
+        .mgr
+        .forward_start(id, remote(0, echo.port()))
+        .await
+        .unwrap();
+    let taken = bound_port(&sink, first).await;
+
+    // The server answers the first forward's port for the second one.
+    let err = env.mgr.forward_start(id, remote(0, 1)).await.unwrap_err();
+    assert_eq!(err.code(), "forward.rejected");
+    // The first route still reaches its own destination.
+    ping(taken).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn stalled_forward_request_times_out_and_session_recovers() {
+    let opts = SessionOptions {
+        connect_timeout: Duration::from_millis(300),
+        ..Default::default()
+    };
+    let env = env_with(ForwardQuirk::Stall(Duration::from_secs(2)), opts).await;
+    let echo = spawn_tcp_echo().await;
+    let (id, sink) = open_ready(&env, vec![]).await;
+
+    let started = tokio::time::Instant::now();
+    let err = env
+        .mgr
+        .forward_start(id, remote(0, echo.port()))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "forward.rejected");
+    assert!(started.elapsed() < Duration::from_millis(1500));
+    // Input flows again once the stalled server wakes.
+    env.mgr.write(id, b"ok".to_vec()).await.unwrap();
+    sink.wait_data_len(2, T).await;
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn auto_start_skips_rules_validation_refuses() {
+    let env = env().await;
+    let echo = spawn_tcp_echo().await;
+    let bad = ForwardRule::Local {
+        bind_host: "localhost".into(),
+        bind_port: 1,
+        dest_host: "127.0.0.1".into(),
+        dest_port: echo.port(),
+        auto_start: true,
+    };
+    let (id, sink) = open_ready(&env, vec![bad]).await;
+    sink.wait_event(
+        |e| {
+            matches!(e, SessionEvent::Forward { state: ForwardState::Failed { error }, .. }
+                if error.code == "config.invalid")
+        },
+        T,
+    )
+    .await;
     env.mgr.close(id).await.unwrap();
 }

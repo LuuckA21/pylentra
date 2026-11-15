@@ -23,6 +23,7 @@ pub(crate) struct ClientHandler {
     /// True while the user is answering the host-key prompt (the connect timeout pauses).
     pub prompting: watch::Sender<bool>,
     pub routes: RemoteRoutes,
+    pub connect_timeout: std::time::Duration,
 }
 
 impl client::Handler for ClientHandler {
@@ -88,6 +89,7 @@ impl client::Handler for ClientHandler {
             connected_port,
             channel,
             reply,
+            self.connect_timeout,
         ));
         Ok(())
     }
