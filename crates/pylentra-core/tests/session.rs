@@ -299,6 +299,89 @@ async fn mismatch_closes_without_prompt() {
     )));
 }
 
+fn ecdsa() -> PrivateKey {
+    let curve = russh::keys::EcdsaCurve::NistP256;
+    PrivateKey::random(&mut rand::rng(), Algorithm::Ecdsa { curve }).unwrap()
+}
+
+/// Connects to `server` with a stored password; true once Ready, false on a host-key event.
+async fn connects_silently(env: &Env, server: &TestServer) -> bool {
+    let c = conn("127.0.0.1", server.addr.port());
+    env.secrets
+        .set(c.id, SecretKind::Password, &PW.to_string().into())
+        .unwrap();
+    let sink = Arc::new(CollectSink::default());
+    env.mgr.open(vec![c], 80, 24, sink.clone());
+    let ev = sink
+        .wait_event(
+            |e| {
+                is_ready(e)
+                    || matches!(
+                        e,
+                        SessionEvent::HostKeyPrompt { .. } | SessionEvent::HostKeyMismatch { .. }
+                    )
+            },
+            T,
+        )
+        .await;
+    is_ready(&ev)
+}
+
+#[tokio::test]
+async fn known_key_type_is_negotiated_first() {
+    let (ed, ec) = (
+        PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap(),
+        ecdsa(),
+    );
+    let server = TestServer::start(TestServerConfig {
+        password: Some(PW.into()),
+        host_key: Some(ed.clone()),
+        extra_host_keys: vec![ec.clone()],
+        ..Default::default()
+    })
+    .await;
+    let port = server.addr.port();
+    // With only the ECDSA key known, russh's default order would negotiate ed25519 and prompt.
+    for known in [&ec, &ed] {
+        let env = env();
+        env.known_hosts
+            .learn("127.0.0.1", port, known.public_key())
+            .unwrap();
+        assert!(connects_silently(&env, &server).await);
+    }
+}
+
+#[tokio::test]
+async fn key_of_an_unknown_type_is_a_mismatch_when_others_are_known() {
+    let server = TestServer::start(TestServerConfig {
+        password: Some(PW.into()),
+        host_key: Some(ecdsa()),
+        ..Default::default()
+    })
+    .await;
+    let env = env();
+    let known = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+    env.known_hosts
+        .learn("127.0.0.1", server.addr.port(), known.public_key())
+        .unwrap();
+    let c = conn("127.0.0.1", server.addr.port());
+    let sink = Arc::new(CollectSink::default());
+    env.mgr.open(vec![c], 80, 24, sink.clone());
+    let ev = sink
+        .wait_event(|e| matches!(e, SessionEvent::HostKeyMismatch { .. }), T)
+        .await;
+    let SessionEvent::HostKeyMismatch { expected, got, .. } = ev else {
+        unreachable!()
+    };
+    assert_eq!(expected, fingerprint(known.public_key()));
+    assert_eq!(got, fingerprint(&server.host_key));
+    assert_eq!(closed_code(&sink).await, "hostkey.mismatch");
+    assert!(!has_event(&sink, |e| matches!(
+        e,
+        SessionEvent::HostKeyPrompt { .. }
+    )));
+}
+
 #[tokio::test]
 async fn missing_password_prompts() {
     let server = pw_server().await;

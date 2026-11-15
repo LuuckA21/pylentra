@@ -157,6 +157,8 @@ export const it: Record<MessageKey, string> = {
   "session.forget": "Dimentica host",
   "session.opensshHint":
     "La chiave precedente \u00e8 nel known_hosts di OpenSSH. Se il cambio \u00e8 previsto, rimuovila con:",
+  "session.systemHint":
+    "La chiave precedente \u00e8 nel file ssh_known_hosts di sistema, che Pylentra legge soltanto. Se il cambio \u00e8 previsto, chiedi all\u2019amministratore di aggiornarlo.",
   "hostkey.title": "Host key sconosciuta",
   "hostkey.body":
     "Non \u00e8 possibile verificare l\u2019autenticit\u00e0 di {host}:{port}. Confronta il fingerprint con quello del server prima di fidarti.",
@@ -278,7 +280,7 @@ export const it: Record<MessageKey, string> = {
   "settings.knownHostsEmpty": "Nessuna chiave host salvata.",
   "settings.knownHostsEncrypted": "Voce cifrata",
   "settings.knownHostsNote":
-    "Le voci di ~/.ssh/known_hosts sono usate in sola lettura e non si gestiscono qui.",
+    "Le voci di ~/.ssh/known_hosts e del file ssh_known_hosts di sistema sono usate in sola lettura e non si gestiscono qui.",
   "settings.checkUpdates": "Cerca aggiornamenti all'avvio",
   "settings.installedVersion": "Versione installata",
   "settings.language": "Lingua",

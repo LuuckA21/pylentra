@@ -796,7 +796,7 @@ mod tests {
 
     fn state_with(secrets: Arc<dyn SecretStore>) -> (TempDir, AppState) {
         let dir = TempDir::new().unwrap();
-        let state = AppState::load(dir.path(), None, secrets).unwrap();
+        let state = AppState::load(dir.path(), None, None, secrets).unwrap();
         (dir, state)
     }
 
@@ -867,7 +867,8 @@ mod tests {
             "futuro = \"x\"\nfuturo_nan = nan\nfuturo_arr = [nan]\n[futuro_tab]\nx = inf\n",
         )
         .unwrap();
-        let state = AppState::load(d.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state =
+            AppState::load(d.path(), None, None, Arc::new(MemorySecretStore::default())).unwrap();
         // What the UI does: get, JSON, back, with `futuro_nan` now `null`.
         let json = serde_json::to_string(&do_settings_get(&state)).unwrap();
         assert!(json.contains("\"futuro\":\"x\""), "{json}");
@@ -1084,8 +1085,13 @@ mod tests {
     fn startup_warnings_reports_corrupt_backup() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("connections.toml"), "not = [valid").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.recovered_corrupt");
@@ -1141,7 +1147,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let a = conn("a");
         let secrets = Arc::new(MemorySecretStore::default());
-        let state = AppState::load(dir.path(), None, secrets.clone()).unwrap();
+        let state = AppState::load(dir.path(), None, None, secrets.clone()).unwrap();
         do_connection_save(&state, a.clone(), None, None).unwrap();
         drop(state);
         std::fs::write(
@@ -1153,7 +1159,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let state = AppState::load(dir.path(), None, secrets).unwrap();
+        let state = AppState::load(dir.path(), None, None, secrets).unwrap();
         do_connection_delete(&state, a.id).unwrap();
         assert!(do_library_get(&state).connections.is_empty());
         assert_eq!(do_snippets_get(&state).len(), 1);
@@ -1163,8 +1169,13 @@ mod tests {
     fn startup_warnings_reports_corrupt_snippets() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "not = [valid").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.recovered_corrupt");
@@ -1177,8 +1188,13 @@ mod tests {
     fn startup_warnings_reports_newer_snippets_read_only() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.read_only");
@@ -1191,8 +1207,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         // A directory where the file should be: reading it fails, not with NotFound.
         std::fs::create_dir(dir.path().join("snippets.toml")).unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.unreadable");
@@ -1211,8 +1232,13 @@ mod tests {
     fn startup_warnings_reports_newer_version_read_only() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("connections.toml"), "version = 7\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.read_only");
@@ -1482,8 +1508,13 @@ mod tests {
             ),
         )
         .unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let path = dir.path().join("export.toml");
         assert!(
             do_library_export(&state, &path, "2026-10-30")
@@ -1505,8 +1536,13 @@ mod tests {
         );
         std::fs::write(&conns, "version = 9\n").unwrap();
         std::fs::write(&snips, "version = 1\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let selected = all_rows(&state, &path);
         let err = do_library_import(&state, &path, &selected).unwrap_err();
         assert_eq!(err.code, CoreError::ReadOnly.code());
@@ -1521,8 +1557,13 @@ mod tests {
         let path = exported(&files);
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let selected = all_rows(&state, &path);
         let err = do_library_import(&state, &path, &selected).unwrap_err();
         assert_eq!(err.code, CoreError::ReadOnly.code());
@@ -1574,8 +1615,13 @@ mod tests {
         let path = exported(&files);
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let selected = do_library_import_pick(&state, path)
             .unwrap()
             .preview

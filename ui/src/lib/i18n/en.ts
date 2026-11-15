@@ -154,6 +154,8 @@ export const en = {
   "session.forget": "Forget host",
   "session.opensshHint":
     "The old key is in your OpenSSH known_hosts. If the change is expected, remove it with:",
+  "session.systemHint":
+    "The old key is in the system-wide ssh_known_hosts, which Pylentra only reads. If the change is expected, ask the administrator to update it.",
   "hostkey.title": "Unknown host key",
   "hostkey.body":
     "The authenticity of {host}:{port} cannot be verified. Compare the fingerprint with the one of the server before trusting it.",
@@ -274,7 +276,7 @@ export const en = {
   "settings.knownHostsEmpty": "No saved host keys.",
   "settings.knownHostsEncrypted": "Encrypted entry",
   "settings.knownHostsNote":
-    "Entries in ~/.ssh/known_hosts are used read-only and are not managed here.",
+    "Entries in ~/.ssh/known_hosts and in the system-wide ssh_known_hosts are used read-only and are not managed here.",
   "settings.checkUpdates": "Check for updates at startup",
   "settings.installedVersion": "Installed version",
   "settings.language": "Language",

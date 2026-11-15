@@ -13,6 +13,8 @@ All notable changes to Pylentra are documented here. The format follows
 - SHA-1 RSA signatures (`ssh-rsa`) are no longer accepted for host keys or used for RSA user keys, as in OpenSSH 8.8 and later; `rsa-sha2-256` and `rsa-sha2-512` still work. Servers older than OpenSSH 7.2 that only offer `ssh-rsa` now fail with a clear error, for the host key and for RSA user keys.
 - A keyboard-interactive login that asks more than 32 questions at once is refused, so a hostile server can no longer stall the app with a huge prompt.
 - Terminal output is slowed to the speed the terminal can draw it (at most 4 MB waiting), so a server flooding output can no longer grow the app's memory without bound.
+- A known host that presents a key of a type Pylentra has no key for, while keys of other types are known for it, is blocked as a changed key instead of asking to trust a new key, so an attacker can no longer turn a key change into a routine first-connection prompt. Pylentra now asks each server (jump hosts included) for the key types it already knows for that host first, so hosts known only by an ECDSA or RSA key keep connecting.
+- The system-wide `ssh_known_hosts` (`/etc/ssh/ssh_known_hosts`, on Windows `%ProgramData%\ssh\ssh_known_hosts`) is read, never written, like `~/.ssh/known_hosts`: a host whose key is listed there connects without a prompt, and a different key is blocked.
 
 ## [0.8.0] - 2026-11-10
 

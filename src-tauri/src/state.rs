@@ -25,10 +25,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// `openssh_known_hosts` is only ever read.
+    /// `openssh_known_hosts` and `system_known_hosts` are only ever read.
     pub fn load(
         config_dir: &Path,
         openssh_known_hosts: Option<PathBuf>,
+        system_known_hosts: Option<PathBuf>,
         secrets: Arc<dyn SecretStore>,
     ) -> Result<Self, CoreError> {
         let (store, conn_outcome) = ConnectionStore::load(config_dir.join("connections.toml"))?;
@@ -47,10 +48,10 @@ impl AppState {
                 (SnippetStore::unavailable(snippets_path), Some(w))
             }
         };
-        let known_hosts = Arc::new(KnownHosts::new(
-            config_dir.join("known_hosts"),
-            openssh_known_hosts,
-        ));
+        let known_hosts = Arc::new(
+            KnownHosts::new(config_dir.join("known_hosts"), openssh_known_hosts)
+                .with_system(system_known_hosts),
+        );
         let (connect_timeout, keepalive_interval) = settings.get().session_timeouts();
         let sessions = SessionManager::new(
             secrets.clone(),

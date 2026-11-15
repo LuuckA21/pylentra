@@ -51,6 +51,8 @@
       {#if mismatch.source === "OpenSsh"}
         <p>{t("session.opensshHint")}</p>
         <pre><code>{keygenHint(mismatch.host, mismatch.port)}</code></pre>
+      {:else if mismatch.source === "System"}
+        <p>{t("session.systemHint")}</p>
       {/if}
     {/if}
     <div class="actions">

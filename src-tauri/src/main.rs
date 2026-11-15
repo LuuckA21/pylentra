@@ -49,9 +49,17 @@ fn main() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let openssh = std::env::home_dir().map(|h| h.join(".ssh").join("known_hosts"));
+            // OpenSSH's default GlobalKnownHostsFile.
+            let system = if cfg!(windows) {
+                std::env::var_os("ProgramData")
+                    .map(|d| std::path::Path::new(&d).join("ssh").join("ssh_known_hosts"))
+            } else {
+                Some("/etc/ssh/ssh_known_hosts".into())
+            };
             app.manage(AppState::load(
                 &config_dir,
                 openssh,
+                system,
                 Arc::new(KeyringStore),
             )?);
             Ok(())

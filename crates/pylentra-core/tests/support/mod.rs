@@ -45,6 +45,8 @@ pub struct TestServerConfig {
     pub sftp_hostile: Hostile,
     /// `None`: a fresh ed25519 key.
     pub host_key: Option<PrivateKey>,
+    /// More host keys, of other types, the server also offers.
+    pub extra_host_keys: Vec<PrivateKey>,
     /// Host key and user signature algorithms (`server-sig-algs`); `None`: russh's defaults.
     pub key_algos: Option<Vec<Algorithm>>,
 }
@@ -64,6 +66,7 @@ impl Default for TestServerConfig {
             sftp_root: None,
             sftp_hostile: Hostile::None,
             host_key: None,
+            extra_host_keys: Vec::new(),
             key_algos: None,
         }
     }
@@ -105,7 +108,9 @@ impl TestServer {
             methods.push(MethodKind::PublicKey);
         }
         let config = Arc::new(Config {
-            keys: vec![key],
+            keys: std::iter::once(key)
+                .chain(cfg.extra_host_keys.iter().cloned())
+                .collect(),
             methods: methods.clone(),
             // Rejections are instant so failing-auth tests stay fast.
             auth_rejection_time: Duration::ZERO,

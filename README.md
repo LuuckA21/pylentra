@@ -57,8 +57,17 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   taskbar pin or Start menu shortcut can keep showing the old one until
   Windows refreshes its icon cache: restart, or run `ie4uinit.exe -show`.
 - **`known_hosts`:** `@revoked` and `@cert-authority` markers and wildcard host
-  patterns in `~/.ssh/known_hosts` are not honoured. Pylentra only reads that
-  file and never writes to `~/.ssh`.
+  patterns in `~/.ssh/known_hosts` and the system-wide `ssh_known_hosts`
+  (`/etc/ssh/ssh_known_hosts`, on Windows `%ProgramData%\ssh\ssh_known_hosts`)
+  are not honoured. Pylentra only reads those files and never writes to them.
+  `HostKeyAlias`, `UserKnownHostsFile` and `GlobalKnownHostsFile` in
+  `~/.ssh/config` are ignored: keys are looked up under the connection's host
+  in those two files and Pylentra's own.
+- **Host key type.** Pylentra asks the server first for the key types it
+  already knows for that host. If the server only offers a different type (for
+  example it replaced its ECDSA key with an ed25519 one), the connection is
+  blocked as a changed key: if the change is expected, forget the old key
+  (or remove it with `ssh-keygen -R`) and connect again.
 - **SFTP.** No rename, delete, new folder or permission editing yet.
   Symbolic links and special files are skipped. If the connection drops during
   an upload, a `<name>.<n>.pylentra-tmp` file can remain on the server (never
