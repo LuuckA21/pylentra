@@ -130,7 +130,7 @@
       pane.paneId,
       tm.cols,
       tm.rows,
-      (bytes) => tm.write(bytes),
+      (bytes, done) => tm.write(bytes, done),
       (e) => {
         if (e.type === "Status" && e.stage === "Ready") {
           wasReady = true;

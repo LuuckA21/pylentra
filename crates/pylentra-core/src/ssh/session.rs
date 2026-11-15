@@ -16,7 +16,7 @@ use super::forward::{Forwards, auto_start};
 use super::handler::ClientHandler;
 use super::jump::{Chain, ChainCtx, connect_chain};
 use super::sftp::{Listing, Sftp, SftpCmd};
-use super::{PromptBroker, SessionId, SessionSink};
+use super::{MAX_UNACKED, PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
 use crate::known_hosts::KnownHosts;
 use crate::model::{Connection, ForwardRule};
@@ -157,6 +157,16 @@ impl SessionManager {
 
     pub async fn resize(&self, id: SessionId, cols: u16, rows: u16) -> Result<(), CoreError> {
         self.send(id, Command::Resize(cols, rows)).await
+    }
+
+    /// The consumer of the session's output processed `n` more bytes.
+    pub fn ack(&self, id: SessionId, n: usize) -> Result<(), CoreError> {
+        lock(&self.sessions)
+            .get(&id)
+            .ok_or_else(|| not_found(id))?
+            .sink
+            .ack(n);
+        Ok(())
     }
 
     /// Resolves the session's pending prompt; `NotFound` if there is none.
@@ -448,6 +458,13 @@ async fn io_loop(
 async fn read_loop(reader: &mut ChannelReadHalf, sink: &dyn SessionSink) -> CloseReason {
     let mut exit = None;
     loop {
+        // Not reading fills russh's channel buffer, which stops it reading the socket, so
+        // TCP slows the server down. That also pauses this connection's other channels.
+        // shortcut: polls every 10 ms while the UI is behind; a Notify from `ack` would
+        // resume at once, if that latency ever shows.
+        while sink.unacked() > MAX_UNACKED {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         match reader.wait().await {
             Some(ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. }) => {
                 sink.data(data.to_vec());

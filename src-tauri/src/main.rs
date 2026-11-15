@@ -110,6 +110,7 @@ fn main() {
             commands::session_open_quick,
             commands::session_write,
             commands::session_resize,
+            commands::session_ack,
             commands::session_answer,
             commands::session_close,
             commands::sftp_list,

@@ -60,24 +60,36 @@ export const snippetDelete = (id: string) =>
 const toBytes = (m: ArrayBuffer | ArrayLike<number>): Uint8Array =>
   m instanceof ArrayBuffer ? new Uint8Array(m) : Uint8Array.from(m);
 
+// `onData` calls `done` once the bytes are rendered: the session stops reading
+// the server while too many are not.
+export type OnData = (bytes: Uint8Array, done: () => void) => void;
+
 function openWithChannels(
   command: string,
   args: Record<string, unknown>,
-  onData: (bytes: Uint8Array) => void,
+  onData: OnData,
   onEvent: (e: SessionEvent) => void,
 ): Promise<string> {
   const data = new Channel<ArrayBuffer | number[]>();
-  data.onmessage = (m) => onData(toBytes(m));
   const events = new Channel<SessionEvent>();
   events.onmessage = onEvent;
-  return invoke<string>(command, { ...args, data, events });
+  const id = invoke<string>(command, { ...args, data, events });
+  data.onmessage = (m) => {
+    const bytes = toBytes(m);
+    onData(bytes, () => {
+      id.then((id) =>
+        invoke<void>("session_ack", { id, n: bytes.length }),
+      ).catch(() => {});
+    });
+  };
+  return id;
 }
 
 export const sessionOpen = (
   connectionId: string,
   cols: number,
   rows: number,
-  onData: (bytes: Uint8Array) => void,
+  onData: OnData,
   onEvent: (e: SessionEvent) => void,
 ) =>
   openWithChannels(
@@ -92,7 +104,7 @@ export const sessionOpenQuick = (
   connection: Connection,
   cols: number,
   rows: number,
-  onData: (bytes: Uint8Array) => void,
+  onData: OnData,
   onEvent: (e: SessionEvent) => void,
 ) =>
   openWithChannels(

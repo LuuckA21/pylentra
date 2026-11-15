@@ -20,10 +20,20 @@ pub use session::{CLOSE_TIMEOUT, SessionManager, SessionOptions};
 
 pub type SessionId = Uuid;
 
+/// Terminal output a sink may hold unacknowledged before the session stops reading it.
+pub const MAX_UNACKED: usize = 4 << 20;
+
 /// Receiver of everything a session produces: terminal bytes and lifecycle events.
 pub trait SessionSink: Send + Sync + 'static {
     fn data(&self, bytes: Vec<u8>);
     fn event(&self, ev: SessionEvent);
+    /// Bytes given to `data` that the consumer has not acknowledged with `ack` yet. Above
+    /// [`MAX_UNACKED`] the session stops reading, so the server slows down instead of the
+    /// output piling up. A sink that consumes the bytes at once keeps the default.
+    fn unacked(&self) -> usize {
+        0
+    }
+    fn ack(&self, _n: usize) {}
 }
 
 /// Prompts waiting for the UI, at most one per session.

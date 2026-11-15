@@ -2,6 +2,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
 use pylentra_core::error::CoreError;
@@ -9,7 +10,7 @@ use pylentra_core::known_hosts::{HostKeyStatus, KnownHosts, fingerprint};
 use pylentra_core::model::{AuthMethod, Connection};
 use pylentra_core::secrets::{MemorySecretStore, SecretKind, SecretStore};
 use pylentra_core::ssh::events::{CloseReason, PromptAnswer, PromptKind, SessionEvent, Stage};
-use pylentra_core::ssh::{SessionId, SessionManager, SessionOptions};
+use pylentra_core::ssh::{MAX_UNACKED, SessionId, SessionManager, SessionOptions, SessionSink};
 use russh::keys::{Algorithm, PrivateKey};
 use support::{CollectSink, TestServer, TestServerConfig};
 use tempfile::TempDir;
@@ -476,6 +477,72 @@ async fn burst_output_arrives_complete_and_ordered() {
     }
     sink.wait_data_len(TOTAL, Duration::from_secs(60)).await;
     assert!(*sink.data.lock().unwrap() == input);
+}
+
+/// A UI that renders nothing until `render` is set: every byte stays unacknowledged.
+#[derive(Default)]
+struct SlowSink {
+    inner: CollectSink,
+    unacked: AtomicUsize,
+    render: AtomicBool,
+}
+
+impl SessionSink for SlowSink {
+    fn data(&self, bytes: Vec<u8>) {
+        if !self.render.load(Relaxed) {
+            self.unacked.fetch_add(bytes.len(), Relaxed);
+        }
+        self.inner.data(bytes);
+    }
+
+    fn event(&self, ev: SessionEvent) {
+        self.inner.event(ev);
+    }
+
+    fn unacked(&self) -> usize {
+        self.unacked.load(Relaxed)
+    }
+
+    fn ack(&self, n: usize) {
+        self.unacked.fetch_sub(n, Relaxed);
+    }
+}
+
+#[tokio::test]
+async fn output_pauses_while_the_ui_is_behind() {
+    const TOTAL: usize = 2 * MAX_UNACKED;
+    let server = pw_server().await;
+    let env = env();
+    let sink = Arc::new(SlowSink::default());
+    let id = env
+        .mgr
+        .open(vec![trusted_conn(&env, &server)], 80, 24, sink.clone());
+    sink.inner.wait_event(is_ready, T).await;
+    let input: Vec<u8> = (0..TOTAL).map(|i| (i % 251) as u8).collect();
+    let writes = async {
+        for chunk in input.chunks(32 * 1024) {
+            env.mgr.write(id, chunk.to_vec()).await.unwrap();
+        }
+    };
+    let reads = async {
+        sink.inner
+            .wait_data_len(MAX_UNACKED, Duration::from_secs(60))
+            .await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // One more message may pass the check; the next read waits.
+        let held = sink.inner.data.lock().unwrap().len();
+        assert!(
+            held <= MAX_UNACKED + 64 * 1024,
+            "{held} bytes passed the cap"
+        );
+        sink.render.store(true, Relaxed);
+        env.mgr.ack(id, held).unwrap();
+        sink.inner
+            .wait_data_len(TOTAL, Duration::from_secs(60))
+            .await;
+    };
+    tokio::join!(writes, reads);
+    assert!(*sink.inner.data.lock().unwrap() == input);
 }
 
 #[tokio::test]

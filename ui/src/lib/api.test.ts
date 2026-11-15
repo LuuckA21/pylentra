@@ -57,10 +57,18 @@ test("sessionOpen passes raw ArrayBuffer to onData as Uint8Array", async () => {
   });
   data.onmessage(new Uint8Array([104, 105]).buffer);
   data.onmessage([1, 2, 3]);
-  expect(onData.mock.calls).toEqual([
-    [new Uint8Array([104, 105])],
-    [new Uint8Array([1, 2, 3])],
+  expect(onData.mock.calls.map(([bytes]) => bytes)).toEqual([
+    new Uint8Array([104, 105]),
+    new Uint8Array([1, 2, 3]),
   ]);
+  // Rendered bytes are acknowledged, so the session keeps reading.
+  onData.mock.calls[1][1]();
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenLastCalledWith("session_ack", {
+      id: "sid",
+      n: 3,
+    }),
+  );
   const ev = { type: "Status", stage: "Ready" };
   events.onmessage(ev);
   expect(onEvent).toHaveBeenCalledWith(ev);
