@@ -613,6 +613,10 @@ test("an OSC 8 link asks with its real address and opens only http(s)", async ()
   await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(openUrl).not.toHaveBeenCalled();
   click("https://bänk.example/a b");
+  await fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(openUrl).not.toHaveBeenCalled();
+  click("https://bänk.example/a b");
   await fireEvent.click(screen.getByRole("button", { name: "Open" }));
   expect(openUrl).toHaveBeenCalledExactlyOnceWith(url);
   expect(screen.queryByRole("alertdialog")).toBeNull();
