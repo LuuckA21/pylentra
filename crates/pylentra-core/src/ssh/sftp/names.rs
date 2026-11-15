@@ -2,10 +2,13 @@
 
 pub(crate) const TEMP_SUFFIX: &str = "pylentra-tmp";
 pub(crate) const LOCAL_WINDOWS: bool = cfg!(windows);
+/// Bytes; real file systems stop at 255 bytes (Unix) or 255 UTF-16 units (NTFS, at most 765).
+pub(crate) const MAX_NAME: usize = 1024;
 
 /// True when `name` is one path component that is safe to create on a `windows` or Unix side.
 pub(crate) fn valid_name(name: &str, windows: bool) -> bool {
     if name.is_empty()
+        || name.len() > MAX_NAME
         || name == "."
         || name == ".."
         || name
@@ -65,6 +68,9 @@ mod tests {
             assert!(!valid_name(win, true), "{win}");
             assert!(valid_name(win, false) || win.contains(['/', '\\']), "{win}");
         }
+        let long = "a".repeat(MAX_NAME);
+        assert!(valid_name(&long, false));
+        assert!(!valid_name(&format!("{long}b"), false));
     }
 
     #[test]

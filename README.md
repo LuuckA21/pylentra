@@ -76,7 +76,9 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   renaming the new one leaves the complete new file under its temp name. Very
   large folders (tens of thousands of entries) list slowly. Files with very
   long names (over about 240 bytes) are skipped with an error, since the
-  temp name would exceed the system's file name limit.
+  temp name would exceed the system's file name limit; names over 1 KiB are
+  not listed at all. A folder transfer whose paths together exceed 64 MiB
+  stops with a safety-limit error.
 - **Very fast output** (for example `cat` of a huge file) is slowed to the
   speed the terminal can draw it, also while the window is minimized (the
   system then slows the app down). Until it catches up, file transfers and port

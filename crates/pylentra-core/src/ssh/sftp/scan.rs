@@ -15,6 +15,8 @@ use crate::ssh::events::{SkipReason, Skipped};
 
 const MAX_DEPTH: usize = 32;
 const MAX_ENTRIES: usize = 100_000;
+/// Bytes of paths one scan may make, so long names deep down cannot fill memory.
+const MAX_PATH_BYTES: usize = 64 << 20;
 
 #[derive(Debug)]
 pub struct Plan {
@@ -24,6 +26,8 @@ pub struct Plan {
     pub skipped: Vec<Skipped>,
     pub total_bytes: u64,
     max: usize,
+    /// Bytes of the paths made so far, planned, skipped or still waiting.
+    path_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -45,6 +49,7 @@ impl Plan {
             skipped: vec![],
             total_bytes: 0,
             max,
+            path_bytes: 0,
         }
     }
 
@@ -76,6 +81,15 @@ impl Plan {
     fn check(&self, pending: usize) -> Result<(), CoreError> {
         if self.dirs.len() + self.files.len() + self.skipped.len() + pending > self.max {
             return Err(limit("entries"));
+        }
+        Ok(())
+    }
+
+    /// Counts `p`, made for a child about to wait on the stack or be skipped.
+    fn path(&mut self, p: &str) -> Result<(), CoreError> {
+        self.path_bytes = self.path_bytes.saturating_add(p.len());
+        if self.path_bytes > MAX_PATH_BYTES {
+            return Err(limit("path length"));
         }
         Ok(())
     }
@@ -127,16 +141,13 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
                 };
                 for c in children {
                     let file_name = c.file_name();
-                    let child = match file_name.to_str().filter(|n| valid_name(n, false)) {
-                        Some(n) => join(&rel, n),
-                        None => {
-                            plan.skip(
-                                join(&rel, &file_name.to_string_lossy()),
-                                SkipReason::InvalidName,
-                            )?;
-                            continue;
-                        }
-                    };
+                    let valid = file_name.to_str().filter(|n| valid_name(n, false));
+                    let child = join(&rel, valid.unwrap_or(&file_name.to_string_lossy()));
+                    plan.path(&child)?;
+                    if valid.is_none() {
+                        plan.skip(child, SkipReason::InvalidName)?;
+                        continue;
+                    }
                     match fs::symlink_metadata(c.path()) {
                         Ok(m) => stack.push((c.path(), child, depth + 1, m)),
                         Err(e) => plan.skip(child, error(CoreError::Io(e)))?,
@@ -211,13 +222,16 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
                         return Err(limit("entries").into());
                     }
                     for bad in dir.invalid {
-                        plan.skip(join(&rel, &bad), SkipReason::InvalidName)?;
+                        let bad = join(&rel, &bad);
+                        plan.path(&bad)?;
+                        plan.skip(bad, SkipReason::InvalidName)?;
                     }
                     for c in dir.entries {
                         let child = (remote_join(&path, &c.name), join(&rel, &c.name));
+                        plan.path(&child.1)?;
                         stack.push((child.0, child.1, depth + 1, c));
+                        plan.check(stack.len())?;
                     }
-                    plan.check(stack.len())?;
                 }
             }
         }

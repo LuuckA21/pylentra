@@ -29,7 +29,7 @@ use super::handler::ClientHandler;
 use super::session::CLOSE_TIMEOUT;
 use super::{PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
-use names::{LOCAL_WINDOWS, valid_name};
+use names::{LOCAL_WINDOWS, MAX_NAME, valid_name};
 
 /// At most this many names are read from one directory (spec §4.6).
 const MAX_LISTING: usize = 100_000;
@@ -542,14 +542,28 @@ async fn read_dir(
                 return Ok(dir);
             }
             seen += 1;
-            // A repeated name would break the UI's keyed list and plan one file twice.
-            if matches!(f.filename.as_str(), "." | "..") || !names.insert(f.filename.clone()) {
+            if matches!(f.filename.as_str(), "." | "..") {
                 continue;
             }
-            if valid_name(&f.filename, LOCAL_WINDOWS) {
+            let valid = valid_name(&f.filename, LOCAL_WINDOWS);
+            if !valid && !keep_invalid {
+                continue;
+            }
+            let mut name = f.filename.clone();
+            // Kept short: an invalid name can be as long as a whole packet.
+            if !valid && name.len() > MAX_NAME {
+                let cut = (0..=MAX_NAME).rfind(|&i| name.is_char_boundary(i));
+                name.truncate(cut.unwrap_or(0));
+                name.push('…');
+            }
+            // A repeated name would break the UI's keyed list and plan one file twice.
+            if !names.insert(name.clone()) {
+                continue;
+            }
+            if valid {
                 dir.entries.push(entry(f));
-            } else if keep_invalid {
-                dir.invalid.push(f.filename);
+            } else {
+                dir.invalid.push(name);
             }
         }
     }

@@ -23,6 +23,9 @@ pub enum Hostile {
     Names(Vec<String>),
     /// Every directory contains a subdirectory `d`, which is another such directory.
     EndlessDirs,
+    /// Every directory contains 150 empty files and a subdirectory named `d` repeated this
+    /// many times, which is another such directory.
+    LongTree(usize),
     /// The "sftp" subsystem is accepted, but no SFTP reply ever comes.
     NeverAnswer,
     /// Every readdir answers a batch of "." and ".." and never ends.
@@ -98,10 +101,10 @@ impl SftpFs {
                 c => parts.push(c),
             }
         }
-        let endless = matches!(self.hostile, Hostile::EndlessDirs);
+        let endless = self.endless_dir();
         let real = parts
             .iter()
-            .filter(|c| !(endless && **c == "d"))
+            .filter(|c| endless.as_deref() != Some(**c))
             .fold(self.root.clone(), |p, c| p.join(c));
         Ok((format!("/{}", parts.join("/")), real))
     }
@@ -124,6 +127,15 @@ impl SftpFs {
                 .followed(parent)?
                 .join(real.file_name().expect("named"))),
             _ => Ok(real),
+        }
+    }
+
+    /// The name of the subdirectory every directory holds, if any.
+    fn endless_dir(&self) -> Option<String> {
+        match self.hostile {
+            Hostile::EndlessDirs => Some("d".into()),
+            Hostile::LongTree(n) => Some("d".repeat(n)),
+            _ => None,
         }
     }
 
@@ -162,6 +174,13 @@ impl SftpFs {
                 if !files.iter().any(|f| f.filename == "d") {
                     files.push(File::new("d", dir_attrs));
                 }
+            }
+            Hostile::LongTree(n) => {
+                let mut file = FileAttributes::default();
+                file.set_regular(true);
+                file.size = Some(0);
+                files.extend((0..150).map(|i| File::new(format!("f{i}"), file.clone())));
+                files.push(File::new("d".repeat(*n), dir_attrs));
             }
         }
         Ok(files)

@@ -131,7 +131,8 @@ async fn list_home() {
 #[tokio::test]
 async fn list_hides_invalid_names() {
     let root = TempDir::new().unwrap();
-    let extra = ["../x", "a/b", "CON", "ok"].map(String::from).to_vec();
+    let mut extra = ["../x", "a/b", "CON", "ok"].map(String::from).to_vec();
+    extra.push("x".repeat(1025));
     let env = env(Some(root.path()), Hostile::Names(extra), true).await;
     let id = open_ready(&env).await;
 
@@ -268,17 +269,46 @@ async fn remote_endless_dirs_stop() {
     env.mgr.close(id).await.unwrap();
 }
 
+/// Long names deep down cannot fill memory: the scan stops at its path budget, long before
+/// the depth or entry limit.
+#[tokio::test]
+async fn remote_long_deep_names_stop() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("top")).unwrap();
+    let env = env(Some(root.path()), Hostile::LongTree(1024), true).await;
+    let id = open_ready(&env).await;
+
+    let err = env
+        .mgr
+        .sftp_scan(id, vec!["/top".into()])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, CoreError::SftpLimit { what } if what == "path length"),
+        "{err:?}"
+    );
+    env.mgr.close(id).await.unwrap();
+}
+
 #[tokio::test]
 async fn remote_bad_names_skipped() {
     let root = TempDir::new().unwrap();
     fs::create_dir(root.path().join("top")).unwrap();
-    let env = env(Some(root.path()), Hostile::Names(vec!["../x".into()]), true).await;
+    let names = vec!["../x".into(), "y".repeat(100_000)];
+    let env = env(Some(root.path()), Hostile::Names(names), true).await;
     let id = open_ready(&env).await;
 
     let plan = env.mgr.sftp_scan(id, vec!["/top".into()]).await.unwrap();
-    assert_eq!(plan.skipped.len(), 1);
-    assert_eq!(plan.skipped[0].path, "top/../x");
-    assert_eq!(plan.skipped[0].reason, SkipReason::InvalidName);
+    let mut skipped: Vec<_> = plan.skipped.iter().map(|s| s.path.as_str()).collect();
+    skipped.sort();
+    // A name too long to keep is listed by its start.
+    let long = format!("top/{}…", "y".repeat(1024));
+    assert_eq!(skipped, ["top/../x", long.as_str()]);
+    assert!(
+        plan.skipped
+            .iter()
+            .all(|s| s.reason == SkipReason::InvalidName)
+    );
     env.mgr.close(id).await.unwrap();
 }
 

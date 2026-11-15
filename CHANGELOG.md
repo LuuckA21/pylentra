@@ -19,6 +19,7 @@ All notable changes to Pylentra are documented here. The format follows
 - Port forwarding is bounded: each forward and each session's remote forwards serve at most 128 connections at once (more are refused), connecting to a destination and opening a tunnel time out after the connect timeout, and a forward request the server never answers fails after that timeout instead of freezing the terminal.
 - A remote forward whose port the server reports as already used by another forward of the session is rejected instead of replacing that forward's route.
 - Forwards stored in `connections.toml` that the editor would refuse (a listening address that is not an IP address, port 0) are no longer auto-started; they show as failed in the forwards panel.
+- SFTP names longer than 1 KiB are left out of listings and skipped by transfers, and a folder transfer stops with a safety-limit error once its paths exceed 64 MiB, so a hostile server can no longer exhaust memory with huge names or deep trees.
 
 ## [0.8.0] - 2026-11-10
 
