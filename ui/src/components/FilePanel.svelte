@@ -156,7 +156,7 @@
   function download() {
     const items = chosen.map((e) => join(dir, e.name));
     if (pane.sessionId && items.length)
-      api.sftpDownload(pane.sessionId, items).catch(failed);
+      api.sftpDownload(pane.sessionId, items, current.lang).catch(failed);
   }
 
   function started(call: Promise<number | null>, target: string, drop = false) {
@@ -174,7 +174,10 @@
 
   function upload(folder: boolean) {
     if (pane.sessionId && dir)
-      started(api.sftpUploadPick(pane.sessionId, dir, folder), dir);
+      started(
+        api.sftpUploadPick(pane.sessionId, dir, folder, current.lang),
+        dir,
+      );
   }
 
   const UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];

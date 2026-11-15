@@ -112,11 +112,11 @@ test("Shift+click selects the range and Download sends those paths", async () =>
     "true",
   ]);
   await fireEvent.click(download);
-  expect(api.sftpDownload).toHaveBeenCalledWith("s1", [
-    "/home/u/zeta",
-    "/home/u/a.txt",
-    "/home/u/b.txt",
-  ]);
+  expect(api.sftpDownload).toHaveBeenCalledWith(
+    "s1",
+    ["/home/u/zeta", "/home/u/a.txt", "/home/u/b.txt"],
+    "en",
+  );
 });
 
 test("Ctrl+click and Space toggle single rows; Shift+arrows extend", async () => {
@@ -135,7 +135,7 @@ test("Ctrl+click and Space toggle single rows; Shift+arrows extend", async () =>
 test("Upload folder asks for a folder to send to the shown one", async () => {
   await shown();
   await fireEvent.click(screen.getByRole("button", { name: "Upload folder" }));
-  expect(api.sftpUploadPick).toHaveBeenCalledWith("s1", "/home/u", true);
+  expect(api.sftpUploadPick).toHaveBeenCalledWith("s1", "/home/u", true, "en");
 });
 
 test("a truncated listing says so", async () => {

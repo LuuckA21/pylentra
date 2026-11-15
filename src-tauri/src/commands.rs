@@ -643,6 +643,17 @@ async fn pick<T: Send + 'static>(
         .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))
 }
 
+/// The native title of a transfer's pick dialog, naming the server, so a lying webview cannot
+/// pass the pick off as something else. `lang`: the language the UI is shown in.
+fn transfer_title(lang: &str, host: &str, down: bool) -> String {
+    match (lang == "it", down) {
+        (false, true) => format!("Download from {host} into…"),
+        (true, true) => format!("Scarica da {host} in…"),
+        (false, false) => format!("Upload to {host}"),
+        (true, false) => format!("Carica su {host}"),
+    }
+}
+
 // The destination folder is picked here, so no local path comes from the webview.
 #[tauri::command]
 pub async fn sftp_download(
@@ -650,8 +661,10 @@ pub async fn sftp_download(
     state: State<'_, AppState>,
     session_id: SessionId,
     items: Vec<String>,
+    lang: String,
 ) -> Result<Option<u32>, ApiError> {
-    let picked = pick(&window, |d| d.blocking_pick_folder()).await?;
+    let title = transfer_title(&lang, &state.sessions.host(session_id)?, true);
+    let picked = pick(&window, |d| d.set_title(title).blocking_pick_folder()).await?;
     let Some(picked) = picked else {
         return Ok(None);
     };
@@ -668,8 +681,11 @@ pub async fn sftp_upload_pick(
     session_id: SessionId,
     remote_dir: String,
     folder: bool,
+    lang: String,
 ) -> Result<Option<u32>, ApiError> {
+    let title = transfer_title(&lang, &state.sessions.host(session_id)?, false);
     let items = pick(&window, move |d| {
+        let d = d.set_title(title);
         if folder {
             d.blocking_pick_folder().map(|f| vec![f])
         } else {
@@ -1696,6 +1712,14 @@ mod tests {
         for other in ["en", ""] {
             assert_eq!(all_files_label(other), "All files");
         }
+    }
+
+    #[test]
+    fn transfer_dialogs_name_the_server() {
+        assert_eq!(transfer_title("en", "h", true), "Download from h into…");
+        assert_eq!(transfer_title("it", "h", true), "Scarica da h in…");
+        assert_eq!(transfer_title("", "h", false), "Upload to h");
+        assert_eq!(transfer_title("it", "h", false), "Carica su h");
     }
 
     #[test]

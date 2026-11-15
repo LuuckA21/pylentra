@@ -107,6 +107,7 @@ async fn list_home() {
     let env = env(Some(root.path()), Hostile::None, true).await;
     let id = open_ready(&env).await;
 
+    assert_eq!(env.mgr.host(id).unwrap(), "127.0.0.1");
     let l = env.mgr.sftp_list(id, String::new()).await.unwrap();
     assert_eq!(l.dir, "/");
     assert!(!l.truncated);

@@ -66,6 +66,8 @@ struct SessionHandle {
     tx: mpsc::Sender<Command>,
     task: JoinHandle<()>,
     sink: Arc<dyn SessionSink>,
+    /// The target's host.
+    host: String,
 }
 
 type Sessions = Arc<Mutex<HashMap<SessionId, SessionHandle>>>;
@@ -133,6 +135,7 @@ impl SessionManager {
         sink: Arc<dyn SessionSink>,
     ) -> SessionId {
         let id = Uuid::new_v4();
+        let host = chain.last().map(|c| c.host.clone()).unwrap_or_default();
         let (tx, rx) = mpsc::channel(256);
         let ctx = Ctx {
             id,
@@ -147,8 +150,23 @@ impl SessionManager {
         // Locked across the spawn so the task cannot deregister before it is registered.
         let mut sessions = lock(&self.sessions);
         let task = tokio::spawn(run(ctx, chain, cols, rows, rx));
-        sessions.insert(id, SessionHandle { tx, task, sink });
+        let handle = SessionHandle {
+            tx,
+            task,
+            sink,
+            host,
+        };
+        sessions.insert(id, handle);
         id
+    }
+
+    /// The host session `id` connects to, for the titles of native dialogs.
+    pub fn host(&self, id: SessionId) -> Result<String, CoreError> {
+        let sessions = lock(&self.sessions);
+        sessions
+            .get(&id)
+            .map(|s| s.host.clone())
+            .ok_or_else(|| not_found(id))
     }
 
     pub async fn write(&self, id: SessionId, bytes: Vec<u8>) -> Result<(), CoreError> {

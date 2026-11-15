@@ -141,14 +141,24 @@ export const forwardStop = (sessionId: string, forwardId: number) =>
 // pick and download dialogs open on the Rust side (`null`: cancelled).
 export const sftpList = (sessionId: string, dir: string) =>
   invoke<Listing>("sftp_list", { sessionId, dir });
-export const sftpDownload = (sessionId: string, items: string[]) =>
-  invoke<number | null>("sftp_download", { sessionId, items });
+// `lang`: the language the UI is shown in, for the dialog's title.
+export const sftpDownload = (
+  sessionId: string,
+  items: string[],
+  lang: string,
+) => invoke<number | null>("sftp_download", { sessionId, items, lang });
 export const sftpUploadPick = (
   sessionId: string,
   remoteDir: string,
   folder: boolean,
+  lang: string,
 ) =>
-  invoke<number | null>("sftp_upload_pick", { sessionId, remoteDir, folder });
+  invoke<number | null>("sftp_upload_pick", {
+    sessionId,
+    remoteDir,
+    folder,
+    lang,
+  });
 export const sftpUploadDrop = (
   sessionId: string,
   dropId: number,
