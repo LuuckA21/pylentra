@@ -347,11 +347,25 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
     }
 
     // Concrete aliases in order of first appearance, ignoring case as OpenSSH does.
+    let is_literal = |p: &String| !p.contains(['*', '?']) && !p.starts_with('!');
     let mut aliases: Vec<(&str, Uuid)> = Vec::new();
-    for p in blocks.iter().flat_map(|b| &b.patterns) {
-        let concrete = !p.trim().is_empty() && !p.contains(['*', '?']) && !p.starts_with('!');
-        if concrete && !aliases.iter().any(|(a, _)| a.eq_ignore_ascii_case(p)) {
-            aliases.push((p, Uuid::new_v4()));
+    let mut seen: HashSet<String> = HashSet::new();
+    // Blocks of literal names only are found by lookup; the others are tested one by one.
+    // shortcut: wildcard blocks are still tried per alias, so many of them stay quadratic.
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut general: Vec<usize> = Vec::new();
+    for (bi, b) in blocks.iter().enumerate() {
+        if b.patterns.iter().all(is_literal) {
+            for p in &b.patterns {
+                by_name.entry(p.to_ascii_lowercase()).or_default().push(bi);
+            }
+        } else {
+            general.push(bi);
+        }
+        for p in &b.patterns {
+            if !p.trim().is_empty() && is_literal(p) && seen.insert(p.to_ascii_lowercase()) {
+                aliases.push((p, Uuid::new_v4()));
+            }
         }
     }
 
@@ -365,7 +379,19 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
             let mut first: HashMap<&str, &str> = HashMap::new();
             let mut forwards = Vec::new();
             let mut jump: Option<&[String]> = None;
-            for block in blocks.iter().filter(|b| block_matches(&b.patterns, alias)) {
+            let mut hits = by_name
+                .get(&alias.to_ascii_lowercase())
+                .cloned()
+                .unwrap_or_default();
+            hits.extend(
+                general
+                    .iter()
+                    .copied()
+                    .filter(|&bi| block_matches(&blocks[bi].patterns, alias)),
+            );
+            hits.sort_unstable();
+            hits.dedup();
+            for block in hits.into_iter().map(|bi| &blocks[bi]) {
                 for (key, args) in &block.lines {
                     // Forwards add up over every matching block; everything else keeps its first
                     // non-blank value (`HostName ""` would otherwise give an unimportable empty host).

@@ -80,9 +80,10 @@ pub(crate) fn create_temp(
 
 /// Writes a fresh `<path>.<n>.tmp`, syncs it and renames it over `path`, so
 /// readers never see a half-written file. The temporary file is created new,
-/// so a file that happens to have that name is never truncated.
+/// so a file that happens to have that name is never truncated. The file is private to the
+/// owner (0600 on Unix). A symlink at `path` is replaced by the new file, not written through.
 pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
-    let (tmp, mut f) = create_temp(path, "tmp", 0o666)?;
+    let (tmp, mut f) = create_temp(path, "tmp", 0o600)?;
     let mut write = || -> std::io::Result<()> {
         f.write_all(contents.as_bytes())?;
         f.sync_all()?;
@@ -816,6 +817,17 @@ mod tests {
         for taken in ["export.toml.tmp", "export.toml.0.tmp"] {
             assert_eq!(fs::read_to_string(d.path().join(taken)).unwrap(), "keep");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_creates_private_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("connections.toml");
+        atomic_write(&path, "x").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

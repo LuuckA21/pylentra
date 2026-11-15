@@ -100,6 +100,11 @@
           {#if jump}
             <p class="note" id="n-{r.id}-jump">{jump}</p>
           {/if}
+          {#if r.forwards.length}
+            <p class="note">
+              {t("library.forwards", { list: r.forwards.join(", ") })}
+            </p>
+          {/if}
         </li>
       {/each}
     </ul>

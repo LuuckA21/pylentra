@@ -10,7 +10,9 @@ use pylentra_core::export::{
     self, ExportDone, ExportFile, ImportCounts, ImportPick, ImportPreview,
 };
 use pylentra_core::known_hosts::KnownHostEntry;
-use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
+use pylentra_core::model::{
+    AuthMethod, Connection, ForwardRule, Group, Settings, Warning, key_found_or_unchecked,
+};
 use pylentra_core::secrets::SecretKind;
 use pylentra_core::snippets::Snippet;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
@@ -311,13 +313,6 @@ fn all_files_label(lang: &str) -> &'static str {
     } else {
         "All files"
     }
-}
-
-/// A network path (`\\host\share`, `//host/share`) is not checked: on Windows
-/// that alone contacts the host (SMB, NTLM) as soon as the preview opens.
-fn key_found_or_unchecked(path: &Path) -> bool {
-    let s = path.to_string_lossy();
-    s.starts_with(r"\\") || s.starts_with("//") || path.exists()
 }
 
 fn picked_path(picked: FilePath) -> Result<PathBuf, CoreError> {
@@ -1720,18 +1715,6 @@ mod tests {
         assert_eq!(transfer_title("it", "h", true), "Scarica da h in…");
         assert_eq!(transfer_title("", "h", false), "Upload to h");
         assert_eq!(transfer_title("it", "h", false), "Carica su h");
-    }
-
-    #[test]
-    fn key_check_skips_network_paths() {
-        let d = TempDir::new().unwrap();
-        let key = d.path().join("id");
-        std::fs::write(&key, "k").unwrap();
-        assert!(key_found_or_unchecked(&key));
-        assert!(!key_found_or_unchecked(&d.path().join("missing")));
-        for unc in [r"\\host\share\id", "//host/share/id"] {
-            assert!(key_found_or_unchecked(Path::new(unc)));
-        }
     }
 
     #[test]

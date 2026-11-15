@@ -302,6 +302,7 @@ export const en = {
   "library.via": "via {name}",
   "library.viaExisting": "via {name} (already present)",
   "library.jumpDropped": "will have no jump host ({name} not imported)",
+  "library.forwards": "forwards, not started automatically: {list}",
   "library.summary":
     "Groups in the file: {new} new, {reused} already present. Snippets: {global} new global, {perConnection} tied to connections.",
   "library.importN": "Import ({n})",

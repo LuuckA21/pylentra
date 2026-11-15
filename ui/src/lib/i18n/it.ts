@@ -306,6 +306,7 @@ export const it: Record<MessageKey, string> = {
   "library.via": "tramite {name}",
   "library.viaExisting": "tramite {name} (già presente)",
   "library.jumpDropped": "resterà senza jump host ({name} non importato)",
+  "library.forwards": "inoltri, non avviati automaticamente: {list}",
   "library.summary":
     "Gruppi nel file: {new} nuovi, {reused} già presenti. Snippet: {global} globali nuovi, {perConnection} legati alle connessioni.",
   "library.importN": "Importa ({n})",

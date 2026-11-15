@@ -28,6 +28,7 @@ const pick: ImportPick = {
         group: "Prod",
         duplicate: false,
         missing_key: null,
+        forwards: [],
         jump: null,
       },
       {
@@ -37,6 +38,7 @@ const pick: ImportPick = {
         group: null,
         duplicate: false,
         missing_key: "/home/u/.ssh/id_app",
+        forwards: [],
         jump: { name: "bastion", in_file: "b", existing: false },
       },
       {
@@ -46,6 +48,7 @@ const pick: ImportPick = {
         group: null,
         duplicate: true,
         missing_key: null,
+        forwards: [],
         jump: null,
       },
     ],

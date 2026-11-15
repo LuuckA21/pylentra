@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::model::{AuthMethod, Connection, Group, expand_home};
+use crate::model::{AuthMethod, Connection, ForwardRule, Group, expand_home};
 use crate::snippets::Snippet;
 use crate::store::Library;
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,9 @@ pub struct ImportRow {
     pub duplicate: bool,
     pub missing_key: Option<String>,
     pub jump: Option<JumpRef>,
+    /// Port forwards the connection carries, as `L bind:port:dest:port`. They never start
+    /// by themselves after an import.
+    pub forwards: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, TS)]
@@ -176,6 +179,7 @@ pub fn preview(
                 }
                 _ => None,
             },
+            forwards: c.forwards.iter().map(ForwardRule::summary).collect(),
             // A jump host missing from the file is shown by its id, as dropped.
             jump: c.jump_via.map(|id| match in_file(id) {
                 Some(j) => JumpRef {
@@ -272,10 +276,14 @@ pub fn plan(
                 Some(saved.id)
             })
         });
+        let mut forwards = c.forwards.clone();
+        // A shared file must not plant forwards that start on connect.
+        forwards.iter_mut().for_each(|f| f.set_auto_start(false));
         connections.push(Connection {
             id,
             group_id,
             jump_via,
+            forwards,
             ..c.clone()
         });
     }
@@ -543,6 +551,7 @@ mod tests {
                 duplicate: true,
                 missing_key: Some("~/k".into()),
                 jump: None,
+                forwards: vec![],
             }
         );
         assert_eq!(*seen.borrow(), vec![expand_home(Path::new("~/k"))]);
@@ -740,6 +749,46 @@ mod tests {
     }
 
     #[test]
+    fn imported_forwards_never_auto_start_and_show_in_preview() {
+        let mut c = conn("a", AuthMethod::Agent);
+        c.forwards = vec![
+            ForwardRule::Local {
+                bind_host: "0.0.0.0".into(),
+                bind_port: 80,
+                dest_host: "db".into(),
+                dest_port: 5432,
+                auto_start: true,
+            },
+            ForwardRule::Remote {
+                bind_port: 9000,
+                dest_host: "127.0.0.1".into(),
+                dest_port: 22,
+                auto_start: true,
+            },
+        ];
+        let f = file(vec![], vec![c], vec![]);
+        let p = plan(&f, &all(&f), &Library::default()).unwrap();
+        assert!(p.connections[0].forwards.iter().all(|r| !matches!(
+            r,
+            ForwardRule::Local {
+                auto_start: true,
+                ..
+            } | ForwardRule::Remote {
+                auto_start: true,
+                ..
+            } | ForwardRule::Dynamic {
+                auto_start: true,
+                ..
+            }
+        )));
+        let v = preview(&f, &Library::default(), |_| true);
+        assert_eq!(
+            v.rows[0].forwards,
+            ["L 0.0.0.0:80:db:5432", "R 9000:127.0.0.1:22"]
+        );
+    }
+
+    #[test]
     fn plan_rejects_unknown_selection() {
         let f = file(vec![], vec![conn("a", AuthMethod::Agent)], vec![]);
         assert!(matches!(
@@ -756,7 +805,7 @@ mod tests {
         a.forwards = vec![ForwardRule::Dynamic {
             bind_host: "127.0.0.1".into(),
             bind_port: 1080,
-            auto_start: true,
+            auto_start: false,
         }];
         a.notes = Some("note".into());
         a.color = Some(TagColor::Teal);

@@ -444,6 +444,46 @@ pub fn check_host_name(host: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// A network path (`\\\\host\\share`, `//host/share`) is never touched: on Windows that
+/// alone contacts the host (SMB, NTLM). It counts as found.
+pub fn key_found_or_unchecked(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with(r"\\") || s.starts_with("//") || path.exists()
+}
+
+impl ForwardRule {
+    /// `L bind:port:dest:port`, `R port:dest:port` or `D bind:port`, as in ssh(1).
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Local {
+                bind_host,
+                bind_port,
+                dest_host,
+                dest_port,
+                ..
+            } => format!("L {bind_host}:{bind_port}:{dest_host}:{dest_port}"),
+            Self::Remote {
+                bind_port,
+                dest_host,
+                dest_port,
+                ..
+            } => format!("R {bind_port}:{dest_host}:{dest_port}"),
+            Self::Dynamic {
+                bind_host,
+                bind_port,
+                ..
+            } => format!("D {bind_host}:{bind_port}"),
+        }
+    }
+
+    pub fn set_auto_start(&mut self, on: bool) {
+        let (Self::Local { auto_start, .. }
+        | Self::Remote { auto_start, .. }
+        | Self::Dynamic { auto_start, .. }) = self;
+        *auto_start = on;
+    }
+}
+
 impl Connection {
     /// Checks the fields this connection owns. Jump references and chain depth
     /// need the whole store, so they are checked there.
@@ -474,7 +514,7 @@ impl Connection {
         let mut warnings = Vec::new();
         if let AuthMethod::Key { path, .. } = &self.auth {
             // The key may live on a removable disk, so a missing file only warns.
-            if !expand_home(path).exists() {
+            if !key_found_or_unchecked(&expand_home(path)) {
                 warnings.push(Warning::KeyFileMissing { path: path.clone() });
             }
         }
@@ -923,5 +963,27 @@ mod tests {
             (secs(120), Some(secs(300)))
         );
         assert_eq!(s(0, 0).session_timeouts(), (secs(5), None));
+    }
+
+    #[test]
+    fn key_check_skips_network_paths() {
+        let d = tempfile::TempDir::new().unwrap();
+        let key = d.path().join("id");
+        std::fs::write(&key, "k").unwrap();
+        assert!(key_found_or_unchecked(&key));
+        assert!(!key_found_or_unchecked(&d.path().join("missing")));
+        for unc in [r"\\host\share\id", "//host/share/id"] {
+            assert!(key_found_or_unchecked(Path::new(unc)));
+        }
+    }
+
+    #[test]
+    fn validate_does_not_warn_for_network_key_paths() {
+        let mut c = conn();
+        c.auth = AuthMethod::Key {
+            path: "//host/share/id".into(),
+            save_passphrase: false,
+        };
+        assert!(c.validate().unwrap().is_empty());
     }
 }

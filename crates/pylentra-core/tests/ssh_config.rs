@@ -603,3 +603,13 @@ fn shared_hops_conflicting() {
         assert!(get(&r, "b").notes.is_empty());
     }
 }
+
+#[test]
+fn many_host_blocks_parse_in_linear_time() {
+    // Quadratic parsing took ~13 s at this size; the bound is generous so it is not flaky.
+    let text: String = (0..40_000).map(|i| format!("Host h{i}\n")).collect();
+    let start = std::time::Instant::now();
+    let r = parse(&text, &[]);
+    assert_eq!(r.candidates.len(), 40_000);
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
