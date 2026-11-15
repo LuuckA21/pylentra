@@ -4,6 +4,12 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- Channels a server opens on its own (session, X11, agent, direct TCP and Unix socket) are refused; only connections for your remote forwards are accepted, so a hostile server can no longer exhaust memory with them.
+
 ## [0.8.0] - 2026-11-10
 
 Nothing saved changes format: going back to 0.7.x loses nothing. Settings gain

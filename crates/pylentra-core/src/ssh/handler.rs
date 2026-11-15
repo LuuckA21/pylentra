@@ -89,4 +89,69 @@ impl client::Handler for ClientHandler {
         ));
         Ok(())
     }
+
+    // Channels Pylentra never asks for. russh accepts them by default and keeps each one until
+    // the server closes it, so a hostile server could open them without end. Dropping `reply`
+    // refuses the open.
+    async fn server_channel_open_session(
+        &mut self,
+        _channel: Channel<Msg>,
+        _reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn server_channel_open_x11(
+        &mut self,
+        _channel: Channel<Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        _reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        _channel: Channel<Msg>,
+        _reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn server_channel_open_direct_tcpip(
+        &mut self,
+        _channel: Channel<Msg>,
+        _host_to_connect: &str,
+        _port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn server_channel_open_direct_streamlocal(
+        &mut self,
+        _channel: Channel<Msg>,
+        _socket_path: &str,
+        _reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn server_channel_open_forwarded_streamlocal(
+        &mut self,
+        _channel: Channel<Msg>,
+        _socket_path: &str,
+        _reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
 }

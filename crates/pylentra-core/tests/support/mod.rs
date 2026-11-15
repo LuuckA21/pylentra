@@ -381,6 +381,33 @@ impl Handler for ConnHandler {
         } else if data == b"__exit 7\n" {
             session.exit_status_request(channel, 7)?;
             session.close(channel)
+        } else if data == b"__open_back\n" {
+            // Opens every channel type a client never asks for; echoes "<type>:open" or "<type>:shut".
+            let h = session.handle();
+            self.tasks.push(tokio::spawn(async move {
+                let opened = [
+                    ("session", h.channel_open_session().await.is_ok()),
+                    ("x11", h.channel_open_x11("127.0.0.1", 1).await.is_ok()),
+                    ("agent", h.channel_open_agent().await.is_ok()),
+                    (
+                        "direct-tcpip",
+                        h.channel_open_direct_tcpip("127.0.0.1", 1, "127.0.0.1", 1)
+                            .await
+                            .is_ok(),
+                    ),
+                    (
+                        "direct-streamlocal",
+                        h.channel_open_direct_streamlocal("/s").await.is_ok(),
+                    ),
+                    (
+                        "forwarded-streamlocal",
+                        h.channel_open_forwarded_streamlocal("/s").await.is_ok(),
+                    ),
+                ];
+                let out = opened.map(|(t, ok)| format!("{t}:{}", if ok { "open" } else { "shut" }));
+                let _ = h.data(channel, out.join(" ").into_bytes()).await;
+            }));
+            Ok(())
         } else {
             session.data(channel, data.to_vec())
         }

@@ -367,6 +367,18 @@ async fn remote_exit_reports_code() {
 }
 
 #[tokio::test]
+async fn server_opened_channels_are_refused() {
+    let server = pw_server().await;
+    let env = env();
+    let (id, sink) = open_ready(&env, &server).await;
+    env.mgr.write(id, b"__open_back\n".to_vec()).await.unwrap();
+    let want = "session:shut x11:shut agent:shut direct-tcpip:shut \
+                direct-streamlocal:shut forwarded-streamlocal:shut";
+    sink.wait_data_len(want.len(), T).await;
+    assert_eq!(String::from_utf8_lossy(&sink.data.lock().unwrap()), want);
+}
+
+#[tokio::test]
 async fn user_close_emits_user_closed_once() {
     let server = pw_server().await;
     let env = env();
