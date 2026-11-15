@@ -15,6 +15,7 @@ All notable changes to Pylentra are documented here. The format follows
 - Terminal output is slowed to the speed the terminal can draw it (at most 4 MB waiting), so a server flooding output can no longer grow the app's memory without bound.
 - A known host that presents a key of a type Pylentra has no key for, while keys of other types are known for it, is blocked as a changed key instead of asking to trust a new key, so an attacker can no longer turn a key change into a routine first-connection prompt. Pylentra now asks each server (jump hosts included) for the key types it already knows for that host first, so hosts known only by an ECDSA or RSA key keep connecting.
 - The system-wide `ssh_known_hosts` (`/etc/ssh/ssh_known_hosts`, on Windows `%ProgramData%\ssh\ssh_known_hosts`) is read, never written, like `~/.ssh/known_hosts`: a host whose key is listed there connects without a prompt, and a different key is blocked.
+- A host containing a space, a control character or one of `, * ? ! # | @ [ ]` is refused when a connection is saved, imported or quick-connected, and is never written to Pylentra's `known_hosts`, so a crafted host name can no longer add trust for other hosts or make a host's entry unusable. IPv6 addresses and ordinary host names are not affected.
 
 ## [0.8.0] - 2026-11-10
 

@@ -1,4 +1,5 @@
 use crate::error::CoreError;
+use crate::model::check_host_name;
 use crate::store::atomic_write;
 use data_encoding::BASE64_MIME;
 use hmac::{Hmac, KeyInit, Mac};
@@ -144,6 +145,8 @@ impl KnownHosts {
 
     /// Records the key in the Pylentra file only.
     pub fn learn(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), CoreError> {
+        // russh writes the name unescaped; saved connections are checked, this covers the rest.
+        check_host_name(host)?;
         learn_known_hosts_path(host, port, key, &self.pylentra).map_err(ssh_err)
     }
 
@@ -602,6 +605,18 @@ mod tests {
         let (_d2, kh) = setup();
         let kh = kh.with_system(Some("/nonexistent/ssh_known_hosts".into()));
         assert_eq!(kh.check("g", 22, &k1).unwrap(), HostKeyStatus::Unknown);
+    }
+
+    #[test]
+    fn learn_refuses_names_known_hosts_would_split() {
+        let (d, kh) = setup();
+        for bad in ["a,victim", "x\nvictim ssh-ed25519 AAAA\ny", "a b", "[a]"] {
+            assert!(matches!(
+                kh.learn(bad, 22, &key()),
+                Err(CoreError::InvalidInput { .. })
+            ));
+        }
+        assert!(!d.path().join("known_hosts").exists());
     }
 
     #[test]

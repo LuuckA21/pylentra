@@ -425,6 +425,22 @@ impl ForwardRule {
     }
 }
 
+/// Refuses what known_hosts reads as a separator, marker or pattern (and control characters),
+/// so a host name can never stand for more than itself there. IPv6 literals are stored
+/// without brackets, so `[`/`]` are never needed.
+pub fn check_host_name(host: &str) -> Result<(), CoreError> {
+    if host
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || ",*?!#|@[]".contains(c))
+    {
+        return Err(CoreError::invalid(
+            "host",
+            "contains a character not allowed in a host name",
+        ));
+    }
+    Ok(())
+}
+
 impl Connection {
     /// Checks the fields this connection owns. Jump references and chain depth
     /// need the whole store, so they are checked there.
@@ -438,6 +454,7 @@ impl Connection {
                 return Err(CoreError::invalid(field, "must not be empty"));
             }
         }
+        check_host_name(&self.host)?;
         require_nonzero(self.port, "port".into())?;
         if self
             .notes
@@ -565,6 +582,39 @@ mod tests {
                 _ => c.username = " \t".into(),
             }
             assert_eq!(invalid_field(&c), field);
+        }
+    }
+
+    #[test]
+    fn host_with_separators_or_patterns_rejected() {
+        let mut c = conn();
+        for bad in [
+            "a,victim.example",
+            "x\nvictim.example",
+            "a b",
+            "a\tb",
+            "a\u{7f}",
+            "[::1]",
+            "a]:22",
+            "*.example",
+            "h?",
+            "!h",
+            "h#",
+            "|1|x",
+            "u@h",
+        ] {
+            c.host = bad.into();
+            assert_eq!(invalid_field(&c), "host", "{bad:?}");
+        }
+        for ok in [
+            "example.com",
+            "10.0.0.1",
+            "::1",
+            "fe80::1%eth0",
+            "my-host_1",
+        ] {
+            c.host = ok.into();
+            assert!(c.validate().is_ok(), "{ok}");
         }
     }
 
