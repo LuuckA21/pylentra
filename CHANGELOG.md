@@ -18,7 +18,7 @@ All notable changes to Pylentra are documented here. The format follows
 - A host with characters other than letters, digits and `. - _ : %` (spaces, control characters, `,`, `#`, `[`, `;`, `$`, quotes and the like) is refused when a connection is saved, imported or quick-connected, and is never written to Pylentra's `known_hosts`, so a crafted host name can no longer add trust for other hosts, make a host's entry unusable or put a shell command in the copyable `ssh-keygen -R` hint, which is not shown for such hosts saved earlier. IPv6 addresses, international domain names and ordinary host names are not affected.
 - Port forwarding is bounded: each forward and each session's remote forwards serve at most 128 connections at once (more are refused), connecting to a destination and opening a tunnel time out after the connect timeout, and a forward request the server never answers fails after that timeout instead of freezing the terminal.
 - A remote forward whose port the server reports as already used by another forward of the session is rejected instead of replacing that forward's route.
-- Forwards stored in `connections.toml` that the editor would refuse (a host name instead of an IP address, port 0) are no longer auto-started; they show as failed in the forwards panel.
+- Forwards stored in `connections.toml` that the editor would refuse (a listening address that is not an IP address, port 0) are no longer auto-started; they show as failed in the forwards panel.
 
 ## [0.8.0] - 2026-11-10
 

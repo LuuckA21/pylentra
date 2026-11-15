@@ -28,7 +28,7 @@ pub enum ForwardQuirk {
     None,
     /// Waits this long before answering (the connection is stuck meanwhile).
     Stall(std::time::Duration),
-    /// Answers the port of an earlier forward instead of binding a new one; cancels do nothing.
+    /// Answers the port of an earlier forward instead of binding a new one.
     ReuseFirstPort,
 }
 
@@ -539,9 +539,6 @@ impl Handler for ConnHandler {
         port: u32,
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
-        if matches!(self.cfg.forward_quirk, ForwardQuirk::ReuseFirstPort) {
-            return Ok(true);
-        }
         let task = u16::try_from(port)
             .ok()
             .and_then(|p| self.listeners.remove(&p));

@@ -308,6 +308,8 @@ async fn relay_local(
     dest_host: String,
     dest_port: u16,
 ) {
+    // shortcut: a confirmation arriving after our timeout leaves a half-open channel until
+    // the server closes it; upgrade if servers are seen to leave them.
     let opened = tokio::time::timeout(
         timeout,
         target.channel_open_direct_tcpip(
@@ -349,8 +351,11 @@ async fn relay_dynamic(target: Target, timeout: Duration, mut tcp: TcpStream, pe
                 let _ = copy_bidirectional(&mut channel.into_stream(), &mut tcp).await;
             }
         }
-        Ok(Err(_)) | Err(_) => {
-            log::debug!("direct-tcpip open failed");
+        failed => {
+            match failed {
+                Ok(Err(e)) => log::debug!("direct-tcpip open failed: {e}"),
+                _ => log::debug!("direct-tcpip open timed out"),
+            }
             let _ = socks::reply(&mut tcp, 0x04).await;
         }
     }
@@ -376,19 +381,21 @@ async fn start_remote(
     }
     let answer =
         tokio::time::timeout(timeout, target.tcpip_forward(REMOTE_BIND, bind_port.into())).await;
-    let bound_port = match answer {
+    let reported = match answer {
+        Ok(Ok(p)) => Ok(p),
+        Ok(Err(russh::Error::RequestDenied)) => Err(CoreError::ForwardRejected),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err(CoreError::ForwardTimeout),
+    };
+    let bound_port = match reported {
         // A server answers 0 when it bound the requested port.
-        Ok(Ok(0)) => bind_port,
-        Ok(Ok(p)) => u16::try_from(p).unwrap_or(bind_port),
-        failed => {
+        Ok(0) => bind_port,
+        Ok(p) => u16::try_from(p).unwrap_or(bind_port),
+        Err(e) => {
             if bind_port != 0 {
                 routes.lock().remove(&bind_port);
             }
-            return Err(match failed {
-                Ok(Err(russh::Error::RequestDenied)) | Err(_) => CoreError::ForwardRejected,
-                Ok(Err(e)) => e.into(),
-                Ok(Ok(_)) => unreachable!(),
-            });
+            return Err(e);
         }
     };
     if bind_port == 0 || bound_port != bind_port {
@@ -406,12 +413,8 @@ async fn start_remote(
                 }
             }
         };
+        // No cancel: the port is another forward's, and cancelling would close its listener.
         if taken {
-            let _ = tokio::time::timeout(
-                timeout,
-                target.cancel_tcpip_forward(REMOTE_BIND, bound_port.into()),
-            )
-            .await;
             return Err(CoreError::ForwardRejected);
         }
     }

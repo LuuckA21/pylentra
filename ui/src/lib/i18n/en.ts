@@ -334,6 +334,8 @@ export const en = {
   "error.forward.permission_denied": "Permission denied for port {port}.",
   "error.forward.port_in_use": "Port {port} is already in use.",
   "error.forward.rejected": "The server rejected the port forward.",
+  "error.forward.timeout":
+    "The server did not answer the port forward in time.",
   "error.hostkey.mismatch":
     "The host key of {host}:{port} has changed. The connection was refused.",
   "error.hostkey.rejected": "Host key rejected.",

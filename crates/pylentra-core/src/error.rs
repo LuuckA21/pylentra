@@ -40,6 +40,8 @@ pub enum CoreError {
     PermissionDenied { port: u16 },
     #[error("forward rejected by the server")]
     ForwardRejected,
+    #[error("the server did not answer the port forward")]
+    ForwardTimeout,
     #[error("invalid {field}: {reason}")]
     InvalidInput { field: String, reason: String },
     #[error("jump hosts form a cycle")]
@@ -138,6 +140,7 @@ impl CoreError {
             Self::PortInUse { .. } => "forward.port_in_use",
             Self::PermissionDenied { .. } => "forward.permission_denied",
             Self::ForwardRejected => "forward.rejected",
+            Self::ForwardTimeout => "forward.timeout",
             Self::InvalidInput { .. } => "config.invalid",
             Self::JumpCycle => "config.jump_cycle",
             Self::JumpTooDeep => "config.jump_too_deep",
@@ -189,6 +192,7 @@ impl CoreError {
             | Self::HostKeyRsaSha1
             | Self::RsaSha1Only
             | Self::ForwardRejected
+            | Self::ForwardTimeout
             | Self::JumpCycle
             | Self::JumpTooDeep
             | Self::ReadOnly

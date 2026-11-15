@@ -14,6 +14,7 @@ export const CORE_CODES = [
   "forward.permission_denied",
   "forward.port_in_use",
   "forward.rejected",
+  "forward.timeout",
   "hostkey.mismatch",
   "hostkey.rejected",
   "hostkey.rsa_sha1",

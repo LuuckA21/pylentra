@@ -339,6 +339,8 @@ export const it: Record<MessageKey, string> = {
   "error.forward.permission_denied": "Permesso negato per la porta {port}.",
   "error.forward.port_in_use": "La porta {port} è già in uso.",
   "error.forward.rejected": "Il server ha rifiutato l'inoltro di porta.",
+  "error.forward.timeout":
+    "Il server non ha risposto in tempo all'inoltro di porta.",
   "error.hostkey.mismatch":
     "La chiave host di {host}:{port} è cambiata. La connessione è stata rifiutata.",
   "error.hostkey.rejected": "Chiave host rifiutata.",

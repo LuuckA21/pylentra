@@ -642,7 +642,7 @@ async fn stalled_forward_request_times_out_and_session_recovers() {
         .forward_start(id, remote(0, echo.port()))
         .await
         .unwrap_err();
-    assert_eq!(err.code(), "forward.rejected");
+    assert_eq!(err.code(), "forward.timeout");
     assert!(started.elapsed() < Duration::from_millis(1500));
     // Input flows again once the stalled server wakes.
     env.mgr.write(id, b"ok".to_vec()).await.unwrap();
