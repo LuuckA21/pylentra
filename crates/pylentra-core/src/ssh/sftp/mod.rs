@@ -65,6 +65,10 @@ pub struct Entry {
     /// Unix seconds.
     #[ts(type = "number | null")]
     pub modified: Option<u64>,
+    /// Permission bits (`0o777`), for the copy's mode; not sent to the UI.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub(crate) mode: Option<u32>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, TS)]
@@ -593,5 +597,6 @@ pub(crate) fn entry(f: File) -> Entry {
         kind,
         size: f.attrs.size,
         modified: f.attrs.mtime.map(u64::from),
+        mode: f.attrs.permissions.map(|p| p & 0o777),
     }
 }

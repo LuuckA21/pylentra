@@ -46,8 +46,13 @@ pub enum LoadOutcome {
 }
 
 /// Creates `<path>.<n>.<suffix>` exclusively (and any missing folders), so a file that
-/// happens to have that name is never truncated.
-pub(crate) fn create_temp(path: &Path, suffix: &str) -> Result<(PathBuf, fs::File), CoreError> {
+/// happens to have that name is never truncated. `mode` (masked by the umask) is ignored on
+/// Windows.
+pub(crate) fn create_temp(
+    path: &Path,
+    suffix: &str,
+    mode: u32,
+) -> Result<(PathBuf, fs::File), CoreError> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
@@ -58,11 +63,13 @@ pub(crate) fn create_temp(path: &Path, suffix: &str) -> Result<(PathBuf, fs::Fil
         let mut tmp = OsString::from(path);
         tmp.push(format!(".{n}.{suffix}"));
         let tmp = PathBuf::from(tmp);
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-        {
+        let mut o = fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, mode);
+        #[cfg(not(unix))]
+        let _ = mode;
+        match o.open(&tmp) {
             Ok(f) => break (tmp, f),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 100 => n += 1,
             Err(e) => return Err(e.into()),
@@ -75,7 +82,7 @@ pub(crate) fn create_temp(path: &Path, suffix: &str) -> Result<(PathBuf, fs::Fil
 /// readers never see a half-written file. The temporary file is created new,
 /// so a file that happens to have that name is never truncated.
 pub fn atomic_write(path: &Path, contents: &str) -> Result<(), CoreError> {
-    let (tmp, mut f) = create_temp(path, "tmp")?;
+    let (tmp, mut f) = create_temp(path, "tmp", 0o666)?;
     let mut write = || -> std::io::Result<()> {
         f.write_all(contents.as_bytes())?;
         f.sync_all()?;
@@ -490,13 +497,13 @@ mod tests {
     fn create_temp_is_exclusive() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("sub").join("f");
-        let (a, _fa) = create_temp(&path, "tmp").unwrap();
-        let (b, _fb) = create_temp(&path, "tmp").unwrap();
+        let (a, _fa) = create_temp(&path, "tmp", 0o666).unwrap();
+        let (b, _fb) = create_temp(&path, "tmp", 0o666).unwrap();
         assert_ne!(a, b);
         std::fs::write(dir.path().join("sub/g.0.tmp"), "keep").unwrap();
-        let (c, _fc) = create_temp(&dir.path().join("sub/g"), "tmp").unwrap();
+        let (c, _fc) = create_temp(&dir.path().join("sub/g"), "tmp", 0o666).unwrap();
         assert!(c.ends_with("g.1.tmp"));
-        let (d, _fd) = create_temp(&path, "pylentra-tmp").unwrap();
+        let (d, _fd) = create_temp(&path, "pylentra-tmp", 0o666).unwrap();
         assert!(d.ends_with("f.0.pylentra-tmp"));
         assert_eq!(
             std::fs::read(dir.path().join("sub/g.0.tmp")).unwrap(),

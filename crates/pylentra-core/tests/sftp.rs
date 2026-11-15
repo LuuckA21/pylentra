@@ -500,6 +500,87 @@ async fn download_file_and_tree() {
     env.mgr.close(id).await.unwrap();
 }
 
+#[cfg(unix)]
+fn mode(p: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(p).unwrap().permissions().mode() & 0o777
+}
+
+#[cfg(unix)]
+fn chmod(p: &Path, m: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(m)).unwrap();
+}
+
+/// `from` holds `secret` (0600), `exe` (0751) and `old`; `to` holds `old` (0660). A copy
+/// never opens a file more than its source, drops execute and keeps a replaced file's mode.
+#[cfg(unix)]
+fn mode_trees(from: &Path, to: &Path) {
+    for (name, m) in [("secret", 0o600), ("exe", 0o751), ("old", 0o644)] {
+        fs::write(from.join(name), name).unwrap();
+        chmod(&from.join(name), m);
+    }
+    fs::write(to.join("old"), "x").unwrap();
+    chmod(&to.join("old"), 0o660);
+}
+
+#[cfg(unix)]
+fn assert_modes(to: &Path) {
+    let got = ["secret", "exe", "old"].map(|n| mode(&to.join(n)));
+    assert_eq!(got, [0o600, 0o640, 0o660]);
+    assert_eq!(fs::read(to.join("old")).unwrap(), b"old");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn download_modes_only_restrict() {
+    let root = TempDir::new().unwrap();
+    let local = TempDir::new().unwrap();
+    mode_trees(root.path(), local.path());
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = ["/secret", "/exe", "/old"].map(String::from).to_vec();
+    let t = env
+        .mgr
+        .sftp_download(id, items, local.path().into())
+        .await
+        .unwrap();
+    assert_eq!(wait_conflicts(&sink, t, 1).await, ["old"]);
+    answer(&env, id, ConflictChoice::Overwrite, false);
+    let end = wait_end(&sink, t).await;
+    assert!(
+        matches!(end, TransferState::Finished { files: 3, .. }),
+        "{end:?}"
+    );
+    assert_modes(local.path());
+    env.mgr.close(id).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn upload_modes_only_restrict() {
+    let root = TempDir::new().unwrap();
+    let local = TempDir::new().unwrap();
+    mode_trees(local.path(), root.path());
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = ["secret", "exe", "old"]
+        .map(|n| local.path().join(n))
+        .to_vec();
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    assert_eq!(wait_conflicts(&sink, t, 1).await, ["old"]);
+    answer(&env, id, ConflictChoice::Overwrite, false);
+    let end = wait_end(&sink, t).await;
+    assert!(
+        matches!(end, TransferState::Finished { files: 3, .. }),
+        "{end:?}"
+    );
+    assert_modes(root.path());
+    env.mgr.close(id).await.unwrap();
+}
+
 #[tokio::test]
 async fn download_half_reads() {
     let root = TempDir::new().unwrap();

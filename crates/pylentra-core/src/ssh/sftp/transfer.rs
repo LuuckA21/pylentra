@@ -49,6 +49,9 @@ fn under_skipped(rel: &str, skipped: &HashSet<&str>) -> bool {
         .any(|(i, _)| skipped.contains(&rel[..i]))
 }
 
+/// The kind of an item at a destination, and its permission bits when known.
+type Existing = (EntryKind, Option<u32>);
+
 /// The items of a transfer and where they go.
 pub(super) enum Side {
     /// Remote absolute paths into a local folder.
@@ -131,7 +134,7 @@ impl Side {
             }
         };
         // A failed mkdir is looked at (SFTPv3 has no "exists" status).
-        let reason = match self.existing(server, rel).await? {
+        let reason = match self.existing(server, rel).await?.map(|e| e.0) {
             Some(EntryKind::Dir) => return Ok(None),
             Some(EntryKind::Link) => SkipReason::Symlink,
             Some(_) => SkipReason::Exists,
@@ -140,26 +143,30 @@ impl Side {
         Ok(Some(reason))
     }
 
-    /// What is at the destination of `rel`, without following a link.
-    async fn existing(&self, server: &Server, rel: &str) -> Result<Option<EntryKind>, StepError> {
+    /// What is at the destination of `rel`, without following a link, and its permission bits.
+    async fn existing(&self, server: &Server, rel: &str) -> Result<Option<Existing>, StepError> {
         match self {
             Side::Down { local_dir, .. } => {
                 let m = fs::symlink_metadata(local_path(local_dir, rel));
                 Ok(m.ok().map(|m| {
                     let t = m.file_type();
-                    if t.is_symlink() {
+                    let kind = if t.is_symlink() {
                         EntryKind::Link
                     } else if t.is_dir() {
                         EntryKind::Dir
                     } else {
                         EntryKind::File
-                    }
+                    };
+                    (kind, scan::local_mode(&m))
                 }))
             }
             Side::Up { remote_dir, .. } => {
                 let path = remote_join(remote_dir, rel);
                 match server.raw.lstat(path.as_str()).await {
-                    Ok(a) => Ok(Some(entry(File::new("", a.attrs)).kind)),
+                    Ok(a) => {
+                        let e = entry(File::new("", a.attrs));
+                        Ok(Some((e.kind, e.mode)))
+                    }
                     Err(SftpError::Status(s)) if s.status_code == StatusCode::NoSuchFile => {
                         Ok(None)
                     }
@@ -174,22 +181,22 @@ impl Side {
         server: &Server,
         item: usize,
         f: &PlannedFile,
+        replaced: Option<u32>,
         cancel: &watch::Receiver<bool>,
         progress: &mut impl FnMut(u64),
     ) -> Result<(), StepError> {
+        let mode = copy::Mode::new(f.mode, replaced);
         match self {
             Side::Down { items, local_dir } => {
                 let remote = remote_join(remote_split(&items[item]).0, &f.rel);
                 let local = local_path(local_dir, &f.rel);
-                let (size, modified) = (f.size, f.modified);
-                copy::download_file(server, &remote, &local, size, modified, cancel, progress).await
+                copy::download_file(server, &remote, &local, f, mode, cancel, progress).await
             }
             Side::Up { items, remote_dir } => {
                 let parent = items[item].parent().unwrap_or(Path::new(""));
                 let local = local_path(parent, &f.rel);
                 let remote = remote_join(remote_dir, &f.rel);
-                let (size, modified) = (f.size, f.modified);
-                copy::upload_file(server, &local, &remote, size, modified, cancel, progress).await
+                copy::upload_file(server, &local, &remote, f, mode, cancel, progress).await
             }
         }
     }
@@ -259,7 +266,8 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
         }
         // `Ok(false)`: skipped, and already listed.
         let copied = async {
-            if let Some(kind) = or_cancel(&cancel, side.existing(server, &f.rel)).await? {
+            let mut replaced = None;
+            if let Some((kind, mode)) = or_cancel(&cancel, side.existing(server, &f.rel)).await? {
                 let link = kind == EntryKind::Link;
                 let choice = match every {
                     _ if link => ConflictChoice::Skip,
@@ -282,7 +290,9 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
                     }
                 };
                 match choice {
-                    ConflictChoice::Overwrite => {}
+                    ConflictChoice::Overwrite => {
+                        replaced = mode.filter(|_| kind == EntryKind::File)
+                    }
                     ConflictChoice::Skip => {
                         let reason = if link {
                             SkipReason::Symlink
@@ -311,7 +321,8 @@ pub(super) async fn run(server: &Server, job: Job, cancel: watch::Receiver<bool>
                     server.emit(id, running(done.saturating_add(n), files, &f.rel));
                 }
             };
-            side.copy(server, item, f, &cancel, &mut progress).await?;
+            side.copy(server, item, f, replaced, &cancel, &mut progress)
+                .await?;
             Ok(true)
         };
         let copied: Result<bool, StepError> = copied.await;

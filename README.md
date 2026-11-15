@@ -68,7 +68,11 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   example it replaced its ECDSA key with an ed25519 one), the connection is
   blocked as a changed key: if the change is expected, forget the old key
   (or remove it with `ssh-keygen -R`) and connect again.
-- **SFTP.** No rename, delete, new folder or permission editing yet.
+- **SFTP.** No rename, delete, new folder or permission editing yet. A
+  copied file is never more open than its source: it gets the source's read
+  and write permissions at most (0600 when they are unknown), never the
+  execute bit, and a replaced file keeps its own permissions. Folders get the
+  default permissions. On Windows, permissions are not handled.
   Symbolic links and special files are skipped. If the connection drops during
   an upload, a `<name>.<n>.pylentra-tmp` file can remain on the server (never
   a corrupted destination). Without the server's `posix-rename` extension, a

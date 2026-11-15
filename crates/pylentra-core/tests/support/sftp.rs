@@ -201,6 +201,11 @@ fn attrs(m: &Metadata) -> FileAttributes {
             .and_then(|d| u32::try_from(d.as_secs()).ok()),
         ..Default::default()
     };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        a.permissions = Some(m.permissions().mode() & 0o7777);
+    }
     let t = m.file_type();
     if t.is_symlink() {
         a.set_symlink(true);
@@ -326,11 +331,18 @@ impl russh_sftp::server::Handler for SftpFs {
         id: u32,
         filename: String,
         pflags: OpenFlags,
-        _attrs: FileAttributes,
+        attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
         if pflags.contains(OpenFlags::WRITE) {
             let mut o = fs::OpenOptions::new();
             o.write(true).truncate(pflags.contains(OpenFlags::TRUNCATE));
+            // As OpenSSH: a new file gets the asked mode, masked by the umask.
+            #[cfg(unix)]
+            if let Some(p) = attrs.permissions {
+                std::os::unix::fs::OpenOptionsExt::mode(&mut o, p & 0o7777);
+            }
+            #[cfg(not(unix))]
+            let _ = attrs;
             if pflags.contains(OpenFlags::CREATE | OpenFlags::EXCLUDE) {
                 o.create_new(true);
             } else {
@@ -396,6 +408,12 @@ impl russh_sftp::server::Handler for SftpFs {
             times = times.set_accessed(t);
         }
         f.set_times(times).map_err(status)?;
+        #[cfg(unix)]
+        if let Some(p) = attrs.permissions {
+            use std::os::unix::fs::PermissionsExt;
+            let p = fs::Permissions::from_mode(p & 0o7777);
+            f.set_permissions(p).map_err(status)?;
+        }
         Ok(ok(id))
     }
 

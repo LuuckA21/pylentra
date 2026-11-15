@@ -35,6 +35,8 @@ pub struct PlannedFile {
     pub rel: String,
     pub size: u64,
     pub modified: Option<u64>,
+    /// The source's permission bits, when known.
+    pub mode: Option<u32>,
 }
 
 fn limit(what: &str) -> CoreError {
@@ -58,12 +60,19 @@ impl Plan {
         self.check(0)
     }
 
-    fn file(&mut self, rel: String, size: u64, modified: Option<u64>) -> Result<(), CoreError> {
+    fn file(
+        &mut self,
+        rel: String,
+        size: u64,
+        modified: Option<u64>,
+        mode: Option<u32>,
+    ) -> Result<(), CoreError> {
         self.total_bytes = self.total_bytes.saturating_add(size);
         self.files.push(PlannedFile {
             rel,
             size,
             modified,
+            mode,
         });
         self.check(0)
     }
@@ -126,7 +135,7 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
             if ty.is_symlink() {
                 plan.skip(rel, SkipReason::Symlink)?;
             } else if ty.is_file() {
-                plan.file(rel, meta.len(), mtime(&meta))?;
+                plan.file(rel, meta.len(), mtime(&meta), local_mode(&meta))?;
             } else if !ty.is_dir() {
                 plan.skip(rel, SkipReason::Special)?;
             } else {
@@ -158,6 +167,19 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
         }
     }
     Ok(plan)
+}
+
+/// Permission bits (`0o777`).
+#[cfg(unix)]
+pub(super) fn local_mode(m: &Metadata) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(m.permissions().mode() & 0o777)
+}
+
+/// Windows has no permission bits.
+#[cfg(not(unix))]
+pub(super) fn local_mode(_: &Metadata) -> Option<u32> {
+    None
 }
 
 fn mtime(m: &Metadata) -> Option<u64> {
@@ -199,7 +221,7 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
             match e.kind {
                 EntryKind::Link => plan.skip(rel, SkipReason::Symlink)?,
                 EntryKind::Other => plan.skip(rel, SkipReason::Special)?,
-                EntryKind::File => plan.file(rel, e.size.unwrap_or(0), e.modified)?,
+                EntryKind::File => plan.file(rel, e.size.unwrap_or(0), e.modified, e.mode)?,
                 EntryKind::Dir => {
                     plan.dir(rel.clone(), depth)?;
                     let read = match sftp.opendir(path.as_str()).await {
@@ -312,8 +334,8 @@ mod tests {
     #[test]
     fn huge_sizes_saturate() {
         let mut plan = Plan::new(10);
-        plan.file("a".into(), u64::MAX - 1, None).unwrap();
-        plan.file("b".into(), u64::MAX - 1, None).unwrap();
+        plan.file("a".into(), u64::MAX - 1, None, None).unwrap();
+        plan.file("b".into(), u64::MAX - 1, None, None).unwrap();
         assert_eq!(plan.total_bytes, u64::MAX);
     }
 
