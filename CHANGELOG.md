@@ -18,8 +18,8 @@ All notable changes to Pylentra are documented here. The format follows
 - A host with characters other than letters, digits and `. - _ : %` (spaces, control characters, `,`, `#`, `[`, `;`, `$`, quotes and the like) is refused when a connection is saved, imported or quick-connected, and is never written to Pylentra's `known_hosts`, so a crafted host name can no longer add trust for other hosts, make a host's entry unusable or put a shell command in the copyable `ssh-keygen -R` hint, which is not shown for such hosts saved earlier. IPv6 addresses, international domain names and ordinary host names are not affected.
 - Port forwarding is bounded: each forward and each session's remote forwards serve at most 128 connections at once (more are refused), connecting to a destination and opening a tunnel time out after the connect timeout, and a forward request the server never answers fails after that timeout instead of freezing the terminal.
 - Port forwards in an imported library never start by themselves: the import preview lists each connection's forwards, and you start them from the panel.
-- Saving or importing a connection never checks whether a key at a network path (`\\host\share`, `//host/share`, also with mixed separators) exists, so Windows no longer contacts that host.
-- Importing a very large `~/.ssh/config` no longer takes minutes: with very many wildcard `Host` blocks only the first hosts are read, with a note. Network, `\\host` and `\??\` key paths in an imported library are flagged in the preview.
+- Saving or importing a connection never checks whether a key at a network path (`\\host\share`, `//host/share`, also with mixed separators) exists, so Windows no longer contacts that host; the import preview flags such keys, which are still read when you connect.
+- Importing a very large `~/.ssh/config` no longer takes minutes: with very many wildcard `Host` blocks or very long blocks only the first hosts are read, with a note.
 - Connection, snippet and export files are created readable by you only (0600 on Linux and macOS); an existing file gets this mode the next time Pylentra saves it. A symlinked config file is replaced by a regular file when saved.
 - A remote forward whose port the server reports as already used by another forward of the session is rejected instead of replacing that forward's route.
 - Forwards stored in `connections.toml` that the editor would refuse (a listening address that is not an IP address, port 0) are no longer auto-started; they show as failed in the forwards panel.
@@ -28,6 +28,7 @@ All notable changes to Pylentra are documented here. The format follows
 - An SFTP listing returns what it has, marked incomplete, after 30 seconds, so a server sending names very slowly can no longer block cancelling a transfer in that session.
 - SFTP downloads and uploads no longer reset a file's permissions to the default: a new file gets at most the source's read and write permissions (0600 when unknown) and never the execute bit, and an overwritten file keeps its own, so a private file stays private on the other side. On Windows, a new uploaded file gets the server's default permissions, an overwritten one keeps its own, and downloads are unchanged.
 - The native folder and file dialogs of SFTP downloads and uploads have a title naming the action and the server (for example "Download from example.com into…").
+- A terminal link (OSC 8) asks before opening, showing the address it really goes to rather than its text, and opens only `http` and `https` addresses, in your browser. Before, the confirmation did not wait for your answer and the link could open inside the app.
 
 ## [0.8.0] - 2026-11-10
 

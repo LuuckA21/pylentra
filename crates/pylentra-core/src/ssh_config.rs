@@ -66,8 +66,8 @@ pub enum ImportNote {
     },
 }
 
-/// Most (host, wildcard block) pairs `parse` tests; about a second at worst.
-const MAX_PATTERN_CHECKS: usize = 2_000_000;
+/// Most pattern and line visits `parse` spends on aliases; well under a second.
+const MAX_WORK: usize = 5_000_000;
 
 struct Block {
     /// Empty for a `Match` block, so it applies to no host.
@@ -383,10 +383,23 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
         }
     }
 
-    // Wildcard blocks are tried against every alias, so their product is bounded.
-    let keep = MAX_PATTERN_CHECKS.checked_div(general.len());
-    if keep.is_some_and(|k| aliases.len() > k) {
-        aliases.truncate(keep.unwrap_or_default());
+    // Every alias replays the wildcard blocks and its own blocks' lines, so that work is bounded.
+    let cost = |bs: &mut dyn Iterator<Item = &usize>| -> usize {
+        bs.map(|&bi| blocks[bi].patterns.len() + blocks[bi].lines.len() + 1)
+            .sum()
+    };
+    let general_cost = cost(&mut general.iter());
+    let mut spent = 0usize;
+    let kept = aliases.iter().take_while(|(a, _)| {
+        let own = by_name
+            .get(&a.to_ascii_lowercase())
+            .map_or(0, |v| cost(&mut v.iter()));
+        spent = spent.saturating_add(general_cost + own);
+        spent <= MAX_WORK
+    });
+    let kept = kept.count();
+    if kept < aliases.len() {
+        aliases.truncate(kept);
         skipped.push(FileNote {
             line: text.lines().count(),
             note: ImportNote::TooComplex,

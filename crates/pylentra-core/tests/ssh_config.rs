@@ -622,3 +622,24 @@ fn many_wildcard_blocks_are_bounded() {
     assert!(r.candidates.len() < 3_000);
     assert!(r.skipped.iter().any(|n| n.note == ImportNote::TooComplex));
 }
+
+fn too_complex(r: &ScanResult) -> bool {
+    r.skipped.iter().any(|n| n.note == ImportNote::TooComplex)
+}
+
+#[test]
+fn one_huge_host_line_with_a_wildcard_is_bounded() {
+    let hosts: Vec<String> = (0..60_000).map(|i| format!("h{i}")).collect();
+    let r = parse(&format!("Host {} *\n", hosts.join(" ")), &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.len() < 1_000);
+}
+
+#[test]
+fn a_huge_implicit_block_is_bounded() {
+    let mut text: String = (0..60_000).map(|_| "User x\n").collect();
+    text.extend((0..60_000).map(|i| format!("Host h{i}\n")));
+    let r = parse(&text, &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.len() < 1_000);
+}
