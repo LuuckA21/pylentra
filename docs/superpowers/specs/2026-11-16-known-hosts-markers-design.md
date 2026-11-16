@@ -66,8 +66,10 @@ The user picked A.
   matching positive pattern includes it. Matching ignores ASCII case and is
   against `host` on port 22 and `[host]:port` otherwise, so
   `[*.example.com]:2222` works. Hashed `|1|` entries stay exact matches.
-- **Pattern scope.** Patterns are read only in the two OpenSSH files.
-  Pylentra's own file holds only exact names, written by Pylentra.
+- **Pattern scope.** For plain key lines, patterns are read only in the two
+  OpenSSH files; Pylentra's own file holds only exact names, written by
+  Pylentra. `@revoked` and `@cert-authority` lines are matched with patterns
+  in all three files, Pylentra's included, so `@revoked *` works anywhere.
 - **Negotiation.** Keys found through patterns also feed `algorithms()`, so
   their types are preferred in negotiation, as in 0.9.0.
 - **The `@cert-authority` warning.** When a `@cert-authority` line in any of

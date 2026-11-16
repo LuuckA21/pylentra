@@ -299,6 +299,47 @@ async fn mismatch_closes_without_prompt() {
     )));
 }
 
+#[tokio::test]
+async fn revoked_key_closes_without_prompt() {
+    let server = pw_server().await;
+    let dir = TempDir::new().unwrap();
+    let ssh = dir.path().join("openssh_known_hosts");
+    std::fs::write(
+        &ssh,
+        format!("@revoked * {}\n", server.host_key.to_openssh().unwrap()),
+    )
+    .unwrap();
+    let kh = Arc::new(KnownHosts::new(dir.path().join("known_hosts"), Some(ssh)));
+    let mgr = SessionManager::new(
+        Arc::new(MemorySecretStore::default()),
+        kh,
+        SessionOptions::default(),
+    );
+    let sink = Arc::new(CollectSink::default());
+    mgr.open(
+        vec![conn("127.0.0.1", server.addr.port())],
+        80,
+        24,
+        sink.clone(),
+    );
+
+    let ev = sink
+        .wait_event(|e| matches!(e, SessionEvent::HostKeyRevoked { .. }), T)
+        .await;
+    let SessionEvent::HostKeyRevoked {
+        fingerprint: fp, ..
+    } = ev
+    else {
+        unreachable!()
+    };
+    assert_eq!(fp, fingerprint(&server.host_key));
+    assert_eq!(closed_code(&sink).await, "hostkey.revoked");
+    assert!(!has_event(&sink, |e| matches!(
+        e,
+        SessionEvent::HostKeyPrompt { .. }
+    )));
+}
+
 fn ecdsa() -> PrivateKey {
     let curve = russh::keys::EcdsaCurve::NistP256;
     PrivateKey::random(&mut rand::rng(), Algorithm::Ecdsa { curve }).unwrap()
