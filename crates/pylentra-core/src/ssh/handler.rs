@@ -53,6 +53,21 @@ impl client::Handler for ClientHandler {
                     port: self.port,
                 })
             }
+            HostKeyStatus::Revoked {
+                source,
+                fingerprint,
+            } => {
+                self.sink.event(SessionEvent::HostKeyRevoked {
+                    host: self.host.clone(),
+                    port: self.port,
+                    fingerprint,
+                    source,
+                });
+                Err(CoreError::HostKeyRevoked {
+                    host: self.host.clone(),
+                    port: self.port,
+                })
+            }
             HostKeyStatus::Unknown => {
                 let prompt = SessionEvent::HostKeyPrompt {
                     host: self.host.clone(),

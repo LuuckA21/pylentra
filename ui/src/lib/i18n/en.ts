@@ -345,6 +345,8 @@ export const en = {
     "The server did not answer the port forward in time.",
   "error.hostkey.mismatch":
     "The host key of {host}:{port} has changed. The connection was refused.",
+  "error.hostkey.revoked":
+    "The host key of {host}:{port} is revoked. The connection was refused.",
   "error.hostkey.rejected": "Host key rejected.",
   "error.hostkey.rsa_sha1":
     "The server only offers a SHA-1 RSA host key (ssh-rsa), which is no longer safe. Update the server.",

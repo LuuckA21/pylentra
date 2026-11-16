@@ -11,7 +11,7 @@ export type SessionEvent = { "type": "Status", stage: Stage, } | { "type": "Host
 /**
  * `expected` is a key of another type than `got`.
  */
-type_changed: boolean, } | { "type": "SecretPrompt", host: string, port: number, kind: PromptKind, 
+type_changed: boolean, } | { "type": "HostKeyRevoked", host: string, port: number, fingerprint: string, source: KeySource, } | { "type": "SecretPrompt", host: string, port: number, kind: PromptKind, 
 /**
  * false: the answer is never saved, so the UI hides its "save" option.
  */

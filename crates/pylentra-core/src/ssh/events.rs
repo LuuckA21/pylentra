@@ -131,6 +131,12 @@ pub enum SessionEvent {
         /// `expected` is a key of another type than `got`.
         type_changed: bool,
     },
+    HostKeyRevoked {
+        host: String,
+        port: u16,
+        fingerprint: String,
+        source: KeySource,
+    },
     SecretPrompt {
         host: String,
         port: u16,

@@ -351,6 +351,8 @@ export const it: Record<MessageKey, string> = {
     "Il server non ha risposto in tempo all'inoltro di porta.",
   "error.hostkey.mismatch":
     "La chiave host di {host}:{port} è cambiata. La connessione è stata rifiutata.",
+  "error.hostkey.revoked":
+    "La chiave host di {host}:{port} è revocata. Connessione rifiutata.",
   "error.hostkey.rejected": "Chiave host rifiutata.",
   "error.hostkey.rsa_sha1":
     "Il server offre solo una chiave host RSA con SHA-1 (ssh-rsa), non più sicura. Aggiorna il server.",

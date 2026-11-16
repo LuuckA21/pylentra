@@ -33,6 +33,11 @@ pub enum HostKeyStatus {
         /// The known key is of another type than the presented one.
         type_changed: bool,
     },
+    /// An `@revoked` line records this very key.
+    Revoked {
+        source: KeySource,
+        fingerprint: String,
+    },
 }
 
 /// One host name of one line of Pylentra's known_hosts; `host: None` is a hashed entry.
@@ -85,6 +90,13 @@ impl KnownHosts {
         port: u16,
         key: &PublicKey,
     ) -> Result<HostKeyStatus, CoreError> {
+        // Before russh is asked: a revoked key must lose even to an accepting line.
+        if let Some(source) = self.revoked_by(host, port, key)? {
+            return Ok(HostKeyStatus::Revoked {
+                source,
+                fingerprint: fingerprint(key),
+            });
+        }
         let mut known = match check_known_hosts_path(host, port, key, &self.pylentra) {
             Ok(found) => found,
             Err(russh::keys::Error::KeyChanged { line }) => {
@@ -138,6 +150,34 @@ impl KnownHosts {
             },
             (false, None) => HostKeyStatus::Unknown,
         })
+    }
+
+    /// The first file with an `@revoked` line for `host:port` recording `key`; patterns
+    /// and hashed names count in every file, Pylentra's own included.
+    fn revoked_by(
+        &self,
+        host: &str,
+        port: u16,
+        key: &PublicKey,
+    ) -> Result<Option<KeySource>, CoreError> {
+        let host_port = host_port(host, port);
+        let own = (KeySource::Pylentra, &self.pylentra);
+        for (source, path) in
+            std::iter::once(own).chain(self.read_only.iter().map(|(s, p)| (s.clone(), p)))
+        {
+            let Some(text) = read_text(&source, path)? else {
+                continue;
+            };
+            let hit = key_lines(&text).any(|(_, marker, hosts, _, b64)| {
+                marker == Marker::Revoked
+                    && host_field_matches(&host_port, hosts)
+                    && parse_public_key_base64(b64).is_ok_and(|k| k == *key)
+            });
+            if hit {
+                return Ok(Some(source));
+            }
+        }
+        Ok(None)
     }
 
     /// Algorithms of every key any file records for `host:port`, to put first in negotiation.
@@ -226,6 +266,32 @@ impl KnownHosts {
     }
 }
 
+/// The text of a known_hosts file; `None` for a missing file (no entries).
+fn read_text(source: &KeySource, path: &Path) -> Result<Option<String>, CoreError> {
+    match std::fs::read(path) {
+        Ok(b) => Ok(Some(String::from_utf8_lossy(&b).into_owned())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        // As OpenSSH does: a root-only system file must not stop every connection.
+        // The user's own file still fails, so a changed key there is never skipped.
+        Err(e)
+            if *source == KeySource::System && e.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| log::warn!("cannot read the system known_hosts: {e}"));
+            Ok(None)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn host_port(host: &str, port: u16) -> String {
+    if port == 22 {
+        host.to_owned()
+    } else {
+        format!("[{host}]:{port}")
+    }
+}
+
 /// Keys a read-only (OpenSSH) known_hosts records for `host:port`, scanned line by
 /// line instead of with russh's helper, which fails on the first unparseable
 /// matching line (ssh-dss, unsupported types) and would hide the valid entries
@@ -236,27 +302,12 @@ fn recorded_keys(
     host: &str,
     port: u16,
 ) -> Result<Vec<PublicKey>, CoreError> {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        // As OpenSSH does: a root-only system file must not stop every connection.
-        // The user's own file still fails, so a changed key there is never skipped.
-        Err(e)
-            if *source == KeySource::System && e.kind() == std::io::ErrorKind::PermissionDenied =>
-        {
-            static WARNED: std::sync::Once = std::sync::Once::new();
-            WARNED.call_once(|| log::warn!("cannot read the system known_hosts: {e}"));
-            return Ok(Vec::new());
-        }
-        Err(e) => return Err(e.into()),
+    let Some(text) = read_text(source, path)? else {
+        return Ok(Vec::new());
     };
-    let host_port = if port == 22 {
-        host.to_owned()
-    } else {
-        format!("[{host}]:{port}")
-    };
+    let host_port = host_port(host, port);
     let mut keys = Vec::new();
-    for (_, marker, hosts, _, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
+    for (_, marker, hosts, _, b64) in key_lines(&text) {
         if marker != Marker::Plain || !host_field_matches(&host_port, hosts) {
             continue;
         }
@@ -303,7 +354,8 @@ pub(crate) enum Marker {
 }
 
 /// `(line number, marker, hosts, algorithm, base64 key)` of each line that can
-/// hold a key; comments, unknown '@' markers and lines with too few fields are
+/// hold a key; `@revoked` and `@cert-authority` lines are yielded too, for callers
+/// to filter. Comments, unknown '@' markers and lines with too few fields are
 /// skipped.
 fn key_lines(text: &str) -> impl Iterator<Item = (usize, Marker, &str, &str, &str)> {
     text.lines().enumerate().filter_map(|(i, line)| {
@@ -927,5 +979,127 @@ mod tests {
             got,
             [("x".into(), 22), ("y".into(), 2200), ("::1".into(), 2222)]
         );
+    }
+
+    fn revoked(k: &PublicKey) -> HostKeyStatus {
+        HostKeyStatus::Revoked {
+            source: KeySource::OpenSsh,
+            fingerprint: fingerprint(k),
+        }
+    }
+
+    #[test]
+    fn revoked_in_openssh_file_wins_over_pylentra() {
+        let (d, kh) = setup();
+        let k = key();
+        kh.learn("h", 22, &k).unwrap();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("@revoked h {}\n", k.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_wins_over_another_accepting_line() {
+        let (d, kh) = setup();
+        let k = key();
+        let o = k.to_openssh().unwrap();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("h {o}\n@revoked h {o}\n"),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_in_pylentra_file() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("known_hosts"),
+            format!("@revoked h {}\n", k.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(
+            kh.check("h", 22, &k).unwrap(),
+            HostKeyStatus::Revoked {
+                source: KeySource::Pylentra,
+                fingerprint: fingerprint(&k)
+            }
+        );
+    }
+
+    #[test]
+    fn revoked_in_system_file() {
+        let (d, kh) = setup();
+        let k = key();
+        let global = d.path().join("global");
+        fs::write(&global, format!("@revoked h {}\n", k.to_openssh().unwrap())).unwrap();
+        let kh = kh.with_system(Some(global));
+        assert_eq!(
+            kh.check("h", 22, &k).unwrap(),
+            HostKeyStatus::Revoked {
+                source: KeySource::System,
+                fingerprint: fingerprint(&k)
+            }
+        );
+    }
+
+    #[test]
+    fn revoked_star_covers_every_host_and_port() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("@revoked * {}\n", k.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(kh.check("a", 22, &k).unwrap(), revoked(&k));
+        assert_eq!(kh.check("b", 2222, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_hashed_host() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "@revoked |1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak= {}\n",
+                k.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(kh.check("example.com", 22, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_other_key_does_not_block() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("@revoked h {}\n", other.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Unknown);
+    }
+
+    #[test]
+    fn revoked_line_with_unparseable_key_is_skipped() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "@revoked * ssh-ed25519 !!!\nh {}\n",
+                k.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Known);
     }
 }

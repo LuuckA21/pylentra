@@ -18,6 +18,8 @@ pub enum CoreError {
     },
     #[error("host key of {host}:{port} changed")]
     HostKeyMismatch { host: String, port: u16 },
+    #[error("host key of {host}:{port} is revoked")]
+    HostKeyRevoked { host: String, port: u16 },
     #[error("host key rejected")]
     HostKeyRejected,
     #[error("the server only offers a SHA-1 RSA host key (ssh-rsa)")]
@@ -129,6 +131,7 @@ impl CoreError {
             Self::Timeout { .. } => "network.timeout",
             Self::Unreachable { .. } => "network.unreachable",
             Self::HostKeyMismatch { .. } => "hostkey.mismatch",
+            Self::HostKeyRevoked { .. } => "hostkey.revoked",
             Self::HostKeyRejected => "hostkey.rejected",
             Self::HostKeyRsaSha1 => "hostkey.rsa_sha1",
             Self::AuthFailed { .. } => "auth.all_failed",
@@ -161,7 +164,8 @@ impl CoreError {
             Self::Dns { host } => vec![("host", host.clone())],
             Self::Refused { host, port }
             | Self::Timeout { host, port }
-            | Self::HostKeyMismatch { host, port } => {
+            | Self::HostKeyMismatch { host, port }
+            | Self::HostKeyRevoked { host, port } => {
                 vec![("host", host.clone()), ("port", port.to_string())]
             }
             Self::Unreachable { host, port, reason } => vec![
@@ -218,6 +222,14 @@ mod tests {
 
     #[test]
     fn error_codes_and_params() {
+        assert_eq!(
+            CoreError::HostKeyRevoked {
+                host: "h".into(),
+                port: 22
+            }
+            .code(),
+            "hostkey.revoked"
+        );
         assert_eq!(
             CoreError::AuthFailed {
                 tried: vec!["publickey".into(), "password".into()]

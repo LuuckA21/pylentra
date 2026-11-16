@@ -16,6 +16,7 @@ export const CORE_CODES = [
   "forward.rejected",
   "forward.timeout",
   "hostkey.mismatch",
+  "hostkey.revoked",
   "hostkey.rejected",
   "hostkey.rsa_sha1",
   "io",

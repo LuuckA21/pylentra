@@ -57,6 +57,9 @@ export function reduce(s: PaneState, e: SessionEvent): PaneState {
       return { ...s, prompt: e };
     case "HostKeyMismatch":
       return { ...s, mismatch: e };
+    // The close error carries the message; the UI card is a later task.
+    case "HostKeyRevoked":
+      return s;
     case "Forward":
       return {
         ...s,
