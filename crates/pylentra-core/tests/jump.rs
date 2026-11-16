@@ -165,6 +165,52 @@ async fn each_hop_host_key_is_checked() {
     env.mgr.close(id).await.unwrap();
 }
 
+#[tokio::test]
+async fn revoked_key_on_a_jump_hop_closes_without_prompt() {
+    let (a, b) = (pw_server(false).await, pw_server(false).await);
+    let dir = TempDir::new().unwrap();
+    let ssh = dir.path().join("openssh_known_hosts");
+    std::fs::write(
+        &ssh,
+        format!(
+            "@revoked [127.0.0.1]:{} {}\n",
+            b.addr.port(),
+            b.host_key.to_openssh().unwrap()
+        ),
+    )
+    .unwrap();
+    let kh = Arc::new(KnownHosts::new(dir.path().join("known_hosts"), Some(ssh)));
+    kh.learn("127.0.0.1", a.addr.port(), &a.host_key).unwrap();
+    let secrets = Arc::new(MemorySecretStore::default());
+    let mgr = SessionManager::new(secrets.clone(), kh, SessionOptions::default());
+    let chain = [a.addr.port(), b.addr.port()].map(|p| {
+        let c = conn(p);
+        secrets
+            .set(c.id, SecretKind::Password, &PW.to_string().into())
+            .unwrap();
+        c
+    });
+    let sink = Arc::new(CollectSink::default());
+    mgr.open(chain.to_vec(), 80, 24, sink.clone());
+
+    let ev = sink
+        .wait_event(|e| matches!(e, SessionEvent::HostKeyRevoked { .. }), T)
+        .await;
+    let SessionEvent::HostKeyRevoked { port, .. } = ev else {
+        unreachable!()
+    };
+    assert_eq!(port, b.addr.port());
+    assert_eq!(closed_error(&sink).await.code, "hostkey.revoked");
+    assert!(
+        !sink
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, SessionEvent::HostKeyPrompt { .. }))
+    );
+}
+
 /// The bastion takes one password try (`single_password_try`), so the stored wrong password
 /// fails at once and the client never prompts.
 #[tokio::test]

@@ -601,6 +601,7 @@
     <ErrorOverlay
       error={pane.closed.error}
       mismatch={pane.mismatch}
+      revoked={pane.revoked}
       onretry={start}
       onedit={() =>
         pane.quick ? onsave(pane.paneId) : onedit(pane.connectionId)}

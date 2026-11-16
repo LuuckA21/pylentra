@@ -199,6 +199,7 @@ const prompts: [string, NonNullable<PaneState["prompt"]>][] = [
       port: 22,
       algo: "ssh-ed25519",
       fingerprint: "SHA256:x",
+      cert_authority: false,
     },
   ],
 ];

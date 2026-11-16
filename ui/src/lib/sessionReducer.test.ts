@@ -16,6 +16,7 @@ const hostKey: SessionEvent = {
   port: 22,
   algo: "ssh-ed25519",
   fingerprint: "SHA256:abc",
+  cert_authority: false,
 };
 const local = {
   type: "Local",
@@ -186,4 +187,19 @@ test("Closed cancels the transfers still in progress, keeps the final ones", () 
     { type: "Finished", files: 2, skipped: [] },
   ]);
   expect(s.transfers[1].name).toBe("q");
+});
+
+test("revoked stored and phase closed on Closed", () => {
+  const revoked: SessionEvent = {
+    type: "HostKeyRevoked",
+    host: "h",
+    port: 22,
+    fingerprint: "SHA256:bad",
+    source: "OpenSsh",
+  };
+  const error = { code: "hostkey.revoked", params: { host: "h", port: "22" } };
+  const s = run(revoked, { type: "Closed", reason: { type: "Error", error } });
+  expect(s.revoked).toEqual(revoked);
+  expect(s.phase).toBe("closed");
+  expect(s.closed).toEqual({ type: "Error", error });
 });

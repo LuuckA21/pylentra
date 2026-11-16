@@ -7,11 +7,15 @@ import type { PromptKind } from "./PromptKind";
 import type { Stage } from "./Stage";
 import type { TransferState } from "./TransferState";
 
-export type SessionEvent = { "type": "Status", stage: Stage, } | { "type": "HostKeyPrompt", host: string, port: number, algo: string, fingerprint: string, } | { "type": "HostKeyMismatch", host: string, port: number, expected: string, got: string, source: KeySource, 
+export type SessionEvent = { "type": "Status", stage: Stage, } | { "type": "HostKeyPrompt", host: string, port: number, algo: string, fingerprint: string, 
+/**
+ * A `@cert-authority` line covers the host; Pylentra does not check certificates.
+ */
+cert_authority: boolean, } | { "type": "HostKeyMismatch", host: string, port: number, expected: string, got: string, source: KeySource, 
 /**
  * `expected` is a key of another type than `got`.
  */
-type_changed: boolean, } | { "type": "SecretPrompt", host: string, port: number, kind: PromptKind, 
+type_changed: boolean, } | { "type": "HostKeyRevoked", host: string, port: number, fingerprint: string, source: KeySource, } | { "type": "SecretPrompt", host: string, port: number, kind: PromptKind, 
 /**
  * false: the answer is never saved, so the UI hides its "save" option.
  */

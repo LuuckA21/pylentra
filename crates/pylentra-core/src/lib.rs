@@ -7,6 +7,7 @@ pub mod error;
 pub mod export;
 pub mod known_hosts;
 pub mod model;
+pub(crate) mod pattern;
 pub mod secrets;
 pub mod snippets;
 pub mod ssh;

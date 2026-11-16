@@ -162,9 +162,18 @@ export const en = {
     "The server presented a key of a different type than the one known for this host, so the two fingerprints cannot match. A server rarely drops its old key type: make sure the change is expected before forgetting the old key.",
   "session.systemHint":
     "The old key is in the system-wide ssh_known_hosts, which Pylentra only reads. If the change is expected, ask the administrator to update it.",
+  "session.revoked": "Revoked fingerprint",
+  "session.revokedOpenSsh":
+    "The key is revoked in your OpenSSH known_hosts (~/.ssh/known_hosts). To accept it again, remove its @revoked line from that file.",
+  "session.revokedSystem":
+    "The key is revoked in the system-wide ssh_known_hosts, which Pylentra only reads. Ask the administrator.",
+  "session.revokedPylentra":
+    "The key is revoked in Pylentra's own known_hosts. To accept it again, remove its @revoked line from that file.",
   "hostkey.title": "Unknown host key",
   "hostkey.body":
     "The authenticity of {host}:{port} cannot be verified. Compare the fingerprint with the one of the server before trusting it.",
+  "hostkey.certAuthority":
+    "This host uses SSH certificates, which Pylentra does not check: confirm the fingerprint with your administrator before trusting it.",
   "hostkey.algo": "Key type",
   "hostkey.fingerprint": "Fingerprint",
   "hostkey.accept": "Trust and connect",
@@ -345,6 +354,8 @@ export const en = {
     "The server did not answer the port forward in time.",
   "error.hostkey.mismatch":
     "The host key of {host}:{port} has changed. The connection was refused.",
+  "error.hostkey.revoked":
+    "The host key of {host}:{port} is revoked. The connection was refused.",
   "error.hostkey.rejected": "Host key rejected.",
   "error.hostkey.rsa_sha1":
     "The server only offers a SHA-1 RSA host key (ssh-rsa), which is no longer safe. Update the server.",

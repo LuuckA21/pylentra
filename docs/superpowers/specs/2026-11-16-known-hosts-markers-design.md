@@ -61,13 +61,19 @@ The user picked A.
   key, with text like "The host key of host:port is revoked in
   `~/.ssh/known_hosts`. The connection was refused." It offers no "forget"
   hint and no bypass: to undo, the user edits the file.
+- **Known if any line has the key.** As in OpenSSH, a presented key is
+  accepted when any matching line in any file records it. A changed-key
+  block happens only when no matching line has the presented key and some
+  matching line has another key. Decided by the user after the final review.
 - **Patterns follow OpenSSH `match_hostlist`.** The host field is a comma
   list. Any matching negated `!pattern` excludes the line. Otherwise any
   matching positive pattern includes it. Matching ignores ASCII case and is
   against `host` on port 22 and `[host]:port` otherwise, so
   `[*.example.com]:2222` works. Hashed `|1|` entries stay exact matches.
-- **Pattern scope.** Patterns are read only in the two OpenSSH files.
-  Pylentra's own file holds only exact names, written by Pylentra.
+- **Pattern scope.** For plain key lines, patterns are read only in the two
+  OpenSSH files; Pylentra's own file holds only exact names, written by
+  Pylentra. `@revoked` and `@cert-authority` lines are matched with patterns
+  in all three files, Pylentra's included, so `@revoked *` works anywhere.
 - **Negotiation.** Keys found through patterns also feed `algorithms()`, so
   their types are preferred in negotiation, as in 0.9.0.
 - **The `@cert-authority` warning.** When a `@cert-authority` line in any of
@@ -88,7 +94,7 @@ The user picked A.
   which is ASCII case-insensitive and safe against backtracking. Move it to a
   shared place; do not write a second one.
 - **Line scanning.** Use one scanner for all three files that yields the
-  marker (`None`, `Revoked`, `CertAuthority`) plus the hosts, the algorithm
+  marker (`Plain`, `Revoked`, `CertAuthority`) plus the hosts, the algorithm
   and the key. `key_lines` becomes that scanner, and `list` and `forget`
   keep their behaviour. The Pylentra-file checks still go through russh,
   except for revocations.

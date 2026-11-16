@@ -165,11 +165,20 @@ export const it: Record<MessageKey, string> = {
     "Il server ha presentato una chiave di tipo diverso da quella nota per questo host, quindi i due fingerprint non possono coincidere. Di rado un server abbandona il vecchio tipo di chiave: verifica che il cambio sia previsto prima di dimenticare la chiave precedente.",
   "session.systemHint":
     "La chiave precedente \u00e8 nel file ssh_known_hosts di sistema, che Pylentra legge soltanto. Se il cambio \u00e8 previsto, chiedi all\u2019amministratore di aggiornarlo.",
+  "session.revoked": "Fingerprint revocato",
+  "session.revokedOpenSsh":
+    "La chiave è revocata nel known_hosts di OpenSSH (~/.ssh/known_hosts). Per accettarla di nuovo, togli la sua riga @revoked da quel file.",
+  "session.revokedSystem":
+    "La chiave è revocata nel file ssh_known_hosts di sistema, che Pylentra legge soltanto. Rivolgiti all'amministratore.",
+  "session.revokedPylentra":
+    "La chiave è revocata nel known_hosts di Pylentra. Per accettarla di nuovo, togli la sua riga @revoked da quel file.",
   "hostkey.title": "Host key sconosciuta",
   "hostkey.body":
     "Non \u00e8 possibile verificare l\u2019autenticit\u00e0 di {host}:{port}. Confronta il fingerprint con quello del server prima di fidarti.",
   "hostkey.algo": "Tipo di chiave",
   "hostkey.fingerprint": "Fingerprint",
+  "hostkey.certAuthority":
+    "Questo host usa certificati SSH, che Pylentra non controlla: verifica l'impronta con l'amministratore prima di fidarti.",
   "hostkey.accept": "Fidati e connetti",
   "secret.password": "Password per {target}",
   "secret.passphrase": "Passphrase della chiave per {target}",
@@ -351,6 +360,8 @@ export const it: Record<MessageKey, string> = {
     "Il server non ha risposto in tempo all'inoltro di porta.",
   "error.hostkey.mismatch":
     "La chiave host di {host}:{port} è cambiata. La connessione è stata rifiutata.",
+  "error.hostkey.revoked":
+    "La chiave host di {host}:{port} è revocata. Connessione rifiutata.",
   "error.hostkey.rejected": "Chiave host rifiutata.",
   "error.hostkey.rsa_sha1":
     "Il server offre solo una chiave host RSA con SHA-1 (ssh-rsa), non più sicura. Aggiorna il server.",

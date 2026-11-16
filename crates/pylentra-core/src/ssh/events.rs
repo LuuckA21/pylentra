@@ -121,6 +121,8 @@ pub enum SessionEvent {
         port: u16,
         algo: String,
         fingerprint: String,
+        /// A `@cert-authority` line covers the host; Pylentra does not check certificates.
+        cert_authority: bool,
     },
     HostKeyMismatch {
         host: String,
@@ -130,6 +132,12 @@ pub enum SessionEvent {
         source: KeySource,
         /// `expected` is a key of another type than `got`.
         type_changed: bool,
+    },
+    HostKeyRevoked {
+        host: String,
+        port: u16,
+        fingerprint: String,
+        source: KeySource,
     },
     SecretPrompt {
         host: String,

@@ -9,11 +9,13 @@
   let {
     error,
     mismatch,
+    revoked,
     onretry,
     onedit,
   }: {
     error: ApiError;
     mismatch: PaneState["mismatch"];
+    revoked: PaneState["revoked"];
     onretry: () => void;
     onedit: () => void;
   } = $props();
@@ -60,6 +62,19 @@
       {:else if mismatch.source === "System"}
         <p>{t("session.systemHint")}</p>
       {/if}
+    {/if}
+    {#if revoked}
+      <dl>
+        <dt>{t("session.revoked")}</dt>
+        <dd><code>{revoked.fingerprint}</code></dd>
+      </dl>
+      <p>
+        {revoked.source === "OpenSsh"
+          ? t("session.revokedOpenSsh")
+          : revoked.source === "System"
+            ? t("session.revokedSystem")
+            : t("session.revokedPylentra")}
+      </p>
     {/if}
     <div class="actions">
       <button type="button" onclick={onedit}>{t("session.edit")}</button>

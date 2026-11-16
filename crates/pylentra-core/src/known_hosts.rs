@@ -4,9 +4,7 @@ use crate::store::atomic_write;
 use data_encoding::BASE64_MIME;
 use hmac::{Hmac, KeyInit, Mac};
 use russh::Preferred;
-use russh::keys::known_hosts::{
-    check_known_hosts_path, known_host_keys_path, learn_known_hosts_path,
-};
+use russh::keys::known_hosts::{known_host_keys_path, learn_known_hosts_path};
 use russh::keys::parse_public_key_base64;
 use russh::keys::ssh_key::{Algorithm, HashAlg, PublicKey};
 use serde::Serialize;
@@ -32,6 +30,11 @@ pub enum HostKeyStatus {
         expected_fp: String,
         /// The known key is of another type than the presented one.
         type_changed: bool,
+    },
+    /// An `@revoked` line records this very key.
+    Revoked {
+        source: KeySource,
+        fingerprint: String,
     },
 }
 
@@ -75,69 +78,111 @@ impl KnownHosts {
     }
 
     /// Pylentra's file first, then the read-only ones; any recorded key that differs
-    /// for the same algorithm is a mismatch, even if another file knows it. A key of a
-    /// type none of the files has for this host, while they have keys of other types,
-    /// is a mismatch too: connections prefer the known types (see `algorithms`), so an
-    /// honest server presents one of them.
+    /// for the same algorithm is a mismatch only if no line in any file records the
+    /// presented key (as OpenSSH). A key of a type none of the files has for this
+    /// host, while they have keys of other types, is a mismatch too: connections
+    /// prefer the known types (see `algorithms`), so an honest server presents one
+    /// of them.
     pub fn check(
         &self,
         host: &str,
         port: u16,
         key: &PublicKey,
     ) -> Result<HostKeyStatus, CoreError> {
-        let mut known = match check_known_hosts_path(host, port, key, &self.pylentra) {
-            Ok(found) => found,
-            Err(russh::keys::Error::KeyChanged { line }) => {
-                let expected_fp = known_host_keys_path(host, port, &self.pylentra)
-                    .map_err(ssh_err)?
-                    .iter()
-                    .find(|(l, _)| *l == line)
-                    .map(|(_, k)| fingerprint(k))
-                    .unwrap_or_default();
-                return Ok(HostKeyStatus::Mismatch {
-                    source: KeySource::Pylentra,
-                    expected_fp,
-                    type_changed: false,
-                });
-            }
-            Err(e) => return Err(ssh_err(e)),
-        };
-        // Only types Pylentra can negotiate count: an honest server could never present the others.
-        // Without a same-algorithm match, every key Pylentra's file has for the host is another type.
-        let mut other = match known {
-            true => None,
-            false => known_host_keys_path(host, port, &self.pylentra)
+        // Before russh is asked: a revoked key must lose even to an accepting line.
+        if let Some(source) = self.revoked_by(host, port, key)? {
+            return Ok(HostKeyStatus::Revoked {
+                source,
+                fingerprint: fingerprint(key),
+            });
+        }
+        let mut recorded: Vec<(KeySource, PublicKey)> =
+            known_host_keys_path(host, port, &self.pylentra)
                 .map_err(ssh_err)?
-                .iter()
-                .find(|(_, k)| negotiable(&k.algorithm()))
-                .map(|(_, k)| (KeySource::Pylentra, fingerprint(k))),
-        };
+                .into_iter()
+                .map(|(_, k)| (KeySource::Pylentra, k))
+                .collect();
         for (source, path) in &self.read_only {
-            for recorded in recorded_keys(source, path, host, port)? {
-                if recorded.algorithm() != key.algorithm() {
-                    if negotiable(&recorded.algorithm()) {
-                        other.get_or_insert_with(|| (source.clone(), fingerprint(&recorded)));
-                    }
-                } else if recorded == *key {
-                    known = true;
-                } else {
-                    return Ok(HostKeyStatus::Mismatch {
-                        source: source.clone(),
-                        expected_fp: fingerprint(&recorded),
-                        type_changed: false,
-                    });
-                }
+            for k in recorded_keys(source, path, host, port)? {
+                recorded.push((source.clone(), k));
             }
         }
-        Ok(match (known, other) {
-            (true, _) => HostKeyStatus::Known,
-            (false, Some((source, expected_fp))) => HostKeyStatus::Mismatch {
-                source,
-                expected_fp,
-                type_changed: true,
-            },
-            (false, None) => HostKeyStatus::Unknown,
-        })
+        // As OpenSSH: any line recording the key makes it known, whatever else matches.
+        if recorded.iter().any(|(_, k)| k == key) {
+            return Ok(HostKeyStatus::Known);
+        }
+        let mismatch = |(source, k): &(KeySource, PublicKey), type_changed| {
+            Ok(HostKeyStatus::Mismatch {
+                source: source.clone(),
+                expected_fp: fingerprint(k),
+                type_changed,
+            })
+        };
+        if let Some(same) = recorded
+            .iter()
+            .find(|(_, k)| k.algorithm() == key.algorithm())
+        {
+            return mismatch(same, false);
+        }
+        // Only types Pylentra can negotiate count: an honest server could never present the others.
+        match recorded.iter().find(|(_, k)| negotiable(&k.algorithm())) {
+            Some(other) => mismatch(other, true),
+            None => Ok(HostKeyStatus::Unknown),
+        }
+    }
+
+    /// The first file with an `@revoked` line for `host:port` recording `key`; patterns
+    /// and hashed names count in every file, Pylentra's own included.
+    fn revoked_by(
+        &self,
+        host: &str,
+        port: u16,
+        key: &PublicKey,
+    ) -> Result<Option<KeySource>, CoreError> {
+        let host_port = host_port(host, port);
+        let own = (KeySource::Pylentra, &self.pylentra);
+        for (source, path) in
+            std::iter::once(own).chain(self.read_only.iter().map(|(s, p)| (s.clone(), p)))
+        {
+            let Some(text) = read_text(&source, path)? else {
+                continue;
+            };
+            let hit = key_lines(&text).any(|(_, marker, hosts, _, b64)| {
+                marker == Marker::Revoked
+                    && host_field_matches(&host_port, hosts)
+                    && match parse_public_key_base64(b64) {
+                        Ok(k) => k == *key,
+                        Err(e) => {
+                            log::warn!("ignoring unusable @revoked entry: {e}");
+                            false
+                        }
+                    }
+            });
+            if hit {
+                return Ok(Some(source));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Whether any file has a `@cert-authority` line covering `host:port`. The key is not
+    /// parsed: the line only matters as a warning, since Pylentra ignores certificates.
+    pub fn cert_authority(&self, host: &str, port: u16) -> Result<bool, CoreError> {
+        let host_port = host_port(host, port);
+        let own = (KeySource::Pylentra, &self.pylentra);
+        for (source, path) in
+            std::iter::once(own).chain(self.read_only.iter().map(|(s, p)| (s.clone(), p)))
+        {
+            let Some(text) = read_text(&source, path)? else {
+                continue;
+            };
+            if key_lines(&text).any(|(_, marker, hosts, _, _)| {
+                marker == Marker::CertAuthority && host_field_matches(&host_port, hosts)
+            }) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Algorithms of every key any file records for `host:port`, to put first in negotiation.
@@ -169,7 +214,9 @@ impl KnownHosts {
             Err(e) => return Err(e.into()),
         };
         let mut entries = Vec::new();
-        for (n, hosts, algo, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
+        for (n, _, hosts, algo, b64) in
+            key_lines(&String::from_utf8_lossy(&bytes)).filter(|l| l.1 == Marker::Plain)
+        {
             let Ok(key) = parse_public_key_base64(b64) else {
                 log::warn!("skipping unusable key on line {n} of known_hosts");
                 continue;
@@ -224,6 +271,32 @@ impl KnownHosts {
     }
 }
 
+/// The text of a known_hosts file; `None` for a missing file (no entries).
+fn read_text(source: &KeySource, path: &Path) -> Result<Option<String>, CoreError> {
+    match std::fs::read(path) {
+        Ok(b) => Ok(Some(String::from_utf8_lossy(&b).into_owned())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        // As OpenSSH does: a root-only system file must not stop every connection.
+        // The user's own file still fails, so a changed key there is never skipped.
+        Err(e)
+            if *source == KeySource::System && e.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| log::warn!("cannot read the system known_hosts: {e}"));
+            Ok(None)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn host_port(host: &str, port: u16) -> String {
+    if port == 22 {
+        host.to_owned()
+    } else {
+        format!("[{host}]:{port}")
+    }
+}
+
 /// Keys a read-only (OpenSSH) known_hosts records for `host:port`, scanned line by
 /// line instead of with russh's helper, which fails on the first unparseable
 /// matching line (ssh-dss, unsupported types) and would hide the valid entries
@@ -234,28 +307,13 @@ fn recorded_keys(
     host: &str,
     port: u16,
 ) -> Result<Vec<PublicKey>, CoreError> {
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        // As OpenSSH does: a root-only system file must not stop every connection.
-        // The user's own file still fails, so a changed key there is never skipped.
-        Err(e)
-            if *source == KeySource::System && e.kind() == std::io::ErrorKind::PermissionDenied =>
-        {
-            static WARNED: std::sync::Once = std::sync::Once::new();
-            WARNED.call_once(|| log::warn!("cannot read the system known_hosts: {e}"));
-            return Ok(Vec::new());
-        }
-        Err(e) => return Err(e.into()),
+    let Some(text) = read_text(source, path)? else {
+        return Ok(Vec::new());
     };
-    let host_port = if port == 22 {
-        host.to_owned()
-    } else {
-        format!("[{host}]:{port}")
-    };
+    let host_port = host_port(host, port);
     let mut keys = Vec::new();
-    for (_, hosts, _, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
-        if !hosts.split(',').any(|p| host_matches(&host_port, p)) {
+    for (_, marker, hosts, _, b64) in key_lines(&text) {
+        if marker != Marker::Plain || !host_field_matches(&host_port, hosts) {
             continue;
         }
         match parse_public_key_base64(b64) {
@@ -293,16 +351,34 @@ fn negotiable(recorded: &Algorithm) -> bool {
         .any(|a| same_key_type(recorded, a))
 }
 
-/// `(line number, hosts, algorithm, base64 key)` of each line that can hold a
-/// plain host key; comments, '@cert-authority' / '@revoked' markers and lines
-/// with too few fields are skipped.
-fn key_lines(text: &str) -> impl Iterator<Item = (usize, &str, &str, &str)> {
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Marker {
+    Plain,
+    Revoked,
+    CertAuthority,
+}
+
+/// `(line number, marker, hosts, algorithm, base64 key)` of each line that can
+/// hold a key; `@revoked` and `@cert-authority` lines are yielded too, for callers
+/// to filter. Comments, unknown '@' markers and lines with too few fields are
+/// skipped.
+fn key_lines(text: &str) -> impl Iterator<Item = (usize, Marker, &str, &str, &str)> {
     text.lines().enumerate().filter_map(|(i, line)| {
-        if line.starts_with(['#', '@']) {
+        if line.starts_with('#') {
             return None;
         }
         let mut fields = line.split_ascii_whitespace();
-        Some((i + 1, fields.next()?, fields.next()?, fields.next()?))
+        let mut first = fields.next()?;
+        let marker = match first {
+            "@revoked" => Marker::Revoked,
+            "@cert-authority" => Marker::CertAuthority,
+            _ if first.starts_with('@') => return None,
+            _ => Marker::Plain,
+        };
+        if marker != Marker::Plain {
+            first = fields.next()?;
+        }
+        Some((i + 1, marker, first, fields.next()?, fields.next()?))
     })
 }
 
@@ -319,10 +395,11 @@ fn split_host_port(name: &str) -> (Option<String>, u16) {
     (Some(name.to_owned()), 22)
 }
 
-/// Plain pattern or hashed `|1|salt|hash` (HMAC-SHA1 of the host string).
-fn host_matches(host_port: &str, pattern: &str) -> bool {
-    let Some(hashed) = pattern.strip_prefix("|1|") else {
-        return pattern == host_port;
+/// A hosts field: one hashed `|1|salt|hash` entry (HMAC-SHA1 of the host
+/// string), matched exactly, or a comma list of patterns with `!` negation.
+pub(crate) fn host_field_matches(host_port: &str, field: &str) -> bool {
+    let Some(hashed) = field.strip_prefix("|1|") else {
+        return crate::pattern::list_matches(field.split(','), host_port);
     };
     let mut parts = hashed.split('|');
     let (Some(Ok(salt)), Some(Ok(hash))) = (
@@ -512,10 +589,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Unknown);
-        assert_eq!(
+        assert!(matches!(
             kh.check("a.example.com", 22, &k).unwrap(),
-            HostKeyStatus::Unknown
-        );
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                ..
+            }
+        ));
         assert_eq!(
             kh.check("wild.example.com", 22, &other).unwrap(),
             HostKeyStatus::Known
@@ -589,6 +669,231 @@ mod tests {
             .unwrap()
             .public_key()
             .clone()
+    }
+
+    fn write_ssh(d: &tempfile::TempDir, text: String) {
+        fs::write(d.path().join("ssh_known_hosts"), text).unwrap();
+    }
+
+    fn is_openssh_mismatch(s: HostKeyStatus) -> bool {
+        matches!(
+            s,
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                type_changed: false,
+                ..
+            }
+        )
+    }
+
+    #[test]
+    fn wildcard_line_is_known_and_blocks_other_keys() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(&d, format!("*.example.com {}\n", k.to_openssh().unwrap()));
+        assert_eq!(
+            kh.check("a.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Known
+        );
+        assert!(is_openssh_mismatch(
+            kh.check("a.example.com", 22, &other).unwrap()
+        ));
+    }
+
+    #[test]
+    fn wildcard_and_exact_line_either_key_is_known() {
+        for reversed in [false, true] {
+            let (d, kh) = setup();
+            let (k1, k2, k3) = (key(), key(), key());
+            let mut lines = [
+                format!("*.corp.example {}", k1.to_openssh().unwrap()),
+                format!("a.corp.example {}", k2.to_openssh().unwrap()),
+            ];
+            if reversed {
+                lines.reverse();
+            }
+            write_ssh(&d, lines.join("\n") + "\n");
+            for k in [&k1, &k2] {
+                assert_eq!(
+                    kh.check("a.corp.example", 22, k).unwrap(),
+                    HostKeyStatus::Known
+                );
+            }
+            assert!(matches!(
+                kh.check("a.corp.example", 22, &k3).unwrap(),
+                HostKeyStatus::Mismatch {
+                    source: KeySource::OpenSsh,
+                    type_changed: false,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn key_known_in_another_file_is_known() {
+        let (d, kh) = setup();
+        let (k1, k2, k3) = (key(), key(), key());
+        kh.learn("h", 22, &k1).unwrap();
+        write_ssh(&d, format!("h {}\n", k2.to_openssh().unwrap()));
+        assert_eq!(kh.check("h", 22, &k2).unwrap(), HostKeyStatus::Known);
+        assert_eq!(kh.check("h", 22, &k1).unwrap(), HostKeyStatus::Known);
+        assert_eq!(
+            kh.check("h", 22, &k3).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::Pylentra,
+                expected_fp: fingerprint(&k1),
+                type_changed: false
+            }
+        );
+    }
+
+    #[test]
+    fn equal_key_plus_another_type_is_known() {
+        let (d, kh) = setup();
+        let (k, e) = (key(), ecdsa());
+        write_ssh(
+            &d,
+            format!(
+                "h {}\nh {}\n",
+                e.to_openssh().unwrap(),
+                k.to_openssh().unwrap()
+            ),
+        );
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Known);
+        assert_eq!(kh.check("h", 22, &e).unwrap(), HostKeyStatus::Known);
+    }
+
+    #[test]
+    fn mismatch_points_at_first_differing_line() {
+        let (d, kh) = setup();
+        let (k1, k2, k3, e) = (key(), key(), key(), ecdsa());
+        // Same-type mismatch: Pylentra's line wins over the read-only file's.
+        kh.learn("h", 22, &k1).unwrap();
+        write_ssh(&d, format!("h {}\n", k2.to_openssh().unwrap()));
+        assert_eq!(
+            kh.check("h", 22, &k3).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::Pylentra,
+                expected_fp: fingerprint(&k1),
+                type_changed: false
+            }
+        );
+        // Other-type mismatch: only the read-only file has a negotiable key.
+        let (d, kh) = setup();
+        write_ssh(&d, format!("h {}\n", e.to_openssh().unwrap()));
+        assert_eq!(
+            kh.check("h", 22, &k3).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                expected_fp: fingerprint(&e),
+                type_changed: true
+            }
+        );
+    }
+
+    #[test]
+    fn two_keys_in_pylentra_file_either_is_known() {
+        let (d, kh) = setup();
+        let (k1, k2) = (key(), key());
+        fs::write(
+            d.path().join("known_hosts"),
+            format!(
+                "h {}\nh {}\n",
+                k1.to_openssh().unwrap(),
+                k2.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        for k in [&k1, &k2] {
+            assert_eq!(kh.check("h", 22, k).unwrap(), HostKeyStatus::Known);
+        }
+    }
+
+    #[test]
+    fn question_mark_and_mixed_case() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(
+            &d,
+            format!("web?.Example.COM {}\n", k.to_openssh().unwrap()),
+        );
+        assert_eq!(
+            kh.check("web1.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Known
+        );
+        assert_eq!(
+            kh.check("web10.example.com", 22, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn negation_excludes_a_host() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(
+            &d,
+            format!(
+                "*.example.com,!bad.example.com {}\n",
+                k.to_openssh().unwrap()
+            ),
+        );
+        assert_eq!(
+            kh.check("bad.example.com", 22, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        assert!(is_openssh_mismatch(
+            kh.check("good.example.com", 22, &other).unwrap()
+        ));
+    }
+
+    #[test]
+    fn negation_only_field_matches_nothing() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(
+            &d,
+            format!("!bad.example.com {}\n", k.to_openssh().unwrap()),
+        );
+        assert_eq!(
+            kh.check("x.example.com", 22, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        assert_eq!(
+            kh.check("bad.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn bracketed_port_patterns() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        let pk = k.to_openssh().unwrap();
+        write_ssh(&d, format!("[*.example.com]:2222 {pk}\n"));
+        assert_eq!(
+            kh.check("a.example.com", 2222, &k).unwrap(),
+            HostKeyStatus::Known
+        );
+        write_ssh(&d, format!("*.example.com {pk}\n"));
+        assert_eq!(
+            kh.check("a.example.com", 2222, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        write_ssh(&d, format!("* {pk}\n"));
+        assert!(is_openssh_mismatch(kh.check("h", 2222, &other).unwrap()));
+    }
+
+    #[test]
+    fn algorithms_include_pattern_lines() {
+        let (d, kh) = setup();
+        let ec = ecdsa();
+        write_ssh(&d, format!("*.example.com {}\n", ec.to_openssh().unwrap()));
+        assert_eq!(
+            kh.algorithms("a.example.com", 22).unwrap(),
+            [ec.algorithm()]
+        );
     }
 
     #[test]
@@ -789,5 +1094,143 @@ mod tests {
             got,
             [("x".into(), 22), ("y".into(), 2200), ("::1".into(), 2222)]
         );
+    }
+
+    fn revoked(k: &PublicKey) -> HostKeyStatus {
+        HostKeyStatus::Revoked {
+            source: KeySource::OpenSsh,
+            fingerprint: fingerprint(k),
+        }
+    }
+
+    #[test]
+    fn cert_authority_flag() {
+        let (d, kh) = setup();
+        assert!(!kh.cert_authority("a.corp.example", 22).unwrap());
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "@cert-authority *.corp.example {}\n",
+                key().to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert!(kh.cert_authority("a.corp.example", 22).unwrap());
+        assert!(!kh.cert_authority("other.example", 22).unwrap());
+    }
+
+    #[test]
+    fn revoked_in_openssh_file_wins_over_pylentra() {
+        let (d, kh) = setup();
+        let k = key();
+        kh.learn("h", 22, &k).unwrap();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("@revoked h {}\n", k.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_wins_over_another_accepting_line() {
+        let (d, kh) = setup();
+        let k = key();
+        let o = k.to_openssh().unwrap();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("h {o}\n@revoked h {o}\n"),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_in_pylentra_file() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("known_hosts"),
+            format!("@revoked h {}\n", k.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(
+            kh.check("h", 22, &k).unwrap(),
+            HostKeyStatus::Revoked {
+                source: KeySource::Pylentra,
+                fingerprint: fingerprint(&k)
+            }
+        );
+    }
+
+    #[test]
+    fn revoked_in_system_file() {
+        let (d, kh) = setup();
+        let k = key();
+        let global = d.path().join("global");
+        fs::write(&global, format!("@revoked h {}\n", k.to_openssh().unwrap())).unwrap();
+        let kh = kh.with_system(Some(global));
+        assert_eq!(
+            kh.check("h", 22, &k).unwrap(),
+            HostKeyStatus::Revoked {
+                source: KeySource::System,
+                fingerprint: fingerprint(&k)
+            }
+        );
+    }
+
+    #[test]
+    fn revoked_star_covers_every_host_and_port() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("@revoked * {}\n", k.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(kh.check("a", 22, &k).unwrap(), revoked(&k));
+        assert_eq!(kh.check("b", 2222, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_hashed_host() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "@revoked |1|O33ESRMWPVkMYIwJ1Uw+n877jTo=|nuuC5vEqXlEZ/8BXQR7m619W6Ak= {}\n",
+                k.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(kh.check("example.com", 22, &k).unwrap(), revoked(&k));
+    }
+
+    #[test]
+    fn revoked_other_key_does_not_block() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!("@revoked h {}\n", other.to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Unknown);
+    }
+
+    #[test]
+    fn revoked_line_with_unparseable_key_is_skipped() {
+        let (d, kh) = setup();
+        let k = key();
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "@revoked * ssh-ed25519 !!!\nh {}\n",
+                k.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Known);
     }
 }

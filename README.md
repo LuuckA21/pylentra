@@ -59,10 +59,12 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
 - **Windows icon cache.** After an update that changes the app icon, a
   taskbar pin or Start menu shortcut can keep showing the old one until
   Windows refreshes its icon cache: restart, or run `ie4uinit.exe -show`.
-- **`known_hosts`:** `@revoked` and `@cert-authority` markers and wildcard host
-  patterns in `~/.ssh/known_hosts` and the system-wide `ssh_known_hosts`
+- **`known_hosts`:** `@cert-authority` lines (host certificates) are not
+  supported, and the trust prompt warns about them. Pylentra only reads
+  `~/.ssh/known_hosts` and the system-wide `ssh_known_hosts`
   (`/etc/ssh/ssh_known_hosts`, on Windows `%ProgramData%\ssh\ssh_known_hosts`)
-  are not honoured. Pylentra only reads those files and never writes to them.
+  and never writes to them. `@revoked` lines and wildcard or negated host
+  patterns in those files are honoured.
   `HostKeyAlias`, `UserKnownHostsFile` and `GlobalKnownHostsFile` in
   `~/.ssh/config` are ignored: keys are looked up under the connection's host
   in those two files and Pylentra's own.

@@ -22,13 +22,18 @@
     role="dialog"
     aria-modal="true"
     aria-labelledby="{uid}-title"
-    aria-describedby="{uid}-body"
+    aria-describedby={prompt.cert_authority
+      ? `${uid}-body ${uid}-ca`
+      : `${uid}-body`}
     use:modal={cancel}
   >
     <h2 id="{uid}-title">{t("hostkey.title")}</h2>
     <p id="{uid}-body">
       {t("hostkey.body", { host: prompt.host, port: prompt.port })}
     </p>
+    {#if prompt.cert_authority}
+      <p id="{uid}-ca">{t("hostkey.certAuthority")}</p>
+    {/if}
     <dl>
       <dt>{t("hostkey.algo")}</dt>
       <dd><code>{prompt.algo}</code></dd>
