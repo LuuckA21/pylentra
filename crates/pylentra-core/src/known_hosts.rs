@@ -171,7 +171,13 @@ impl KnownHosts {
             let hit = key_lines(&text).any(|(_, marker, hosts, _, b64)| {
                 marker == Marker::Revoked
                     && host_field_matches(&host_port, hosts)
-                    && parse_public_key_base64(b64).is_ok_and(|k| k == *key)
+                    && match parse_public_key_base64(b64) {
+                        Ok(k) => k == *key,
+                        Err(e) => {
+                            log::warn!("ignoring unusable @revoked entry: {e}");
+                            false
+                        }
+                    }
             });
             if hit {
                 return Ok(Some(source));
