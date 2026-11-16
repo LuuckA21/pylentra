@@ -388,6 +388,10 @@ devtools).
    the 0600 file again over a `chmod 640` copy and choose "Replace": it
    stays `-rw-r-----`.
 4. Linux: the files in Pylentra's config folder are `-rw-------` after a save.
+5. Put a key under `@revoked * <key>` in `~/.ssh/known_hosts` and connect to a
+   host that presents it: the connection is blocked with the revoked overlay.
+   Add a `@cert-authority` line covering another host: its trust prompt shows
+   the certificates warning.
 
 ## Language
 
