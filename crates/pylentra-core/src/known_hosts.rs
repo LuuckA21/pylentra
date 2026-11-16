@@ -79,10 +79,10 @@ impl KnownHosts {
 
     /// Pylentra's file first, then the read-only ones; any recorded key that differs
     /// for the same algorithm is a mismatch only if no line in any file records the
-    /// presented key (as OpenSSH). A key of a
-    /// type none of the files has for this host, while they have keys of other types,
-    /// is a mismatch too: connections prefer the known types (see `algorithms`), so an
-    /// honest server presents one of them.
+    /// presented key (as OpenSSH). A key of a type none of the files has for this
+    /// host, while they have keys of other types, is a mismatch too: connections
+    /// prefer the known types (see `algorithms`), so an honest server presents one
+    /// of them.
     pub fn check(
         &self,
         host: &str,
@@ -737,13 +737,59 @@ mod tests {
         kh.learn("h", 22, &k1).unwrap();
         write_ssh(&d, format!("h {}\n", k2.to_openssh().unwrap()));
         assert_eq!(kh.check("h", 22, &k2).unwrap(), HostKeyStatus::Known);
-        assert!(matches!(
+        assert_eq!(kh.check("h", 22, &k1).unwrap(), HostKeyStatus::Known);
+        assert_eq!(
             kh.check("h", 22, &k3).unwrap(),
             HostKeyStatus::Mismatch {
                 source: KeySource::Pylentra,
-                ..
+                expected_fp: fingerprint(&k1),
+                type_changed: false
             }
-        ));
+        );
+    }
+
+    #[test]
+    fn equal_key_plus_another_type_is_known() {
+        let (d, kh) = setup();
+        let (k, e) = (key(), ecdsa());
+        write_ssh(
+            &d,
+            format!(
+                "h {}\nh {}\n",
+                e.to_openssh().unwrap(),
+                k.to_openssh().unwrap()
+            ),
+        );
+        assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Known);
+        assert_eq!(kh.check("h", 22, &e).unwrap(), HostKeyStatus::Known);
+    }
+
+    #[test]
+    fn mismatch_points_at_first_differing_line() {
+        let (d, kh) = setup();
+        let (k1, k2, k3, e) = (key(), key(), key(), ecdsa());
+        // Same-type mismatch: Pylentra's line wins over the read-only file's.
+        kh.learn("h", 22, &k1).unwrap();
+        write_ssh(&d, format!("h {}\n", k2.to_openssh().unwrap()));
+        assert_eq!(
+            kh.check("h", 22, &k3).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::Pylentra,
+                expected_fp: fingerprint(&k1),
+                type_changed: false
+            }
+        );
+        // Other-type mismatch: only the read-only file has a negotiable key.
+        let (d, kh) = setup();
+        write_ssh(&d, format!("h {}\n", e.to_openssh().unwrap()));
+        assert_eq!(
+            kh.check("h", 22, &k3).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                expected_fp: fingerprint(&e),
+                type_changed: true
+            }
+        );
     }
 
     #[test]
