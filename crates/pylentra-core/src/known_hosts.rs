@@ -169,7 +169,9 @@ impl KnownHosts {
             Err(e) => return Err(e.into()),
         };
         let mut entries = Vec::new();
-        for (n, hosts, algo, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
+        for (n, _, hosts, algo, b64) in
+            key_lines(&String::from_utf8_lossy(&bytes)).filter(|l| l.1 == Marker::Plain)
+        {
             let Ok(key) = parse_public_key_base64(b64) else {
                 log::warn!("skipping unusable key on line {n} of known_hosts");
                 continue;
@@ -254,8 +256,8 @@ fn recorded_keys(
         format!("[{host}]:{port}")
     };
     let mut keys = Vec::new();
-    for (_, hosts, _, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
-        if !hosts.split(',').any(|p| host_matches(&host_port, p)) {
+    for (_, marker, hosts, _, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
+        if marker != Marker::Plain || !host_field_matches(&host_port, hosts) {
             continue;
         }
         match parse_public_key_base64(b64) {
@@ -293,16 +295,33 @@ fn negotiable(recorded: &Algorithm) -> bool {
         .any(|a| same_key_type(recorded, a))
 }
 
-/// `(line number, hosts, algorithm, base64 key)` of each line that can hold a
-/// plain host key; comments, '@cert-authority' / '@revoked' markers and lines
-/// with too few fields are skipped.
-fn key_lines(text: &str) -> impl Iterator<Item = (usize, &str, &str, &str)> {
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Marker {
+    Plain,
+    Revoked,
+    CertAuthority,
+}
+
+/// `(line number, marker, hosts, algorithm, base64 key)` of each line that can
+/// hold a key; comments, unknown '@' markers and lines with too few fields are
+/// skipped.
+fn key_lines(text: &str) -> impl Iterator<Item = (usize, Marker, &str, &str, &str)> {
     text.lines().enumerate().filter_map(|(i, line)| {
-        if line.starts_with(['#', '@']) {
+        if line.starts_with('#') {
             return None;
         }
         let mut fields = line.split_ascii_whitespace();
-        Some((i + 1, fields.next()?, fields.next()?, fields.next()?))
+        let mut first = fields.next()?;
+        let marker = match first {
+            "@revoked" => Marker::Revoked,
+            "@cert-authority" => Marker::CertAuthority,
+            _ if first.starts_with('@') => return None,
+            _ => Marker::Plain,
+        };
+        if marker != Marker::Plain {
+            first = fields.next()?;
+        }
+        Some((i + 1, marker, first, fields.next()?, fields.next()?))
     })
 }
 
@@ -319,10 +338,11 @@ fn split_host_port(name: &str) -> (Option<String>, u16) {
     (Some(name.to_owned()), 22)
 }
 
-/// Plain pattern or hashed `|1|salt|hash` (HMAC-SHA1 of the host string).
-fn host_matches(host_port: &str, pattern: &str) -> bool {
-    let Some(hashed) = pattern.strip_prefix("|1|") else {
-        return pattern == host_port;
+/// A hosts field: one hashed `|1|salt|hash` entry (HMAC-SHA1 of the host
+/// string), matched exactly, or a comma list of patterns with `!` negation.
+pub(crate) fn host_field_matches(host_port: &str, field: &str) -> bool {
+    let Some(hashed) = field.strip_prefix("|1|") else {
+        return crate::pattern::list_matches(field.split(','), host_port);
     };
     let mut parts = hashed.split('|');
     let (Some(Ok(salt)), Some(Ok(hash))) = (
@@ -512,10 +532,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(kh.check("h", 22, &k).unwrap(), HostKeyStatus::Unknown);
-        assert_eq!(
+        assert!(matches!(
             kh.check("a.example.com", 22, &k).unwrap(),
-            HostKeyStatus::Unknown
-        );
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                ..
+            }
+        ));
         assert_eq!(
             kh.check("wild.example.com", 22, &other).unwrap(),
             HostKeyStatus::Known
@@ -589,6 +612,121 @@ mod tests {
             .unwrap()
             .public_key()
             .clone()
+    }
+
+    fn write_ssh(d: &tempfile::TempDir, text: String) {
+        fs::write(d.path().join("ssh_known_hosts"), text).unwrap();
+    }
+
+    fn is_openssh_mismatch(s: HostKeyStatus) -> bool {
+        matches!(
+            s,
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                type_changed: false,
+                ..
+            }
+        )
+    }
+
+    #[test]
+    fn wildcard_line_is_known_and_blocks_other_keys() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(&d, format!("*.example.com {}\n", k.to_openssh().unwrap()));
+        assert_eq!(
+            kh.check("a.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Known
+        );
+        assert!(is_openssh_mismatch(
+            kh.check("a.example.com", 22, &other).unwrap()
+        ));
+    }
+
+    #[test]
+    fn question_mark_and_mixed_case() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(
+            &d,
+            format!("web?.Example.COM {}\n", k.to_openssh().unwrap()),
+        );
+        assert_eq!(
+            kh.check("web1.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Known
+        );
+        assert_eq!(
+            kh.check("web10.example.com", 22, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn negation_excludes_a_host() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(
+            &d,
+            format!(
+                "*.example.com,!bad.example.com {}\n",
+                k.to_openssh().unwrap()
+            ),
+        );
+        assert_eq!(
+            kh.check("bad.example.com", 22, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        assert!(is_openssh_mismatch(
+            kh.check("good.example.com", 22, &other).unwrap()
+        ));
+    }
+
+    #[test]
+    fn negation_only_field_matches_nothing() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        write_ssh(
+            &d,
+            format!("!bad.example.com {}\n", k.to_openssh().unwrap()),
+        );
+        assert_eq!(
+            kh.check("x.example.com", 22, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        assert_eq!(
+            kh.check("bad.example.com", 22, &k).unwrap(),
+            HostKeyStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn bracketed_port_patterns() {
+        let (d, kh) = setup();
+        let (k, other) = (key(), key());
+        let pk = k.to_openssh().unwrap();
+        write_ssh(&d, format!("[*.example.com]:2222 {pk}\n"));
+        assert_eq!(
+            kh.check("a.example.com", 2222, &k).unwrap(),
+            HostKeyStatus::Known
+        );
+        write_ssh(&d, format!("*.example.com {pk}\n"));
+        assert_eq!(
+            kh.check("a.example.com", 2222, &other).unwrap(),
+            HostKeyStatus::Unknown
+        );
+        write_ssh(&d, format!("* {pk}\n"));
+        assert!(is_openssh_mismatch(kh.check("h", 2222, &other).unwrap()));
+    }
+
+    #[test]
+    fn algorithms_include_pattern_lines() {
+        let (d, kh) = setup();
+        let ec = ecdsa();
+        write_ssh(&d, format!("*.example.com {}\n", ec.to_openssh().unwrap()));
+        assert_eq!(
+            kh.algorithms("a.example.com", 22).unwrap(),
+            [ec.algorithm()]
+        );
     }
 
     #[test]
