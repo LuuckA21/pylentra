@@ -1,12 +1,14 @@
 use crate::error::CoreError;
+use crate::model::check_host_name;
 use crate::store::atomic_write;
 use data_encoding::BASE64_MIME;
 use hmac::{Hmac, KeyInit, Mac};
+use russh::Preferred;
 use russh::keys::known_hosts::{
     check_known_hosts_path, known_host_keys_path, learn_known_hosts_path,
 };
 use russh::keys::parse_public_key_base64;
-use russh::keys::ssh_key::{HashAlg, PublicKey};
+use russh::keys::ssh_key::{Algorithm, HashAlg, PublicKey};
 use serde::Serialize;
 use sha1::Sha1;
 use std::path::{Path, PathBuf};
@@ -17,6 +19,8 @@ use ts_rs::TS;
 pub enum KeySource {
     Pylentra,
     OpenSsh,
+    /// The system-wide `ssh_known_hosts`.
+    System,
 }
 
 #[derive(Debug, PartialEq)]
@@ -26,6 +30,8 @@ pub enum HostKeyStatus {
     Mismatch {
         source: KeySource,
         expected_fp: String,
+        /// The known key is of another type than the presented one.
+        type_changed: bool,
     },
 }
 
@@ -41,7 +47,8 @@ pub struct KnownHostEntry {
 
 pub struct KnownHosts {
     pylentra: PathBuf,
-    openssh: Option<PathBuf>,
+    /// Never written.
+    read_only: Vec<(KeySource, PathBuf)>,
 }
 
 pub fn fingerprint(key: &PublicKey) -> String {
@@ -51,11 +58,27 @@ pub fn fingerprint(key: &PublicKey) -> String {
 impl KnownHosts {
     /// `openssh` is the read-only `~/.ssh/known_hosts`; only `pylentra` is ever written.
     pub fn new(pylentra: PathBuf, openssh: Option<PathBuf>) -> Self {
-        Self { pylentra, openssh }
+        let read_only = openssh
+            .map(|p| (KeySource::OpenSsh, p))
+            .into_iter()
+            .collect();
+        Self {
+            pylentra,
+            read_only,
+        }
     }
 
-    /// Pylentra's file first, then OpenSSH's; any recorded key that differs
-    /// for the same algorithm is a mismatch, even if the other file knows it.
+    /// Also reads the system-wide `ssh_known_hosts` (never written).
+    pub fn with_system(mut self, path: Option<PathBuf>) -> Self {
+        self.read_only.extend(path.map(|p| (KeySource::System, p)));
+        self
+    }
+
+    /// Pylentra's file first, then the read-only ones; any recorded key that differs
+    /// for the same algorithm is a mismatch, even if another file knows it. A key of a
+    /// type none of the files has for this host, while they have keys of other types,
+    /// is a mismatch too: connections prefer the known types (see `algorithms`), so an
+    /// honest server presents one of them.
     pub fn check(
         &self,
         host: &str,
@@ -74,31 +97,66 @@ impl KnownHosts {
                 return Ok(HostKeyStatus::Mismatch {
                     source: KeySource::Pylentra,
                     expected_fp,
+                    type_changed: false,
                 });
             }
             Err(e) => return Err(ssh_err(e)),
         };
-        if let Some(path) = &self.openssh {
-            match scan_openssh(path, host, port, key)? {
-                Scan::Changed(expected_fp) => {
+        // Only types Pylentra can negotiate count: an honest server could never present the others.
+        // Without a same-algorithm match, every key Pylentra's file has for the host is another type.
+        let mut other = match known {
+            true => None,
+            false => known_host_keys_path(host, port, &self.pylentra)
+                .map_err(ssh_err)?
+                .iter()
+                .find(|(_, k)| negotiable(&k.algorithm()))
+                .map(|(_, k)| (KeySource::Pylentra, fingerprint(k))),
+        };
+        for (source, path) in &self.read_only {
+            for recorded in recorded_keys(source, path, host, port)? {
+                if recorded.algorithm() != key.algorithm() {
+                    if negotiable(&recorded.algorithm()) {
+                        other.get_or_insert_with(|| (source.clone(), fingerprint(&recorded)));
+                    }
+                } else if recorded == *key {
+                    known = true;
+                } else {
                     return Ok(HostKeyStatus::Mismatch {
-                        source: KeySource::OpenSsh,
-                        expected_fp,
+                        source: source.clone(),
+                        expected_fp: fingerprint(&recorded),
+                        type_changed: false,
                     });
                 }
-                Scan::Found => known = true,
-                Scan::Absent => {}
             }
         }
-        Ok(if known {
-            HostKeyStatus::Known
-        } else {
-            HostKeyStatus::Unknown
+        Ok(match (known, other) {
+            (true, _) => HostKeyStatus::Known,
+            (false, Some((source, expected_fp))) => HostKeyStatus::Mismatch {
+                source,
+                expected_fp,
+                type_changed: true,
+            },
+            (false, None) => HostKeyStatus::Unknown,
         })
+    }
+
+    /// Algorithms of every key any file records for `host:port`, to put first in negotiation.
+    pub fn algorithms(&self, host: &str, port: u16) -> Result<Vec<Algorithm>, CoreError> {
+        let mut keys: Vec<PublicKey> = known_host_keys_path(host, port, &self.pylentra)
+            .map_err(ssh_err)?
+            .into_iter()
+            .map(|(_, k)| k)
+            .collect();
+        for (source, path) in &self.read_only {
+            keys.extend(recorded_keys(source, path, host, port)?);
+        }
+        Ok(keys.iter().map(PublicKey::algorithm).collect())
     }
 
     /// Records the key in the Pylentra file only.
     pub fn learn(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), CoreError> {
+        // russh writes the name unescaped; saved connections are checked, this covers the rest.
+        check_host_name(host)?;
         learn_known_hosts_path(host, port, key, &self.pylentra).map_err(ssh_err)
     }
 
@@ -166,22 +224,28 @@ impl KnownHosts {
     }
 }
 
-enum Scan {
-    Absent,
-    Found,
-    /// Fingerprint of the recorded key that differs from the presented one.
-    Changed(String),
-}
-
-/// Scans the user's own known_hosts line by line instead of using russh's
-/// helper, which fails on the first unparseable matching line (ssh-dss,
-/// unsupported types) and would hide the valid entries around it.
-/// Same semantics as russh otherwise: a differing key of the same algorithm
-/// wins over a match. A missing file means no entries.
-fn scan_openssh(path: &Path, host: &str, port: u16, key: &PublicKey) -> Result<Scan, CoreError> {
+/// Keys a read-only (OpenSSH) known_hosts records for `host:port`, scanned line by
+/// line instead of with russh's helper, which fails on the first unparseable
+/// matching line (ssh-dss, unsupported types) and would hide the valid entries
+/// around it. A missing file means no entries.
+fn recorded_keys(
+    source: &KeySource,
+    path: &Path,
+    host: &str,
+    port: u16,
+) -> Result<Vec<PublicKey>, CoreError> {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Scan::Absent),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        // As OpenSSH does: a root-only system file must not stop every connection.
+        // The user's own file still fails, so a changed key there is never skipped.
+        Err(e)
+            if *source == KeySource::System && e.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| log::warn!("cannot read the system known_hosts: {e}"));
+            return Ok(Vec::new());
+        }
         Err(e) => return Err(e.into()),
     };
     let host_port = if port == 22 {
@@ -189,27 +253,44 @@ fn scan_openssh(path: &Path, host: &str, port: u16, key: &PublicKey) -> Result<S
     } else {
         format!("[{host}]:{port}")
     };
-    let mut found = false;
+    let mut keys = Vec::new();
     for (_, hosts, _, b64) in key_lines(&String::from_utf8_lossy(&bytes)) {
         if !hosts.split(',').any(|p| host_matches(&host_port, p)) {
             continue;
         }
-        let recorded = match parse_public_key_base64(b64) {
-            Ok(k) => k,
-            Err(e) => {
-                log::warn!("ignoring unusable entry in OpenSSH known_hosts: {e}");
-                continue;
-            }
-        };
-        if recorded.algorithm() == key.algorithm() {
-            if recorded == *key {
-                found = true;
-            } else {
-                return Ok(Scan::Changed(fingerprint(&recorded)));
-            }
+        match parse_public_key_base64(b64) {
+            Ok(k) => keys.push(k),
+            Err(e) => log::warn!("ignoring unusable entry in OpenSSH known_hosts: {e}"),
         }
     }
-    Ok(if found { Scan::Found } else { Scan::Absent })
+    Ok(keys)
+}
+
+/// Host key algorithms Pylentra offers, in russh's order, without SHA-1 `ssh-rsa`
+/// signatures (as OpenSSH 8.8+); rsa-sha2-* stay.
+pub(crate) fn host_key_algorithms() -> Vec<Algorithm> {
+    Preferred::DEFAULT
+        .key
+        .iter()
+        .filter(|a| **a != Algorithm::Rsa { hash: None })
+        .cloned()
+        .collect()
+}
+
+/// Whether a recorded key of type `recorded` is used by `offered`: a recorded RSA key is
+/// `Rsa { hash: None }` whatever signature hash it is used with.
+pub(crate) fn same_key_type(recorded: &Algorithm, offered: &Algorithm) -> bool {
+    recorded == offered
+        || matches!(
+            (recorded, offered),
+            (Algorithm::Rsa { .. }, Algorithm::Rsa { .. })
+        )
+}
+
+fn negotiable(recorded: &Algorithm) -> bool {
+    host_key_algorithms()
+        .iter()
+        .any(|a| same_key_type(recorded, a))
 }
 
 /// `(line number, hosts, algorithm, base64 key)` of each line that can hold a
@@ -320,7 +401,8 @@ mod tests {
             kh.check("h", 22, &k2).unwrap(),
             HostKeyStatus::Mismatch {
                 source: KeySource::Pylentra,
-                expected_fp: fingerprint(&k1)
+                expected_fp: fingerprint(&k1),
+                type_changed: false
             }
         );
     }
@@ -334,7 +416,8 @@ mod tests {
             kh.check("h", 22, &k2).unwrap(),
             HostKeyStatus::Mismatch {
                 source: KeySource::OpenSsh,
-                expected_fp: fingerprint(&k1)
+                expected_fp: fingerprint(&k1),
+                type_changed: false
             }
         );
     }
@@ -463,7 +546,8 @@ mod tests {
             kh.check("h", 22, &k2).unwrap(),
             HostKeyStatus::Mismatch {
                 source: KeySource::OpenSsh,
-                expected_fp: fingerprint(&k1)
+                expected_fp: fingerprint(&k1),
+                type_changed: false
             }
         );
     }
@@ -493,9 +577,113 @@ mod tests {
             kh.check("example.com", 22, &k2).unwrap(),
             HostKeyStatus::Mismatch {
                 source: KeySource::OpenSsh,
-                expected_fp: fingerprint(&k1)
+                expected_fp: fingerprint(&k1),
+                type_changed: false
             }
         );
+    }
+
+    fn ecdsa() -> PublicKey {
+        let curve = russh::keys::EcdsaCurve::NistP256;
+        PrivateKey::random(&mut rand::rng(), Algorithm::Ecdsa { curve })
+            .unwrap()
+            .public_key()
+            .clone()
+    }
+
+    #[test]
+    fn only_other_key_types_known_is_a_mismatch() {
+        let (d, kh) = setup();
+        let (ed, ec) = (key(), ecdsa());
+        kh.learn("p", 22, &ed).unwrap();
+        assert_eq!(
+            kh.check("p", 22, &ec).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::Pylentra,
+                expected_fp: fingerprint(&ed),
+                type_changed: true
+            }
+        );
+        // OpenSSH's file holds only an ECDSA key: that host still checks as Known for it.
+        learn_known_hosts_path("o", 22, &ec, d.path().join("ssh_known_hosts")).unwrap();
+        assert_eq!(kh.check("o", 22, &ec).unwrap(), HostKeyStatus::Known);
+        assert_eq!(
+            kh.check("o", 22, &ed).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::OpenSsh,
+                expected_fp: fingerprint(&ec),
+                type_changed: true
+            }
+        );
+        // A same-type match anywhere wins over other types recorded elsewhere.
+        kh.learn("o", 22, &ed).unwrap();
+        assert_eq!(kh.check("o", 22, &ed).unwrap(), HostKeyStatus::Known);
+    }
+
+    #[test]
+    fn only_types_pylentra_cannot_negotiate_known_is_unknown() {
+        let (d, kh) = setup();
+        let ed = match key().key_data() {
+            russh::keys::ssh_key::public::KeyData::Ed25519(k) => *k,
+            _ => unreachable!(),
+        };
+        let sk = PublicKey::from(russh::keys::ssh_key::public::SkEd25519::new(ed, "ssh:"));
+        learn_known_hosts_path("s", 22, &sk, d.path().join("ssh_known_hosts")).unwrap();
+        kh.learn("p", 22, &sk).unwrap();
+        assert_eq!(kh.check("s", 22, &key()).unwrap(), HostKeyStatus::Unknown);
+        assert_eq!(kh.check("p", 22, &key()).unwrap(), HostKeyStatus::Unknown);
+    }
+
+    #[test]
+    fn algorithms_come_from_every_file() {
+        let (d, kh) = setup();
+        let kh = kh.with_system(Some(d.path().join("global")));
+        kh.learn("h", 2222, &key()).unwrap();
+        learn_known_hosts_path("h", 2222, &ecdsa(), d.path().join("global")).unwrap();
+        learn_known_hosts_path("h", 22, &ecdsa(), d.path().join("ssh_known_hosts")).unwrap();
+        assert_eq!(
+            kh.algorithms("h", 2222).unwrap(),
+            [Algorithm::Ed25519, ecdsa().algorithm()]
+        );
+        assert!(kh.algorithms("other", 22).unwrap().is_empty());
+    }
+
+    #[test]
+    fn system_file_is_read_only_with_its_own_source() {
+        let (d, kh) = setup();
+        let global = d.path().join("global");
+        let kh = kh.with_system(Some(global.clone()));
+        let (k1, k2) = (key(), key());
+        learn_known_hosts_path("g", 22, &k1, &global).unwrap();
+        let before = fs::read(&global).unwrap();
+        assert_eq!(kh.check("g", 22, &k1).unwrap(), HostKeyStatus::Known);
+        assert_eq!(
+            kh.check("g", 22, &k2).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::System,
+                expected_fp: fingerprint(&k1),
+                type_changed: false
+            }
+        );
+        kh.learn("g", 2222, &k2).unwrap();
+        kh.clear().unwrap();
+        assert_eq!(fs::read(&global).unwrap(), before);
+        // A missing system file has no entries.
+        let (_d2, kh) = setup();
+        let kh = kh.with_system(Some("/nonexistent/ssh_known_hosts".into()));
+        assert_eq!(kh.check("g", 22, &k1).unwrap(), HostKeyStatus::Unknown);
+    }
+
+    #[test]
+    fn learn_refuses_names_known_hosts_would_split() {
+        let (d, kh) = setup();
+        for bad in ["a,victim", "x\nvictim ssh-ed25519 AAAA\ny", "a b", "[a]"] {
+            assert!(matches!(
+                kh.learn(bad, 22, &key()),
+                Err(CoreError::InvalidInput { .. })
+            ));
+        }
+        assert!(!d.path().join("known_hosts").exists());
     }
 
     #[test]

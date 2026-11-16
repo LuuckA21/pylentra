@@ -16,7 +16,7 @@ use super::forward::{Forwards, auto_start};
 use super::handler::ClientHandler;
 use super::jump::{Chain, ChainCtx, connect_chain};
 use super::sftp::{Listing, Sftp, SftpCmd};
-use super::{PromptBroker, SessionId, SessionSink};
+use super::{MAX_UNACKED, PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
 use crate::known_hosts::KnownHosts;
 use crate::model::{Connection, ForwardRule};
@@ -66,6 +66,8 @@ struct SessionHandle {
     tx: mpsc::Sender<Command>,
     task: JoinHandle<()>,
     sink: Arc<dyn SessionSink>,
+    /// The target's host.
+    host: String,
 }
 
 type Sessions = Arc<Mutex<HashMap<SessionId, SessionHandle>>>;
@@ -133,6 +135,7 @@ impl SessionManager {
         sink: Arc<dyn SessionSink>,
     ) -> SessionId {
         let id = Uuid::new_v4();
+        let host = chain.last().map(|c| c.host.clone()).unwrap_or_default();
         let (tx, rx) = mpsc::channel(256);
         let ctx = Ctx {
             id,
@@ -147,8 +150,23 @@ impl SessionManager {
         // Locked across the spawn so the task cannot deregister before it is registered.
         let mut sessions = lock(&self.sessions);
         let task = tokio::spawn(run(ctx, chain, cols, rows, rx));
-        sessions.insert(id, SessionHandle { tx, task, sink });
+        let handle = SessionHandle {
+            tx,
+            task,
+            sink,
+            host,
+        };
+        sessions.insert(id, handle);
         id
+    }
+
+    /// The host session `id` connects to, for the titles of native dialogs.
+    pub fn host(&self, id: SessionId) -> Result<String, CoreError> {
+        let sessions = lock(&self.sessions);
+        sessions
+            .get(&id)
+            .map(|s| s.host.clone())
+            .ok_or_else(|| not_found(id))
     }
 
     pub async fn write(&self, id: SessionId, bytes: Vec<u8>) -> Result<(), CoreError> {
@@ -157,6 +175,16 @@ impl SessionManager {
 
     pub async fn resize(&self, id: SessionId, cols: u16, rows: u16) -> Result<(), CoreError> {
         self.send(id, Command::Resize(cols, rows)).await
+    }
+
+    /// The consumer of the session's output has processed `total` bytes of it so far.
+    pub fn ack(&self, id: SessionId, total: usize) -> Result<(), CoreError> {
+        lock(&self.sessions)
+            .get(&id)
+            .ok_or_else(|| not_found(id))?
+            .sink
+            .ack(total);
+        Ok(())
     }
 
     /// Resolves the session's pending prompt; `NotFound` if there is none.
@@ -326,7 +354,7 @@ async fn run(
     rows: u16,
     mut rx: mpsc::Receiver<Command>,
 ) {
-    let mut forwards = Forwards::new(ctx.sink.clone());
+    let mut forwards = Forwards::new(ctx.sink.clone(), ctx.opts.connect_timeout);
     let mut sftp = None;
     let reason = drive(&ctx, &chain, cols, rows, &mut rx, &mut forwards, &mut sftp).await;
     if let Some(sftp) = sftp {
@@ -421,7 +449,7 @@ async fn open_shell(
         .map(|c| c.forwards.as_slice())
         .unwrap_or_default();
     for rule in rules.iter().filter(|r| auto_start(r)) {
-        let _ = forwards.start(&chain.target, rule.clone()).await;
+        forwards.start_stored(&chain.target, rule.clone()).await;
     }
     ctx.sink.event(SessionEvent::Status {
         stage: Stage::Ready,
@@ -448,6 +476,13 @@ async fn io_loop(
 async fn read_loop(reader: &mut ChannelReadHalf, sink: &dyn SessionSink) -> CloseReason {
     let mut exit = None;
     loop {
+        // Not reading fills russh's channel buffer, which stops it reading the socket, so
+        // TCP slows the server down. That also pauses this connection's other channels.
+        // shortcut: polls every 10 ms while the UI is behind; a Notify from `ack` would
+        // resume at once, if that latency ever shows.
+        while sink.unacked() > MAX_UNACKED {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         match reader.wait().await {
             Some(ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. }) => {
                 sink.data(data.to_vec());

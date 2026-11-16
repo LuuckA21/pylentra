@@ -1,6 +1,7 @@
 <script lang="ts">
   import { FitAddon } from "@xterm/addon-fit";
   import { Terminal } from "@xterm/xterm";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import "@xterm/xterm/css/xterm.css";
   import { onMount, untrack } from "svelte";
   import type { PromptAnswer } from "../lib/bindings/PromptAnswer";
@@ -101,6 +102,19 @@
   let confirming = $state<Snippet>();
   let asking = $state<Snippet>();
   let newSnippet = $state<{ text: string }>();
+  // An OSC 8 link the user clicked, waiting for the go-ahead. Its text is the
+  // server's, so the dialog shows the parsed address (IDN hosts in punycode).
+  let link = $state<string>();
+  // xterm's default asks with window.confirm, which the dialog plugin makes
+  // async (always truthy), and opens a webview popup: this asks and uses the browser.
+  function clicked(_e: MouseEvent, uri: string) {
+    try {
+      const u = new URL(uri);
+      if (u.protocol === "http:" || u.protocol === "https:") link = u.href;
+    } catch {
+      // Not a URL: nothing to open.
+    }
+  }
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
 
@@ -113,6 +127,7 @@
     cursorStyle: settings.cursor_style,
     cursorBlink: settings.cursor_blink,
     scrollback: settings.scrollback,
+    linkHandler: { activate: clicked },
   });
 
   // Automatic reconnection: retries launched in the current chain (0 = none),
@@ -130,7 +145,7 @@
       pane.paneId,
       tm.cols,
       tm.rows,
-      (bytes) => tm.write(bytes),
+      (bytes, done) => tm.write(bytes, done),
       (e) => {
         if (e.type === "Status" && e.stage === "Ready") {
           wasReady = true;
@@ -521,6 +536,24 @@
       onconfirm={() => paste(s)}
       oncancel={() => {
         confirming = undefined;
+        term?.focus();
+      }}
+    />
+  {/if}
+
+  {#if link}
+    {@const url = link}
+    <ConfirmDialog
+      title={t("session.linkTitle")}
+      message={t("session.linkBody", { url })}
+      confirmLabel={t("session.linkOpen")}
+      onconfirm={() => {
+        openUrl(url).catch(toastError);
+        link = undefined;
+        term?.focus();
+      }}
+      oncancel={() => {
+        link = undefined;
         term?.focus();
       }}
     />

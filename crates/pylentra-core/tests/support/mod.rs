@@ -11,8 +11,10 @@ use std::time::Duration;
 use pylentra_core::ssh::SessionSink;
 use pylentra_core::ssh::events::SessionEvent;
 use russh::keys::{Algorithm, PrivateKey, PublicKey};
-use russh::server::{Auth, Config, Handler, Msg, Response, Server, Session};
-use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
+use russh::server::{
+    Auth, Config, Handler, Msg, PublicKeyOffer, Response, Server, Session, VerifiedPublicKey,
+};
+use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet, Preferred};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
@@ -21,12 +23,25 @@ use tokio::task::JoinHandle;
 mod sftp;
 pub use sftp::Hostile;
 
+/// How the server misbehaves for `tcpip-forward`.
+#[derive(Clone, Debug, Default)]
+pub enum ForwardQuirk {
+    #[default]
+    None,
+    /// Waits this long before answering (the connection is stuck meanwhile).
+    Stall(std::time::Duration),
+    /// Answers the port of an earlier forward instead of binding a new one.
+    ReuseFirstPort,
+}
+
 pub struct TestServerConfig {
     pub password: Option<String>,
     /// (prompt, expected answer)
     pub kbd_interactive: Option<(String, String)>,
     /// Whether the keyboard-interactive prompt echoes the answer.
     pub kbd_echo: bool,
+    /// How many times the first keyboard-interactive round repeats its prompt (0 counts as 1).
+    pub kbd_repeat: usize,
     /// A second keyboard-interactive round (echoed "OTP: " prompt) and its expected answer.
     pub kbd_otp: Option<String>,
     pub authorized_key: Option<PublicKey>,
@@ -41,6 +56,13 @@ pub struct TestServerConfig {
     /// Folder served as "/" (and home) by the "sftp" subsystem; `None` refuses the subsystem.
     pub sftp_root: Option<PathBuf>,
     pub sftp_hostile: Hostile,
+    pub forward_quirk: ForwardQuirk,
+    /// `None`: a fresh ed25519 key.
+    pub host_key: Option<PrivateKey>,
+    /// More host keys, of other types, the server also offers.
+    pub extra_host_keys: Vec<PrivateKey>,
+    /// Host key and user signature algorithms (`server-sig-algs`); `None`: russh's defaults.
+    pub key_algos: Option<Vec<Algorithm>>,
 }
 
 impl Default for TestServerConfig {
@@ -49,6 +71,7 @@ impl Default for TestServerConfig {
             password: None,
             kbd_interactive: None,
             kbd_echo: false,
+            kbd_repeat: 0,
             kbd_otp: None,
             authorized_key: None,
             allow_password_method: true,
@@ -56,6 +79,10 @@ impl Default for TestServerConfig {
             max_auth_attempts: None,
             sftp_root: None,
             sftp_hostile: Hostile::None,
+            forward_quirk: ForwardQuirk::None,
+            host_key: None,
+            extra_host_keys: Vec::new(),
+            key_algos: None,
         }
     }
 }
@@ -80,7 +107,9 @@ impl Drop for TestServer {
 
 impl TestServer {
     pub async fn start(cfg: TestServerConfig) -> TestServer {
-        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("host key");
+        let key = cfg.host_key.clone().unwrap_or_else(|| {
+            PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("host key")
+        });
         let host_key = key.public_key().clone();
 
         let mut methods = MethodSet::empty();
@@ -94,7 +123,9 @@ impl TestServer {
             methods.push(MethodKind::PublicKey);
         }
         let config = Arc::new(Config {
-            keys: vec![key],
+            keys: std::iter::once(key)
+                .chain(cfg.extra_host_keys.iter().cloned())
+                .collect(),
             methods: methods.clone(),
             // Rejections are instant so failing-auth tests stay fast.
             auth_rejection_time: Duration::ZERO,
@@ -104,6 +135,13 @@ impl TestServer {
             // buffers (Windows loopback). OpenSSH keeps reading; a small window
             // here keeps the client's in-flight data below any socket buffer.
             window_size: 16 * 1024,
+            preferred: match &cfg.key_algos {
+                Some(algos) => Preferred {
+                    key: Cow::Owned(algos.clone()),
+                    ..Preferred::DEFAULT
+                },
+                None => Preferred::DEFAULT,
+            },
             ..Default::default()
         });
 
@@ -249,7 +287,10 @@ impl Handler for ConnHandler {
             return Ok(Auth::Partial {
                 name: Cow::Borrowed("test"),
                 instructions: Cow::Borrowed(""),
-                prompts: Cow::Owned(vec![(Cow::Owned(prompt), self.cfg.kbd_echo)]),
+                prompts: Cow::Owned(vec![
+                    (Cow::Owned(prompt), self.cfg.kbd_echo);
+                    self.cfg.kbd_repeat.max(1)
+                ]),
             });
         };
         let got = r.next();
@@ -279,17 +320,21 @@ impl Handler for ConnHandler {
     async fn auth_publickey_offered(
         &mut self,
         _user: &str,
-        key: &PublicKey,
+        offer: PublicKeyOffer<'_>,
     ) -> Result<Auth, Self::Error> {
         match &self.cfg.authorized_key {
-            Some(k) if k.key_data() == key.key_data() => Ok(Auth::Accept),
+            Some(k) if k.key_data() == offer.public_key.key_data() => Ok(Auth::Accept),
             _ => self.reject(Auth::reject()),
         }
     }
 
-    async fn auth_publickey(&mut self, _user: &str, key: &PublicKey) -> Result<Auth, Self::Error> {
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        key: VerifiedPublicKey<'_>,
+    ) -> Result<Auth, Self::Error> {
         match &self.cfg.authorized_key {
-            Some(k) if k.key_data() == key.key_data() => Ok(self.accept("publickey")),
+            Some(k) if k.key_data() == key.public_key.key_data() => Ok(self.accept("publickey")),
             _ => self.reject(Auth::reject()),
         }
     }
@@ -381,6 +426,33 @@ impl Handler for ConnHandler {
         } else if data == b"__exit 7\n" {
             session.exit_status_request(channel, 7)?;
             session.close(channel)
+        } else if data == b"__open_back\n" {
+            // Opens every channel type a client never asks for; echoes "<type>:open" or "<type>:shut".
+            let h = session.handle();
+            self.tasks.push(tokio::spawn(async move {
+                let opened = [
+                    ("session", h.channel_open_session().await.is_ok()),
+                    ("x11", h.channel_open_x11("127.0.0.1", 1).await.is_ok()),
+                    ("agent", h.channel_open_agent().await.is_ok()),
+                    (
+                        "direct-tcpip",
+                        h.channel_open_direct_tcpip("127.0.0.1", 1, "127.0.0.1", 1)
+                            .await
+                            .is_ok(),
+                    ),
+                    (
+                        "direct-streamlocal",
+                        h.channel_open_direct_streamlocal("/s").await.is_ok(),
+                    ),
+                    (
+                        "forwarded-streamlocal",
+                        h.channel_open_forwarded_streamlocal("/s").await.is_ok(),
+                    ),
+                ];
+                let out = opened.map(|(t, ok)| format!("{t}:{}", if ok { "open" } else { "shut" }));
+                let _ = h.data(channel, out.join(" ").into_bytes()).await;
+            }));
+            Ok(())
         } else {
             session.data(channel, data.to_vec())
         }
@@ -421,6 +493,16 @@ impl Handler for ConnHandler {
         port: &mut u32,
         session: &mut Session,
     ) -> Result<bool, Self::Error> {
+        match self.cfg.forward_quirk {
+            ForwardQuirk::Stall(d) => tokio::time::sleep(d).await,
+            ForwardQuirk::ReuseFirstPort => {
+                if let Some(first) = self.listeners.keys().next() {
+                    *port = u32::from(*first);
+                    return Ok(true);
+                }
+            }
+            ForwardQuirk::None => {}
+        }
         let Ok(requested) = u16::try_from(*port) else {
             return Ok(false);
         };

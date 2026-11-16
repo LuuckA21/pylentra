@@ -6,7 +6,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use russh::Preferred;
 use russh::client::{self, Handle};
+use russh::keys::Algorithm;
 use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -17,7 +19,7 @@ use super::forward::RemoteRoutes;
 use super::handler::ClientHandler;
 use super::{PromptBroker, SessionId, SessionOptions, SessionSink};
 use crate::error::CoreError;
-use crate::known_hosts::KnownHosts;
+use crate::known_hosts::{KnownHosts, host_key_algorithms, same_key_type};
 use crate::model::{AuthMethod, Connection};
 use crate::secrets::SecretStore;
 
@@ -47,18 +49,13 @@ pub(crate) async fn connect_chain(
     let Some((target, via)) = chain.split_last() else {
         return Err(CoreError::invalid("chain", "empty"));
     };
-    let config = Arc::new(client::Config {
-        keepalive_interval: ctx.opts.keepalive_interval,
-        keepalive_max: ctx.opts.keepalive_max,
-        ..Default::default()
-    });
     let mut bastions: Vec<Handle<ClientHandler>> = Vec::with_capacity(via.len());
     for conn in via {
         // A bastion never forwards to the target's routes.
-        let handle = open_hop(ctx, conn, bastions.last(), config.clone(), Arc::default()).await?;
+        let handle = open_hop(ctx, conn, bastions.last(), Arc::default()).await?;
         bastions.push(handle);
     }
-    let target = open_hop(ctx, target, bastions.last(), config, ctx.routes.clone()).await?;
+    let target = open_hop(ctx, target, bastions.last(), ctx.routes.clone()).await?;
     Ok(Chain {
         target: Arc::new(target),
         _bastions: bastions,
@@ -71,10 +68,9 @@ async fn open_hop(
     ctx: &ChainCtx<'_>,
     conn: &Connection,
     via: Option<&Handle<ClientHandler>>,
-    config: Arc<client::Config>,
     routes: RemoteRoutes,
 ) -> Result<Handle<ClientHandler>, CoreError> {
-    let mut handle = connect_hop(ctx, conn, via, config, routes).await?;
+    let mut handle = connect_hop(ctx, conn, via, routes).await?;
     ctx.sink.event(SessionEvent::Status {
         stage: Stage::Authenticating,
     });
@@ -98,11 +94,14 @@ async fn connect_hop(
     ctx: &ChainCtx<'_>,
     conn: &Connection,
     via: Option<&Handle<ClientHandler>>,
-    config: Arc<client::Config>,
     routes: RemoteRoutes,
 ) -> Result<Handle<ClientHandler>, CoreError> {
     let host = conn.host.to_lowercase();
     let port = conn.port;
+    let config = Arc::new(hop_config(
+        ctx.opts,
+        &ctx.known_hosts.algorithms(&host, port)?,
+    ));
     let (prompting, paused) = watch::channel(false);
     let handler = ClientHandler {
         id: ctx.id,
@@ -113,6 +112,7 @@ async fn connect_hop(
         sink: ctx.sink.clone(),
         prompting,
         routes,
+        connect_timeout: ctx.opts.connect_timeout,
     };
     let attempt = async {
         match via {
@@ -141,6 +141,22 @@ async fn connect_hop(
     match timeout_unless_paused(ctx.opts.connect_timeout, paused, attempt).await {
         Some(r) => r,
         None => Err(CoreError::Timeout { host, port }),
+    }
+}
+
+/// `known`: algorithms of the keys recorded for the hop. They go first, so an honest server
+/// presents a key that can be checked; any other type it then picks counts as a changed key.
+fn hop_config(opts: &SessionOptions, known: &[Algorithm]) -> client::Config {
+    let mut key = host_key_algorithms();
+    key.sort_by_key(|a| !known.iter().any(|k| same_key_type(k, a)));
+    client::Config {
+        keepalive_interval: opts.keepalive_interval,
+        keepalive_max: opts.keepalive_max,
+        preferred: Preferred {
+            key: key.into(),
+            ..Preferred::DEFAULT
+        },
+        ..Default::default()
     }
 }
 
@@ -191,5 +207,41 @@ async fn timeout_unless_paused<F: Future>(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use russh::keys::EcdsaCurve::{NistP256, NistP384};
+    use russh::keys::HashAlg::{Sha256, Sha512};
+
+    fn order(known: &[Algorithm]) -> Vec<Algorithm> {
+        hop_config(&SessionOptions::default(), known)
+            .preferred
+            .key
+            .into_owned()
+    }
+
+    #[test]
+    fn known_key_types_go_first() {
+        let p256 = Algorithm::Ecdsa { curve: NistP256 };
+        let p384 = Algorithm::Ecdsa { curve: NistP384 };
+        let rsa = |hash| Algorithm::Rsa { hash };
+        assert_eq!(order(&[])[0], Algorithm::Ed25519);
+        assert_eq!(
+            order(std::slice::from_ref(&p384))[..2],
+            [p384, Algorithm::Ed25519]
+        );
+        assert_eq!(
+            order(&[rsa(None), p256.clone()])[..4],
+            [
+                p256,
+                rsa(Some(Sha512)),
+                rsa(Some(Sha256)),
+                Algorithm::Ed25519
+            ]
+        );
+        assert!(!order(&[rsa(None)]).contains(&rsa(None)));
     }
 }

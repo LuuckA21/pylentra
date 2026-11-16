@@ -369,6 +369,26 @@ cover it.
 2. Start the app and change something (edit a connection, a snippet and a
    setting): the invented fields are still in the three files.
 
+## Security checks
+
+Use the test servers of the terminal smoke test and the Preview build (it has
+devtools).
+
+1. In a shell run
+   `printf '\e]8;;https://example.com\e\\misleading text\e]8;;\e\\\n'` and
+   click the link: Pylentra's dialog shows `https://example.com`. Cancel and
+   Escape open nothing; confirming opens the system browser, never a window
+   of the app. Repeat with `file:///etc/passwd` in place of the address: the
+   link does not open.
+2. Devtools console: no Content Security Policy errors at startup, while
+   using the file panel or while opening the dialogs.
+3. File panel: upload a file with mode 0600 and one with mode 0755, then run
+   `ls -l` in the shell: they arrive as `-rw-------` and `-rw-r--r--` at most,
+   never executable (Windows: a new file gets the server's default). Upload
+   the 0600 file again over a `chmod 640` copy and choose "Replace": it
+   stays `-rw-r-----`.
+4. Linux: the files in Pylentra's config folder are `-rw-------` after a save.
+
 ## Language
 
 1. Fresh profile with the system language set to Italian: the UI starts in

@@ -20,12 +20,18 @@ pub enum CoreError {
     HostKeyMismatch { host: String, port: u16 },
     #[error("host key rejected")]
     HostKeyRejected,
+    #[error("the server only offers a SHA-1 RSA host key (ssh-rsa)")]
+    HostKeyRsaSha1,
     #[error("authentication failed (tried: {})", tried.join(", "))]
     AuthFailed { tried: Vec<String> },
     #[error("cannot read key {path}: {reason}")]
     KeyUnreadable { path: String, reason: String },
     #[error("SSH agent unavailable: {reason}")]
     AgentUnavailable { reason: String },
+    #[error("the server only accepts SHA-1 RSA signatures (ssh-rsa)")]
+    RsaSha1Only,
+    #[error("the server asked {count} keyboard-interactive questions at once")]
+    TooManyPrompts { count: usize },
     #[error("secret store unavailable: {reason}")]
     SecretUnavailable { reason: String },
     #[error("port {port} is already in use")]
@@ -34,6 +40,8 @@ pub enum CoreError {
     PermissionDenied { port: u16 },
     #[error("forward rejected by the server")]
     ForwardRejected,
+    #[error("the server did not answer the port forward")]
+    ForwardTimeout,
     #[error("invalid {field}: {reason}")]
     InvalidInput { field: String, reason: String },
     #[error("jump hosts form a cycle")]
@@ -65,7 +73,17 @@ pub enum CoreError {
 // Lets `CoreError` be the russh handler error, so host-key decisions surface unchanged.
 impl From<russh::Error> for CoreError {
     fn from(e: russh::Error) -> Self {
-        Self::Ssh(e.to_string())
+        match e {
+            // `ssh-rsa` is left out of our host key algorithms on purpose.
+            russh::Error::NoCommonAlgo {
+                kind: russh::AlgorithmKind::Key,
+                ref theirs,
+                ..
+            } if !theirs.is_empty() && theirs.iter().all(|a| a == "ssh-rsa") => {
+                Self::HostKeyRsaSha1
+            }
+            e => Self::Ssh(e.to_string()),
+        }
     }
 }
 
@@ -112,13 +130,17 @@ impl CoreError {
             Self::Unreachable { .. } => "network.unreachable",
             Self::HostKeyMismatch { .. } => "hostkey.mismatch",
             Self::HostKeyRejected => "hostkey.rejected",
+            Self::HostKeyRsaSha1 => "hostkey.rsa_sha1",
             Self::AuthFailed { .. } => "auth.all_failed",
             Self::KeyUnreadable { .. } => "auth.key_unreadable",
             Self::AgentUnavailable { .. } => "auth.agent_unavailable",
+            Self::RsaSha1Only => "auth.rsa_sha1",
+            Self::TooManyPrompts { .. } => "auth.too_many_prompts",
             Self::SecretUnavailable { .. } => "secret.unavailable",
             Self::PortInUse { .. } => "forward.port_in_use",
             Self::PermissionDenied { .. } => "forward.permission_denied",
             Self::ForwardRejected => "forward.rejected",
+            Self::ForwardTimeout => "forward.timeout",
             Self::InvalidInput { .. } => "config.invalid",
             Self::JumpCycle => "config.jump_cycle",
             Self::JumpTooDeep => "config.jump_too_deep",
@@ -161,12 +183,16 @@ impl CoreError {
                 vec![("field", field.clone()), ("reason", reason.clone())]
             }
             Self::UnsupportedVersion { found } => vec![("found", found.to_string())],
+            Self::TooManyPrompts { count } => vec![("count", count.to_string())],
             Self::SftpPermissionDenied { path } => vec![("path", path.clone())],
             Self::NotFound { what } | Self::SftpLimit { what } => vec![("what", what.clone())],
             Self::Ssh(reason) => vec![("reason", reason.clone())],
             Self::Io(e) => vec![("reason", e.to_string())],
             Self::HostKeyRejected
+            | Self::HostKeyRsaSha1
+            | Self::RsaSha1Only
             | Self::ForwardRejected
+            | Self::ForwardTimeout
             | Self::JumpCycle
             | Self::JumpTooDeep
             | Self::ReadOnly

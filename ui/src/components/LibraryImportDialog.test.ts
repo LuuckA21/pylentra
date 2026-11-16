@@ -28,6 +28,8 @@ const pick: ImportPick = {
         group: "Prod",
         duplicate: false,
         missing_key: null,
+        network_key: null,
+        forwards: [],
         jump: null,
       },
       {
@@ -37,6 +39,8 @@ const pick: ImportPick = {
         group: null,
         duplicate: false,
         missing_key: "/home/u/.ssh/id_app",
+        network_key: null,
+        forwards: [],
         jump: { name: "bastion", in_file: "b", existing: false },
       },
       {
@@ -46,6 +50,8 @@ const pick: ImportPick = {
         group: null,
         duplicate: true,
         missing_key: null,
+        network_key: null,
+        forwards: [],
         jump: null,
       },
     ],
@@ -228,4 +234,21 @@ test("when both reloads fail, both errors are shown", async () => {
     "I/O error: library gone",
     "I/O error: snippets gone",
   ]);
+});
+
+test("lists a row's forwards and network key, described from its checkbox", async () => {
+  const rows = pick.preview.rows.map((r) =>
+    r.id === "b"
+      ? { ...r, forwards: ["L [::1]:80:db:5432"], network_key: "//h/s/id" }
+      : r,
+  );
+  render(LibraryImportDialog, {
+    pick: { ...pick, preview: { ...pick.preview, rows } },
+    onclose: vi.fn(),
+  });
+  const note = screen.getByText(
+    "forwards, not started automatically: L [::1]:80:db:5432",
+  );
+  expect(box("bastion").getAttribute("aria-describedby")).toContain(note.id);
+  expect(screen.getByText(/key on a network path.*\/\/h\/s\/id/)).toBeTruthy();
 });

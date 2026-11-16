@@ -4,6 +4,38 @@ All notable changes to Pylentra are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-11-15
+
+Security release (issue #31). Nothing saved changes format: going back to 0.8.x
+loses nothing. Some connections that used to work are now refused on purpose:
+servers that only offer SHA-1 `ssh-rsa`, and host names with spaces, separators
+or invisible characters (see below).
+
+### Security
+
+- russh updated to 0.65.1 (RUSTSEC-2026-0495, an agent-server bug; Pylentra only uses the agent client, so it was not affected).
+- Channels a server opens on its own (session, X11, agent, direct TCP and Unix socket) are refused; only connections for your remote forwards are accepted, so a hostile server can no longer exhaust memory with them.
+- Editing a connection's host, port or user forgets its saved password and passphrase, so the saved password never reaches the new server; Pylentra asks for them again on the next connection.
+- SHA-1 RSA signatures (`ssh-rsa`) are no longer accepted for host keys or used for RSA user keys, as in OpenSSH 8.8 and later; `rsa-sha2-256` and `rsa-sha2-512` still work. Servers older than OpenSSH 7.2 that only offer `ssh-rsa` now fail with a clear error, for the host key and for RSA user keys.
+- A keyboard-interactive login that asks more than 32 questions at once is refused, so a hostile server can no longer stall the app with a huge prompt.
+- Terminal output is slowed to the speed the terminal can draw it (at most 4 MB waiting), so a server flooding output can no longer grow the app's memory without bound.
+- A known host that presents a key of a type Pylentra has no key for, while keys of other types are known for it, is blocked as a changed key instead of asking to trust a new key, so an attacker can no longer turn a key change into a routine first-connection prompt. Pylentra now asks each server (jump hosts included) for the key types it already knows for that host first, so hosts known only by an ECDSA or RSA key keep connecting.
+- The system-wide `ssh_known_hosts` (`/etc/ssh/ssh_known_hosts`, on Windows `%ProgramData%\ssh\ssh_known_hosts`) is read, never written, like `~/.ssh/known_hosts`: a host whose key is listed there connects without a prompt, and a different key is blocked.
+- A host with characters other than letters, digits and `. - _ : %` (spaces, control characters, invisible format characters such as zero-width spaces and bidi controls, `,`, `#`, `[`, `;`, `$`, quotes and the like) is refused when a connection is saved, imported or quick-connected, and is never written to Pylentra's `known_hosts`, so a crafted host name can no longer add trust for other hosts, make a host's entry unusable, make a host look like another in a prompt or put a shell command in the copyable `ssh-keygen -R` hint, which is not shown for such hosts saved earlier. IPv6 addresses, international domain names and ordinary host names are not affected.
+- Port forwarding is bounded: each forward and each session's remote forwards serve at most 128 connections at once (more are refused), connecting to a destination and opening a tunnel time out after the connect timeout, and a forward request the server never answers fails after that timeout instead of freezing the terminal.
+- Port forwards in an imported library never start by themselves: the import preview lists each connection's forwards, and you start them from the panel.
+- Saving or importing a connection never checks whether a key at a network path (`\\host\share`, `//host/share`, also with mixed separators) exists, so Windows no longer contacts that host; the import preview flags such keys, which are still read when you connect.
+- Importing a very large `~/.ssh/config` no longer takes minutes: with very many wildcard `Host` blocks, very long lines or long `ProxyJump` lists only the first hosts are read, with a note, and a host whose `HostName` would exceed 1 KiB once `%h` is expanded is listed but cannot be imported.
+- Connection, snippet and export files are created readable by you only (0600 on Linux and macOS); an existing file gets this mode the next time Pylentra saves it. A symlinked config file is replaced by a regular file when saved.
+- A remote forward whose port the server reports as already used by another forward of the session is rejected instead of replacing that forward's route.
+- Forwards stored in `connections.toml` that the editor would refuse (a listening address that is not an IP address, port 0) are no longer auto-started; they show as failed in the forwards panel.
+- SFTP names longer than 1 KiB are left out of listings and skipped by transfers, a remote folder path longer than 4 KiB is refused, and a folder transfer stops with a safety-limit error once its paths exceed 64 MiB, so a hostile server can no longer exhaust memory with huge names or deep trees.
+- On Windows, SFTP names that Windows treats as devices (`COM¹`–`COM³`, `LPT¹`–`LPT³`, `COM0`, `LPT0`, `CONIN$`, `CONOUT$`, also with an extension) and names shaped like 8.3 short names (`INSTAL~1.EXE`), which could stand for a differently named local file, are left out of listings and skipped by downloads.
+- An SFTP listing returns what it has, marked incomplete, after 30 seconds, so a server sending names very slowly can no longer block cancelling a transfer in that session.
+- SFTP downloads and uploads no longer reset a file's permissions to the default: a new file gets at most the source's read and write permissions (0600 when unknown) and never the execute bit, and an overwritten file keeps its own, so a private file stays private on the other side. On Windows, a new uploaded file gets the server's default permissions, an overwritten one keeps its own, and downloads are unchanged.
+- The native folder and file dialogs of SFTP downloads and uploads have a title naming the action and the server (for example "Download from example.com into…").
+- A terminal link (OSC 8) asks before opening, showing the address it really goes to rather than its text, and opens only `http` and `https` addresses, in your browser. Before, the confirmation did not wait for your answer and the link could open inside the app.
+
 ## [0.8.0] - 2026-11-10
 
 Nothing saved changes format: going back to 0.7.x loses nothing. Settings gain

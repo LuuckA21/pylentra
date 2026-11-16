@@ -21,6 +21,9 @@ use crate::secrets::{SecretKind, SecretStore};
 
 /// Prompted password attempts per connection, as OpenSSH's `NumberOfPasswordPrompts`.
 const MAX_PASSWORD_PROMPTS: u8 = 3;
+/// Questions in one keyboard-interactive request; real servers ask one or two. A hostile
+/// server could otherwise send tens of thousands, one input each in the prompt.
+const MAX_KBD_PROMPTS: usize = 32;
 
 pub(crate) struct AuthCtx<'a> {
     pub secrets: &'a dyn SecretStore,
@@ -109,7 +112,7 @@ async fn auto<H: Handler>(
         Err(CoreError::AgentUnavailable { reason }) if offered.is_empty() => {
             log::debug!("no agent: {reason}")
         }
-        Err(CoreError::AuthFailed { .. }) => {}
+        Err(CoreError::AuthFailed { .. } | CoreError::RsaSha1Only) => {}
         Err(e) => return Err(e),
     }
     if !offered.is_empty() {
@@ -124,7 +127,9 @@ async fn auto<H: Handler>(
             Ok(()) => return Ok(()),
             Err(CoreError::AuthFailed { .. }) => note("publickey"),
             // A key we cannot use, or whose passphrase the user would not give: the next one.
-            Err(CoreError::KeyUnreadable { .. } | CoreError::Cancelled) => {}
+            Err(
+                CoreError::KeyUnreadable { .. } | CoreError::Cancelled | CoreError::RsaSha1Only,
+            ) => {}
             Err(e) => return Err(e),
         }
     }
@@ -292,6 +297,11 @@ async fn keyboard_interactive<H: Handler>(
                 prompts,
             } => (name, instructions, prompts),
         };
+        if prompts.len() > MAX_KBD_PROMPTS {
+            return Err(CoreError::TooManyPrompts {
+                count: prompts.len(),
+            });
+        }
         let responses = match prompts.as_slice() {
             [] => vec![],
             [p] if !p.echo && !password_sent => {
@@ -322,9 +332,15 @@ async fn key<H: Handler>(
     };
     let (key, typed) = match load_key(path, None).await {
         Ok(key) => (key, None),
-        Err(russh::keys::Error::KeyIsEncrypted) => unlock(path, conn.id, ctx)
-            .await?
-            .ok_or_else(|| unreadable("wrong passphrase".into()))?,
+        Err(russh::keys::Error::KeyIsEncrypted) => {
+            // The key type is readable without the passphrase: refuse SHA-1-only RSA first.
+            if let Some(algo) = encrypted_algorithm(path).await {
+                rsa_hash(handle, algo).await?;
+            }
+            unlock(path, conn.id, ctx)
+                .await?
+                .ok_or_else(|| unreadable("wrong passphrase".into()))?
+        }
         Err(e) => return Err(unreadable(e.to_string())),
     };
     let hash = rsa_hash(handle, key.algorithm()).await?;
@@ -367,6 +383,12 @@ async fn unlock(
     Ok(None)
 }
 
+/// The algorithm of an encrypted OpenSSH key file, read from its public part.
+async fn encrypted_algorithm(path: &Path) -> Option<russh::keys::Algorithm> {
+    let text = tokio::fs::read_to_string(path).await.ok()?;
+    PrivateKey::from_openssh(text).ok().map(|k| k.algorithm())
+}
+
 /// File read and bcrypt run off the async workers.
 async fn load_key(
     path: &Path,
@@ -380,7 +402,8 @@ async fn load_key(
     .unwrap_or(Err(russh::keys::Error::CouldNotReadKey))
 }
 
-/// The server's preferred RSA signature hash; `None` for other key types.
+/// The server's preferred RSA signature hash; `None` for other key types. SHA-1 (`ssh-rsa`)
+/// is refused, as in OpenSSH 8.8+, also when the server does not list its algorithms.
 async fn rsa_hash<H: Handler>(
     handle: &Handle<H>,
     algo: russh::keys::Algorithm,
@@ -388,7 +411,10 @@ async fn rsa_hash<H: Handler>(
     if !algo.is_rsa() {
         return Ok(None);
     }
-    Ok(handle.best_supported_rsa_hash().await?.flatten())
+    match handle.best_supported_rsa_hash().await?.flatten() {
+        Some(hash) => Ok(Some(hash)),
+        None => Err(CoreError::RsaSha1Only),
+    }
 }
 
 /// Tries every agent identity; each one tried is added to `offered`.
@@ -403,10 +429,20 @@ async fn agent<H: Handler>(
         .request_identities()
         .await
         .map_err(agent_unavailable)?;
+    // SHA-1-only RSA identities are skipped; that is the error only if no other was tried.
+    let (mut skipped, mut tried) = (false, false);
     for identity in identities {
         let key = identity.public_key().into_owned();
         offered.push(key.clone());
-        let hash = rsa_hash(handle, key.algorithm()).await?;
+        let hash = match rsa_hash(handle, key.algorithm()).await {
+            // The next identity may not be RSA.
+            Err(CoreError::RsaSha1Only) => {
+                skipped = true;
+                continue;
+            }
+            other => other?,
+        };
+        tried = true;
         let result = handle
             .authenticate_publickey_with(user, key, hash, &mut client)
             .await
@@ -419,8 +455,12 @@ async fn agent<H: Handler>(
             return Ok(());
         }
     }
-    Err(CoreError::AuthFailed {
-        tried: vec!["publickey".into()],
+    Err(if skipped && !tried {
+        CoreError::RsaSha1Only
+    } else {
+        CoreError::AuthFailed {
+            tried: vec!["publickey".into()],
+        }
     })
 }
 

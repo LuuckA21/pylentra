@@ -2,10 +2,13 @@
 
 pub(crate) const TEMP_SUFFIX: &str = "pylentra-tmp";
 pub(crate) const LOCAL_WINDOWS: bool = cfg!(windows);
+/// Bytes; real file systems stop at 255 bytes (Unix) or 255 UTF-16 units (NTFS, at most 765).
+pub(crate) const MAX_NAME: usize = 1024;
 
 /// True when `name` is one path component that is safe to create on a `windows` or Unix side.
 pub(crate) fn valid_name(name: &str, windows: bool) -> bool {
     if name.is_empty()
+        || name.len() > MAX_NAME
         || name == "."
         || name == ".."
         || name
@@ -23,11 +26,30 @@ pub(crate) fn valid_name(name: &str, windows: bool) -> bool {
     // Win32 drops trailing spaces and dots of the stem, so "CON .txt" is the CON device.
     let stem = name.split('.').next().unwrap_or_default();
     let stem = stem.trim_end_matches([' ', '.']).to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && matches!(stem.as_bytes()[3], b'1'..=b'9'));
-    !reserved
+    let reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|d| {
+            let mut d = d.chars();
+            matches!(
+                (d.next(), d.next()),
+                (Some('0'..='9' | '¹' | '²' | '³'), None)
+            )
+        });
+    !reserved && !short_alias(name)
+}
+
+/// An 8.3 short name (`INSTAL~1.EXE`): Win32 would open the long-named item it stands for.
+fn short_alias(name: &str) -> bool {
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    let digits = stem.rsplit_once('~').map_or("", |(_, d)| d);
+    stem.chars().count() <= 8
+        && ext.chars().count() <= 3
+        && !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// `dir` and `name` as a remote path.
@@ -65,6 +87,36 @@ mod tests {
             assert!(!valid_name(win, true), "{win}");
             assert!(valid_name(win, false) || win.contains(['/', '\\']), "{win}");
         }
+        // Reserved by Win32 too, or an 8.3 short name.
+        for win in [
+            "COM\u{b9}",
+            "lpt\u{b2}.log",
+            "Com\u{b3}",
+            "COM0",
+            "lpt0.txt",
+            "CONIN$",
+            "conout$.log",
+            "INSTAL~1.EXE",
+            "docum~12",
+            "A~1.B",
+        ] {
+            assert!(!valid_name(win, true), "{win}");
+            assert!(valid_name(win, false), "{win}");
+        }
+        // Not in 8.3 alias shape: no digit after `~`, a long stem or a long extension.
+        for ok in [
+            "a~b.txt",
+            "a~",
+            "longername~1.txt",
+            "a~1.long",
+            "COM10",
+            "LPT\u{b9}0",
+        ] {
+            assert!(valid_name(ok, true), "{ok}");
+        }
+        let long = "a".repeat(MAX_NAME);
+        assert!(valid_name(&long, false));
+        assert!(!valid_name(&format!("{long}b"), false));
     }
 
     #[test]

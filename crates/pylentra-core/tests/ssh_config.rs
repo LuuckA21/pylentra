@@ -603,3 +603,105 @@ fn shared_hops_conflicting() {
         assert!(get(&r, "b").notes.is_empty());
     }
 }
+
+#[test]
+fn many_host_blocks_parse_in_linear_time() {
+    // Quadratic parsing took ~13 s at this size; the bound is generous so it is not flaky.
+    let text: String = (0..40_000).map(|i| format!("Host h{i}\n")).collect();
+    let start = std::time::Instant::now();
+    let r = parse(&text, &[]);
+    assert_eq!(r.candidates.len(), 40_000);
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn many_wildcard_blocks_are_bounded() {
+    let mut text: String = (0..20_000).map(|i| format!("Host *x{i}\n")).collect();
+    text.extend((0..20_000).map(|i| format!("Host h{i}\n")));
+    let r = parse(&text, &[]);
+    assert!(r.candidates.len() < 20_000);
+    assert!(r.skipped.iter().any(|n| n.note == ImportNote::TooComplex));
+}
+
+fn too_complex(r: &ScanResult) -> bool {
+    r.skipped.iter().any(|n| n.note == ImportNote::TooComplex)
+}
+
+#[test]
+fn one_huge_host_line_with_a_wildcard_is_bounded() {
+    let hosts: Vec<String> = (0..60_000).map(|i| format!("h{i}")).collect();
+    let r = parse(&format!("Host {} *\n", hosts.join(" ")), &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.len() < 1_000);
+}
+
+#[test]
+fn a_huge_implicit_block_is_bounded() {
+    let mut text: String = (0..60_000).map(|_| "User x\n").collect();
+    text.extend((0..60_000).map(|i| format!("Host h{i}\n")));
+    let r = parse(&text, &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.len() < 1_000);
+}
+
+#[test]
+fn a_long_hop_list_is_bounded() {
+    let hops: Vec<String> = (0..4_000).map(|i| format!("h{i}")).collect();
+    let mut text = format!("Host *\nProxyJump {}\n", hops.join(","));
+    text.extend(hops.iter().map(|h| format!("Host {h}\n")));
+    let r = parse(&text, &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.len() < 1_000);
+    assert!(r.candidates.iter().all(|c| c.notes.len() <= 17));
+}
+
+#[test]
+fn a_long_wildcard_pattern_against_a_long_alias_is_bounded() {
+    let text = format!(
+        "Host *{}b\nUser x\nHost {}\n",
+        "a".repeat(150_000),
+        "a".repeat(300_000)
+    );
+    let r = parse(&text, &[]);
+    assert!(too_complex(&r));
+    assert!(r.candidates.is_empty());
+}
+
+#[test]
+fn host_name_expansion_is_bounded() {
+    let text = format!(
+        "Host *\nHostName {}\nHost {}\n",
+        "%h".repeat(50_000),
+        "a".repeat(100_000)
+    );
+    let r = parse(&text, &[]);
+    assert_eq!(r.candidates.len(), 1);
+    assert_eq!(r.candidates[0].error, Some(ImportNote::HostNameTooLong));
+    assert!(r.candidates[0].connection.host.len() <= 100_000);
+}
+
+#[test]
+fn a_realistic_large_config_is_imported_whole() {
+    let mut text = String::new();
+    for i in 0..5 {
+        text += &format!(
+            "Host *.prod{i}.example.com *.dr{i}.example.com *.stg{i}.example.com *.dev{i}.example.com\n  ProxyJump bastion\n  User ops\n"
+        );
+    }
+    text += "Host bastion\n  HostName b.example.com\n";
+    for i in 0..10_000 {
+        text += &format!(
+            "Host srv-{i:05}.prod{}.example.com\n  HostName 10.0.{}.{}\n  User deploy\n",
+            i % 5,
+            i / 250,
+            i % 250
+        );
+    }
+    text += "Host *\n";
+    for i in 0..20 {
+        text += &format!("  Option{i} value{i}\n");
+    }
+    let r = parse(&text, &[]);
+    assert_eq!(r.candidates.len(), 10_001);
+    assert!(!r.skipped.iter().any(|n| n.note == ImportNote::TooComplex));
+}

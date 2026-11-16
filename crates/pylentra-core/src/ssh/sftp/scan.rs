@@ -15,6 +15,8 @@ use crate::ssh::events::{SkipReason, Skipped};
 
 const MAX_DEPTH: usize = 32;
 const MAX_ENTRIES: usize = 100_000;
+/// Bytes of paths one scan may make, so long names deep down cannot fill memory.
+const MAX_PATH_BYTES: usize = 64 << 20;
 
 #[derive(Debug)]
 pub struct Plan {
@@ -24,6 +26,8 @@ pub struct Plan {
     pub skipped: Vec<Skipped>,
     pub total_bytes: u64,
     max: usize,
+    /// Bytes of the paths made so far, planned, skipped or still waiting.
+    path_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -31,6 +35,8 @@ pub struct PlannedFile {
     pub rel: String,
     pub size: u64,
     pub modified: Option<u64>,
+    /// The source's permission bits, when known.
+    pub mode: Option<u32>,
 }
 
 fn limit(what: &str) -> CoreError {
@@ -45,6 +51,7 @@ impl Plan {
             skipped: vec![],
             total_bytes: 0,
             max,
+            path_bytes: 0,
         }
     }
 
@@ -53,12 +60,19 @@ impl Plan {
         self.check(0)
     }
 
-    fn file(&mut self, rel: String, size: u64, modified: Option<u64>) -> Result<(), CoreError> {
+    fn file(
+        &mut self,
+        rel: String,
+        size: u64,
+        modified: Option<u64>,
+        mode: Option<u32>,
+    ) -> Result<(), CoreError> {
         self.total_bytes = self.total_bytes.saturating_add(size);
         self.files.push(PlannedFile {
             rel,
             size,
             modified,
+            mode,
         });
         self.check(0)
     }
@@ -76,6 +90,15 @@ impl Plan {
     fn check(&self, pending: usize) -> Result<(), CoreError> {
         if self.dirs.len() + self.files.len() + self.skipped.len() + pending > self.max {
             return Err(limit("entries"));
+        }
+        Ok(())
+    }
+
+    /// Counts `p`, made for a child about to wait on the stack or be skipped.
+    fn path(&mut self, p: &str) -> Result<(), CoreError> {
+        self.path_bytes = self.path_bytes.saturating_add(p.len());
+        if self.path_bytes > MAX_PATH_BYTES {
+            return Err(limit("path length"));
         }
         Ok(())
     }
@@ -112,7 +135,7 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
             if ty.is_symlink() {
                 plan.skip(rel, SkipReason::Symlink)?;
             } else if ty.is_file() {
-                plan.file(rel, meta.len(), mtime(&meta))?;
+                plan.file(rel, meta.len(), mtime(&meta), local_mode(&meta))?;
             } else if !ty.is_dir() {
                 plan.skip(rel, SkipReason::Special)?;
             } else {
@@ -127,16 +150,13 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
                 };
                 for c in children {
                     let file_name = c.file_name();
-                    let child = match file_name.to_str().filter(|n| valid_name(n, false)) {
-                        Some(n) => join(&rel, n),
-                        None => {
-                            plan.skip(
-                                join(&rel, &file_name.to_string_lossy()),
-                                SkipReason::InvalidName,
-                            )?;
-                            continue;
-                        }
-                    };
+                    let valid = file_name.to_str().filter(|n| valid_name(n, false));
+                    let child = join(&rel, valid.unwrap_or(&file_name.to_string_lossy()));
+                    plan.path(&child)?;
+                    if valid.is_none() {
+                        plan.skip(child, SkipReason::InvalidName)?;
+                        continue;
+                    }
                     match fs::symlink_metadata(c.path()) {
                         Ok(m) => stack.push((c.path(), child, depth + 1, m)),
                         Err(e) => plan.skip(child, error(CoreError::Io(e)))?,
@@ -147,6 +167,19 @@ fn local(items: &[PathBuf], max: usize) -> Result<Plan, CoreError> {
         }
     }
     Ok(plan)
+}
+
+/// Permission bits (`0o777`).
+#[cfg(unix)]
+pub(super) fn local_mode(m: &Metadata) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(m.permissions().mode() & 0o777)
+}
+
+/// Windows has no permission bits.
+#[cfg(not(unix))]
+pub(super) fn local_mode(_: &Metadata) -> Option<u32> {
+    None
 }
 
 fn mtime(m: &Metadata) -> Option<u64> {
@@ -188,12 +221,12 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
             match e.kind {
                 EntryKind::Link => plan.skip(rel, SkipReason::Symlink)?,
                 EntryKind::Other => plan.skip(rel, SkipReason::Special)?,
-                EntryKind::File => plan.file(rel, e.size.unwrap_or(0), e.modified)?,
+                EntryKind::File => plan.file(rel, e.size.unwrap_or(0), e.modified, e.mode)?,
                 EntryKind::Dir => {
                     plan.dir(rel.clone(), depth)?;
                     let read = match sftp.opendir(path.as_str()).await {
                         Ok(h) => {
-                            let r = read_dir(sftp, &h.handle, true).await;
+                            let r = read_dir(sftp, &h.handle, true, None).await;
                             let _ = sftp.close(h.handle).await;
                             r
                         }
@@ -211,13 +244,17 @@ async fn remote(sftp: &RawSftpSession, items: &[String], max: usize) -> Result<P
                         return Err(limit("entries").into());
                     }
                     for bad in dir.invalid {
-                        plan.skip(join(&rel, &bad), SkipReason::InvalidName)?;
+                        let bad = join(&rel, &bad);
+                        plan.path(&bad)?;
+                        plan.skip(bad, SkipReason::InvalidName)?;
                     }
                     for c in dir.entries {
                         let child = (remote_join(&path, &c.name), join(&rel, &c.name));
+                        plan.path(&child.0)?;
+                        plan.path(&child.1)?;
                         stack.push((child.0, child.1, depth + 1, c));
+                        plan.check(stack.len())?;
                     }
-                    plan.check(stack.len())?;
                 }
             }
         }
@@ -298,8 +335,8 @@ mod tests {
     #[test]
     fn huge_sizes_saturate() {
         let mut plan = Plan::new(10);
-        plan.file("a".into(), u64::MAX - 1, None).unwrap();
-        plan.file("b".into(), u64::MAX - 1, None).unwrap();
+        plan.file("a".into(), u64::MAX - 1, None, None).unwrap();
+        plan.file("b".into(), u64::MAX - 1, None, None).unwrap();
         assert_eq!(plan.total_bytes, u64::MAX);
     }
 

@@ -87,7 +87,8 @@ export const en = {
   "form.keyPath": "Key path",
   "form.savePassphrase": "Save passphrase in the keychain",
   "form.passphrase": "Passphrase",
-  "form.secretHint": "Leave empty to keep it unchanged.",
+  "form.secretHint":
+    "Leave empty to keep it unchanged. A new host, port or user forgets it.",
   "form.jumpVia": "Connect through",
   "form.addLocal": "Add local forward",
   "form.addRemote": "Add remote forward",
@@ -143,6 +144,10 @@ export const en = {
   "session.connecting": "Connecting\u2026",
   "session.authenticating": "Authenticating\u2026",
   "session.ended": "Session ended. Press Enter to reconnect.",
+  "session.linkTitle": "Open link?",
+  "session.linkBody":
+    "The link goes to {url}, which opens in your browser. Its text may show another address.",
+  "session.linkOpen": "Open",
   "session.retry": "Retry",
   "reconnect.attempt": "Reconnecting\u2026 attempt {n} of {max}",
   "reconnect.cancel": "Cancel",
@@ -153,6 +158,10 @@ export const en = {
   "session.forget": "Forget host",
   "session.opensshHint":
     "The old key is in your OpenSSH known_hosts. If the change is expected, remove it with:",
+  "session.typeChanged":
+    "The server presented a key of a different type than the one known for this host, so the two fingerprints cannot match. A server rarely drops its old key type: make sure the change is expected before forgetting the old key.",
+  "session.systemHint":
+    "The old key is in the system-wide ssh_known_hosts, which Pylentra only reads. If the change is expected, ask the administrator to update it.",
   "hostkey.title": "Unknown host key",
   "hostkey.body":
     "The authenticity of {host}:{port} cannot be verified. Compare the fingerprint with the one of the server before trusting it.",
@@ -172,7 +181,8 @@ export const en = {
   "sftp.showHidden": "Show hidden",
   "sftp.list": "Folder contents",
   "sftp.empty": "This folder is empty.",
-  "sftp.truncated": "Only the first 100 000 entries are shown.",
+  "sftp.truncated":
+    "Not every entry is shown: the folder holds more than 100 000 or took too long to list.",
   "sftp.folder": "Folder",
   "sftp.link": "Link",
   "sftp.uploadFiles": "Upload files",
@@ -273,7 +283,7 @@ export const en = {
   "settings.knownHostsEmpty": "No saved host keys.",
   "settings.knownHostsEncrypted": "Encrypted entry",
   "settings.knownHostsNote":
-    "Entries in ~/.ssh/known_hosts are used read-only and are not managed here.",
+    "Entries in ~/.ssh/known_hosts and in the system-wide ssh_known_hosts are used read-only and are not managed here.",
   "settings.checkUpdates": "Check for updates at startup",
   "settings.installedVersion": "Installed version",
   "settings.language": "Language",
@@ -296,6 +306,8 @@ export const en = {
   "library.via": "via {name}",
   "library.viaExisting": "via {name} (already present)",
   "library.jumpDropped": "will have no jump host ({name} not imported)",
+  "library.networkKey": "key on a network path, read when connecting: {path}",
+  "library.forwards": "forwards, not started automatically: {list}",
   "library.summary":
     "Groups in the file: {new} new, {reused} already present. Snippets: {global} new global, {perConnection} tied to connections.",
   "library.importN": "Import ({n})",
@@ -308,6 +320,10 @@ export const en = {
   "error.auth.agent_unavailable": "SSH agent unavailable: {reason}",
   "error.auth.all_failed": "Authentication failed (tried: {tried}).",
   "error.auth.key_unreadable": "Cannot read key {path}: {reason}",
+  "error.auth.rsa_sha1":
+    "The server only accepts RSA keys with SHA-1 signatures (ssh-rsa), which are no longer safe. Use an ed25519 or ECDSA key, or update the server.",
+  "error.auth.too_many_prompts":
+    "The server asked {count} questions at once; Pylentra allows at most 32.",
   "error.cancelled": "Cancelled.",
   "error.config.invalid": "Invalid value for {field}: {reason}",
   "error.config.jump_cycle": "The jump host chain contains a cycle.",
@@ -325,9 +341,13 @@ export const en = {
   "error.forward.permission_denied": "Permission denied for port {port}.",
   "error.forward.port_in_use": "Port {port} is already in use.",
   "error.forward.rejected": "The server rejected the port forward.",
+  "error.forward.timeout":
+    "The server did not answer the port forward in time.",
   "error.hostkey.mismatch":
     "The host key of {host}:{port} has changed. The connection was refused.",
   "error.hostkey.rejected": "Host key rejected.",
+  "error.hostkey.rsa_sha1":
+    "The server only offers a SHA-1 RSA host key (ssh-rsa), which is no longer safe. Update the server.",
   "error.io": "I/O error: {reason}",
   "error.network.dns": "Cannot resolve host {host}.",
   "error.network.refused": "Connection refused by {host}:{port}.",
@@ -371,6 +391,9 @@ export const en = {
   "import.note.UnknownJump": "Jump host {alias} not found: no jump host.",
   "import.note.RemoteBindIgnored": "The remote listen address is ignored.",
   "import.note.ProxyCommand": "ProxyCommand is not supported.",
+  "import.note.TooComplex":
+    "The file is too complex: only the first hosts were read.",
+  "import.note.HostNameTooLong": "HostName is too long once %h is expanded.",
   "import.note.InvalidPort": "Invalid port: {value}.",
   "import.note.InvalidForward": "Invalid forward: {value}.",
   "quick.label": "Quick connect",

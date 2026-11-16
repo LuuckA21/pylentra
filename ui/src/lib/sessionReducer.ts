@@ -103,5 +103,10 @@ const settle = (t: TransferState): TransferState =>
     : t;
 
 // Double quotes keep `[host]:port` from being globbed by bash/zsh and work in cmd and PowerShell too.
-export const keygenHint = (host: string, port: number): string =>
-  port === 22 ? `ssh-keygen -R ${host}` : `ssh-keygen -R "[${host}]:${port}"`;
+/** null when the host has characters a shell could read as syntax (older saved hosts were never checked). */
+export const keygenHint = (host: string, port: number): string | null =>
+  !/^[\p{L}\p{N}._:%-]+$/u.test(host)
+    ? null
+    : port === 22
+      ? `ssh-keygen -R ${host}`
+      : `ssh-keygen -R "[${host}]:${port}"`;

@@ -107,6 +107,7 @@ async fn list_home() {
     let env = env(Some(root.path()), Hostile::None, true).await;
     let id = open_ready(&env).await;
 
+    assert_eq!(env.mgr.host(id).unwrap(), "127.0.0.1");
     let l = env.mgr.sftp_list(id, String::new()).await.unwrap();
     assert_eq!(l.dir, "/");
     assert!(!l.truncated);
@@ -131,7 +132,8 @@ async fn list_home() {
 #[tokio::test]
 async fn list_hides_invalid_names() {
     let root = TempDir::new().unwrap();
-    let extra = ["../x", "a/b", "CON", "ok"].map(String::from).to_vec();
+    let mut extra = ["../x", "a/b", "CON", "ok"].map(String::from).to_vec();
+    extra.push("x".repeat(1025));
     let env = env(Some(root.path()), Hostile::Names(extra), true).await;
     let id = open_ready(&env).await;
 
@@ -268,17 +270,68 @@ async fn remote_endless_dirs_stop() {
     env.mgr.close(id).await.unwrap();
 }
 
+/// Long names deep down cannot fill memory: the scan stops at its path budget, long before
+/// the depth or entry limit.
+#[tokio::test]
+async fn remote_long_deep_names_stop() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("top")).unwrap();
+    let env = env(Some(root.path()), Hostile::LongTree(1024), true).await;
+    let id = open_ready(&env).await;
+
+    let err = env
+        .mgr
+        .sftp_scan(id, vec!["/top".into()])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, CoreError::SftpLimit { what } if what == "path length"),
+        "{err:?}"
+    );
+    env.mgr.close(id).await.unwrap();
+}
+
+/// A long absolute path counts too: a wide folder under it would fill memory with its
+/// children's remote paths. A home that long is refused outright.
+#[tokio::test]
+async fn long_remote_prefix_stops() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("top")).unwrap();
+    for i in 0..400 {
+        fs::write(root.path().join(format!("top/f{i}")), "").unwrap();
+    }
+    let env = env(Some(root.path()), Hostile::LongPrefix(200_000), true).await;
+    let id = open_ready(&env).await;
+
+    let is_limit =
+        |e: &CoreError| matches!(e, CoreError::SftpLimit { what } if what == "path length");
+    let err = env.mgr.sftp_list(id, String::new()).await.unwrap_err();
+    assert!(is_limit(&err), "{err:?}");
+    let top = format!("/{}/top", "p".repeat(200_000));
+    let err = env.mgr.sftp_scan(id, vec![top]).await.unwrap_err();
+    assert!(is_limit(&err), "{err:?}");
+    env.mgr.close(id).await.unwrap();
+}
+
 #[tokio::test]
 async fn remote_bad_names_skipped() {
     let root = TempDir::new().unwrap();
     fs::create_dir(root.path().join("top")).unwrap();
-    let env = env(Some(root.path()), Hostile::Names(vec!["../x".into()]), true).await;
+    let names = vec!["../x".into(), "y".repeat(100_000)];
+    let env = env(Some(root.path()), Hostile::Names(names), true).await;
     let id = open_ready(&env).await;
 
     let plan = env.mgr.sftp_scan(id, vec!["/top".into()]).await.unwrap();
-    assert_eq!(plan.skipped.len(), 1);
-    assert_eq!(plan.skipped[0].path, "top/../x");
-    assert_eq!(plan.skipped[0].reason, SkipReason::InvalidName);
+    let mut skipped: Vec<_> = plan.skipped.iter().map(|s| s.path.as_str()).collect();
+    skipped.sort();
+    // A name too long to keep is listed by its start.
+    let long = format!("top/{}…", "y".repeat(1024));
+    assert_eq!(skipped, ["top/../x", long.as_str()]);
+    assert!(
+        plan.skipped
+            .iter()
+            .all(|s| s.reason == SkipReason::InvalidName)
+    );
     env.mgr.close(id).await.unwrap();
 }
 
@@ -300,6 +353,21 @@ async fn endless_dots_end_the_listing() {
         matches!(&err, CoreError::SftpLimit { what } if what == "entries"),
         "{err:?}"
     );
+    env.mgr.close(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn slow_listing_ends_truncated() {
+    let root = TempDir::new().unwrap();
+    let env = env(Some(root.path()), Hostile::SlowNames, true).await;
+    let id = open_ready(&env).await;
+
+    // Test builds give a listing 2 s instead of 30 s.
+    let l = tokio::time::timeout(T, env.mgr.sftp_list(id, String::new()))
+        .await
+        .expect("listing within its budget")
+        .unwrap();
+    assert!(l.truncated && !l.entries.is_empty(), "{l:?}");
     env.mgr.close(id).await.unwrap();
 }
 
@@ -452,6 +520,97 @@ async fn download_file_and_tree() {
             .any(|s| matches!(s, TransferState::Running { .. })),
         "{states:?}"
     );
+    env.mgr.close(id).await.unwrap();
+}
+
+#[cfg(unix)]
+fn mode(p: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(p).unwrap().permissions().mode() & 0o777
+}
+
+#[cfg(unix)]
+fn chmod(p: &Path, m: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(m)).unwrap();
+}
+
+/// `from` holds `secret` (0600), `exe` (0751) and `old`; `to` holds `old` (0660). A copy
+/// never opens a file more than its source, drops execute and keeps a replaced file's mode.
+#[cfg(unix)]
+fn mode_trees(from: &Path, to: &Path) {
+    for (name, m) in [("secret", 0o600), ("exe", 0o751), ("old", 0o644)] {
+        fs::write(from.join(name), name).unwrap();
+        chmod(&from.join(name), m);
+    }
+    fs::write(to.join("old"), "x").unwrap();
+    chmod(&to.join("old"), 0o660);
+}
+
+#[cfg(unix)]
+fn assert_modes(to: &Path) {
+    // The umask narrows a new file, as with any other program; a kept mode is exact.
+    let probe = to.join("probe");
+    std::os::unix::fs::OpenOptionsExt::mode(
+        fs::File::options().write(true).create_new(true),
+        0o666,
+    )
+    .open(&probe)
+    .unwrap();
+    let new = mode(&probe);
+    fs::remove_file(probe).unwrap();
+    let got = ["secret", "exe", "old"].map(|n| mode(&to.join(n)));
+    assert_eq!(got, [0o600 & new, 0o640 & new, 0o660]);
+    assert_eq!(fs::read(to.join("old")).unwrap(), b"old");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn download_modes_only_restrict() {
+    let root = TempDir::new().unwrap();
+    let local = TempDir::new().unwrap();
+    mode_trees(root.path(), local.path());
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = ["/secret", "/exe", "/old"].map(String::from).to_vec();
+    let t = env
+        .mgr
+        .sftp_download(id, items, local.path().into())
+        .await
+        .unwrap();
+    assert_eq!(wait_conflicts(&sink, t, 1).await, ["old"]);
+    answer(&env, id, ConflictChoice::Overwrite, false);
+    let end = wait_end(&sink, t).await;
+    assert!(
+        matches!(end, TransferState::Finished { files: 3, .. }),
+        "{end:?}"
+    );
+    assert_modes(local.path());
+    env.mgr.close(id).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn upload_modes_only_restrict() {
+    let root = TempDir::new().unwrap();
+    let local = TempDir::new().unwrap();
+    mode_trees(local.path(), root.path());
+    let env = env(Some(root.path()), Hostile::None, true).await;
+    let (id, sink) = open_with_sink(&env).await;
+
+    let items = ["secret", "exe", "old"]
+        .map(|n| local.path().join(n))
+        .to_vec();
+    let t = env.mgr.sftp_upload(id, items, "/".into()).await.unwrap();
+    assert_eq!(wait_conflicts(&sink, t, 1).await, ["old"]);
+    answer(&env, id, ConflictChoice::Overwrite, false);
+    let end = wait_end(&sink, t).await;
+    assert!(
+        matches!(end, TransferState::Finished { files: 3, .. }),
+        "{end:?}"
+    );
+    assert_modes(root.path());
     env.mgr.close(id).await.unwrap();
 }
 

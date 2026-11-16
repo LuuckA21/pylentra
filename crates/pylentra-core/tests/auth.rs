@@ -138,6 +138,22 @@ fn ed25519() -> PrivateKey {
     PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap()
 }
 
+fn rsa() -> PrivateKey {
+    // Generating an RSA key takes seconds in a debug build.
+    PrivateKey::from_openssh(include_str!("fixtures/rsa_test_key")).unwrap()
+}
+
+/// Like OpenSSH before 7.2: RSA user keys only with SHA-1 signatures (`ssh-rsa`).
+async fn sha1_rsa_server(key: &PrivateKey) -> TestServer {
+    TestServer::start(TestServerConfig {
+        password: Some(PW.into()),
+        authorized_key: Some(key.public_key().clone()),
+        key_algos: Some(vec![Algorithm::Ed25519, Algorithm::Rsa { hash: None }]),
+        ..Default::default()
+    })
+    .await
+}
+
 async fn pw_server() -> TestServer {
     TestServer::start(TestServerConfig {
         password: Some(PW.into()),
@@ -367,6 +383,33 @@ async fn keyboard_interactive_custom_prompt_asks_user() {
 }
 
 #[tokio::test]
+async fn keyboard_interactive_prompt_count_is_capped() {
+    for (n, refused) in [(32, false), (33, true)] {
+        let server = TestServer::start(TestServerConfig {
+            allow_password_method: false,
+            kbd_interactive: Some(("Q: ".into(), "a".into())),
+            kbd_echo: true,
+            kbd_repeat: n,
+            ..Default::default()
+        })
+        .await;
+        let env = env();
+        let (_, sink) = env.open(&server, conn(&server, password_auth()));
+        if refused {
+            let error = closed_error(&sink).await;
+            assert_eq!(error.code, "auth.too_many_prompts");
+            assert_eq!(error.params["count"], "33");
+            assert!(prompts(&sink).is_empty());
+        } else {
+            match nth_prompt(&sink, 1).await {
+                PromptKind::KeyboardInteractive { prompts, .. } => assert_eq!(prompts.len(), n),
+                other => panic!("unexpected prompt {other:?}"),
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn keyboard_interactive_password_then_otp_saves_password() {
     let server = TestServer::start(TestServerConfig {
         allow_password_method: false,
@@ -477,6 +520,89 @@ async fn wrong_key_reports_tried_methods() {
     let error = closed_error(&sink).await;
     assert_eq!(error.code, "auth.all_failed");
     assert!(error.params["tried"].contains("publickey"), "{error:?}");
+}
+
+#[tokio::test]
+async fn sha1_rsa_host_key_is_refused() {
+    let server = TestServer::start(TestServerConfig {
+        password: Some(PW.into()),
+        host_key: Some(rsa()),
+        key_algos: Some(vec![Algorithm::Rsa { hash: None }]),
+        ..Default::default()
+    })
+    .await;
+    let env = env();
+    let c = conn(&server, password_auth());
+    env.store(&c, SecretKind::Password, PW);
+    let (_, sink) = env.open(&server, c);
+    assert_eq!(closed_error(&sink).await.code, "hostkey.rsa_sha1");
+}
+
+#[tokio::test]
+async fn rsa_key_needs_sha2_signatures() {
+    let key = rsa();
+    let server = sha1_rsa_server(&key).await;
+    let env = env();
+    let path = env.key_file(&key, None);
+    let (_, sink) = env.open(&server, conn(&server, key_auth(&path)));
+    assert_eq!(closed_error(&sink).await.code, "auth.rsa_sha1");
+    assert!(accepted(&server).is_empty());
+
+    // Refused before asking for the passphrase.
+    let path = env.key_file(&key, Some(PASSPHRASE));
+    let (_, sink) = env.open(&server, conn(&server, key_auth(&path)));
+    assert_eq!(closed_error(&sink).await.code, "auth.rsa_sha1");
+    assert!(prompts(&sink).is_empty());
+}
+
+#[tokio::test]
+async fn auto_skips_rsa_keys_the_server_only_takes_with_sha1() {
+    let key = rsa();
+    let server = sha1_rsa_server(&key).await;
+    let keys = TempDir::new().unwrap();
+    let env = auto_env(None, vec![write_key(keys.path(), &key, None)]);
+    let (id, sink) = env.open(&server, conn(&server, AuthMethod::Auto));
+    assert_eq!(nth_prompt(&sink, 1).await, PromptKind::Password);
+    env.mgr.answer(id, secret(PW, false)).unwrap();
+    ready(&sink).await;
+    assert_eq!(accepted(&server), ["password"]);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agent_skips_rsa_keys_the_server_only_takes_with_sha1() {
+    let rsa = rsa();
+    let server = sha1_rsa_server(&rsa).await;
+    let (_agent, sock) = spawn_agent(std::slice::from_ref(&rsa)).await;
+    let env = Env::new(SessionOptions {
+        agent_path: Some(sock),
+        ..Default::default()
+    });
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Agent));
+    assert_eq!(closed_error(&sink).await.code, "auth.rsa_sha1");
+    assert!(accepted(&server).is_empty());
+
+    // Another identity tried and refused: a plain authentication failure.
+    let server = sha1_rsa_server(&ed25519()).await;
+    let (_agent, sock) = spawn_agent(&[rsa.clone(), ed25519()]).await;
+    let env = Env::new(SessionOptions {
+        agent_path: Some(sock),
+        ..Default::default()
+    });
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Agent));
+    assert_eq!(closed_error(&sink).await.code, "auth.all_failed");
+
+    // The next identity is still tried.
+    let ed = ed25519();
+    let server = sha1_rsa_server(&ed).await;
+    let (_agent, sock) = spawn_agent(&[rsa, ed]).await;
+    let env = Env::new(SessionOptions {
+        agent_path: Some(sock),
+        ..Default::default()
+    });
+    let (_, sink) = env.open(&server, conn(&server, AuthMethod::Agent));
+    ready(&sink).await;
+    assert_eq!(accepted(&server), ["publickey"]);
 }
 
 #[tokio::test]

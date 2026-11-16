@@ -9,4 +9,13 @@ target: string, group: string | null,
 /**
  * A saved connection already has this exact name.
  */
-duplicate: boolean, missing_key: string | null, jump: JumpRef | null, };
+duplicate: boolean, missing_key: string | null, 
+/**
+ * The key is on a network path: it is not checked here, but read when connecting.
+ */
+network_key: string | null, jump: JumpRef | null, 
+/**
+ * Port forwards the connection carries, as `L bind:port:dest:port`. They never start
+ * by themselves after an import.
+ */
+forwards: Array<string>, };

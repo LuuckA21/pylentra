@@ -72,6 +72,8 @@
         {@const noteIds = [
           ...(r.missing_key ? [`n-${r.id}-key`] : []),
           ...(jump ? [`n-${r.id}-jump`] : []),
+          ...(r.network_key ? [`n-${r.id}-net`] : []),
+          ...(r.forwards.length ? [`n-${r.id}-fwd`] : []),
         ]}
         <li>
           <label class="row">
@@ -99,6 +101,16 @@
           {/if}
           {#if jump}
             <p class="note" id="n-{r.id}-jump">{jump}</p>
+          {/if}
+          {#if r.network_key}
+            <p class="note error" id="n-{r.id}-net">
+              {t("library.networkKey", { path: r.network_key })}
+            </p>
+          {/if}
+          {#if r.forwards.length}
+            <p class="note" id="n-{r.id}-fwd">
+              {t("library.forwards", { list: r.forwards.join(", ") })}
+            </p>
           {/if}
         </li>
       {/each}

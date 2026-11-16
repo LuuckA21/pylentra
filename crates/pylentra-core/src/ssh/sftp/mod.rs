@@ -29,10 +29,13 @@ use super::handler::ClientHandler;
 use super::session::CLOSE_TIMEOUT;
 use super::{PromptBroker, SessionId, SessionSink};
 use crate::error::CoreError;
-use names::{LOCAL_WINDOWS, valid_name};
+use names::{LOCAL_WINDOWS, MAX_NAME, valid_name};
 
 /// At most this many names are read from one directory (spec §4.6).
 const MAX_LISTING: usize = 100_000;
+/// A listing returns what it has, truncated, after this long, so a server dripping names
+/// cannot hold the SFTP task (and with it cancel) for days. Short in test builds.
+const LIST_BUDGET: Duration = Duration::from_secs(if cfg!(feature = "test-util") { 2 } else { 30 });
 const POSIX_RENAME: &str = "posix-rename@openssh.com";
 const PROGRESS_EVERY: Duration = Duration::from_millis(200);
 
@@ -62,6 +65,10 @@ pub struct Entry {
     /// Unix seconds.
     #[ts(type = "number | null")]
     pub modified: Option<u64>,
+    /// Permission bits (`0o777`), for the copy's mode; not sent to the UI.
+    #[serde(skip)]
+    #[ts(skip)]
+    pub(crate) mode: Option<u32>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, TS)]
@@ -372,7 +379,8 @@ async fn serve(server: Server, mut rx: mpsc::Receiver<SftpCmd>) {
                 let lost = match cmd {
                     SftpCmd::List { dir, reply } => {
                         // shortcut: a listing in flight delays cancel and close handling up to
-                        // the SFTP request timeout; upgrade by serving List concurrently.
+                        // LIST_BUDGET plus one request timeout; upgrade by serving List
+                        // concurrently.
                         let r = list(&server.raw, &dir).await;
                         let lost = matches!(&r, Err(e) if lost(e));
                         let _ = reply.send(r.map_err(|e| named(e, &dir)));
@@ -494,8 +502,13 @@ async fn list(raw: &RawSftpSession, dir: &str) -> Result<Listing, SftpError> {
         .next()
         .ok_or_else(|| SftpError::UnexpectedBehavior("empty realpath reply".into()))?
         .filename;
+    // Linux's PATH_MAX: every child's path would repeat a longer one.
+    if dir.len() > 4096 {
+        return Err(SftpError::Limited("path length".into()));
+    }
     let handle = raw.opendir(dir.as_str()).await?.handle;
-    let read = read_dir(raw, &handle, false).await;
+    let deadline = tokio::time::Instant::now() + LIST_BUDGET;
+    let read = read_dir(raw, &handle, false, Some(deadline)).await;
     let _ = raw.close(handle).await;
     let read = read?;
     Ok(Listing {
@@ -517,6 +530,7 @@ async fn read_dir(
     raw: &RawSftpSession,
     handle: &str,
     keep_invalid: bool,
+    deadline: Option<tokio::time::Instant>,
 ) -> Result<Dir, SftpError> {
     let mut dir = Dir {
         entries: Vec::new(),
@@ -527,6 +541,10 @@ async fn read_dir(
     let mut seen = 0;
     let mut names = HashSet::new();
     loop {
+        if deadline.is_some_and(|d| tokio::time::Instant::now() >= d) {
+            dir.truncated = true;
+            return Ok(dir);
+        }
         let files = match raw.readdir(handle).await {
             Ok(name) => name.files,
             Err(SftpError::Status(s)) if s.status_code == StatusCode::Eof => break,
@@ -542,14 +560,28 @@ async fn read_dir(
                 return Ok(dir);
             }
             seen += 1;
-            // A repeated name would break the UI's keyed list and plan one file twice.
-            if matches!(f.filename.as_str(), "." | "..") || !names.insert(f.filename.clone()) {
+            if matches!(f.filename.as_str(), "." | "..") {
                 continue;
             }
-            if valid_name(&f.filename, LOCAL_WINDOWS) {
+            let valid = valid_name(&f.filename, LOCAL_WINDOWS);
+            if !valid && !keep_invalid {
+                continue;
+            }
+            let mut name = f.filename.clone();
+            // Kept short: an invalid name can be as long as a whole packet.
+            if !valid && name.len() > MAX_NAME {
+                let cut = (0..=MAX_NAME).rfind(|&i| name.is_char_boundary(i));
+                name.truncate(cut.unwrap_or(0));
+                name.push('…');
+            }
+            // A repeated name would break the UI's keyed list and plan one file twice.
+            if !names.insert(name.clone()) {
+                continue;
+            }
+            if valid {
                 dir.entries.push(entry(f));
-            } else if keep_invalid {
-                dir.invalid.push(f.filename);
+            } else {
+                dir.invalid.push(name);
             }
         }
     }
@@ -569,5 +601,6 @@ pub(crate) fn entry(f: File) -> Entry {
         kind,
         size: f.attrs.size,
         modified: f.attrs.mtime.map(u64::from),
+        mode: f.attrs.permissions.map(|p| p & 0o777),
     }
 }

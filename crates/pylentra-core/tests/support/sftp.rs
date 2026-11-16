@@ -23,10 +23,18 @@ pub enum Hostile {
     Names(Vec<String>),
     /// Every directory contains a subdirectory `d`, which is another such directory.
     EndlessDirs,
+    /// Every directory contains 150 empty files and a subdirectory named `d` repeated this
+    /// many times, which is another such directory.
+    LongTree(usize),
+    /// Every path gets a first component of `p` repeated this many times, which is the
+    /// root itself, so a realpath answer is that long.
+    LongPrefix(usize),
     /// The "sftp" subsystem is accepted, but no SFTP reply ever comes.
     NeverAnswer,
     /// Every readdir answers a batch of "." and ".." and never ends.
     EndlessDots,
+    /// Every readdir answers one new name after `SLOW / 3`, and never ends.
+    SlowNames,
     /// Every read returns half the bytes asked for (at least one).
     HalfReads,
     /// Every file ends, when read, at half the size it is listed with.
@@ -98,10 +106,10 @@ impl SftpFs {
                 c => parts.push(c),
             }
         }
-        let endless = matches!(self.hostile, Hostile::EndlessDirs);
+        let phantom = self.phantom_dir();
         let real = parts
             .iter()
-            .filter(|c| !(endless && **c == "d"))
+            .filter(|c| phantom.as_deref() != Some(**c))
             .fold(self.root.clone(), |p, c| p.join(c));
         Ok((format!("/{}", parts.join("/")), real))
     }
@@ -127,6 +135,16 @@ impl SftpFs {
         }
     }
 
+    /// The name of a folder that is not on disk but stands for the one it is in, if any.
+    fn phantom_dir(&self) -> Option<String> {
+        match self.hostile {
+            Hostile::EndlessDirs => Some("d".into()),
+            Hostile::LongTree(n) => Some("d".repeat(n)),
+            Hostile::LongPrefix(n) => Some("p".repeat(n)),
+            _ => None,
+        }
+    }
+
     fn entries(&self, dir: &Path) -> Result<Vec<File>, StatusCode> {
         let mut dir_attrs = FileAttributes::default();
         dir_attrs.set_dir(true);
@@ -143,6 +161,8 @@ impl SftpFs {
             Hostile::None
             | Hostile::NeverAnswer
             | Hostile::EndlessDots
+            | Hostile::SlowNames
+            | Hostile::LongPrefix(_)
             | Hostile::HalfReads
             | Hostile::ShortFile
             | Hostile::FailRead(_)
@@ -163,6 +183,13 @@ impl SftpFs {
                     files.push(File::new("d", dir_attrs));
                 }
             }
+            Hostile::LongTree(n) => {
+                let mut file = FileAttributes::default();
+                file.set_regular(true);
+                file.size = Some(0);
+                files.extend((0..150).map(|i| File::new(format!("f{i}"), file.clone())));
+                files.push(File::new("d".repeat(*n), dir_attrs));
+            }
         }
         Ok(files)
     }
@@ -179,6 +206,11 @@ fn attrs(m: &Metadata) -> FileAttributes {
             .and_then(|d| u32::try_from(d.as_secs()).ok()),
         ..Default::default()
     };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        a.permissions = Some(m.permissions().mode() & 0o7777);
+    }
     let t = m.file_type();
     if t.is_symlink() {
         a.set_symlink(true);
@@ -240,8 +272,14 @@ impl russh_sftp::server::Handler for SftpFs {
     }
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        let (canonical, real) = self.resolve(&path)?;
+        let (mut canonical, real) = self.resolve(&path)?;
         self.followed(&real)?;
+        if let Hostile::LongPrefix(n) = self.hostile {
+            let prefix = format!("/{}", "p".repeat(n));
+            if !canonical.starts_with(&prefix) {
+                canonical = format!("{prefix}{}", canonical.trim_end_matches('/'));
+            }
+        }
         Ok(Name {
             id,
             files: vec![File::dummy(canonical)],
@@ -271,6 +309,15 @@ impl russh_sftp::server::Handler for SftpFs {
                 files: dots.iter().cycle().take(1000).cloned().collect(),
             });
         }
+        if matches!(self.hostile, Hostile::SlowNames) {
+            tokio::time::sleep(SLOW / 3).await;
+            self.next_handle += 1;
+            let name = format!("n{}", self.next_handle);
+            return Ok(Name {
+                id,
+                files: vec![File::new(name, FileAttributes::empty())],
+            });
+        }
         if files.is_empty() {
             return Err(StatusCode::Eof);
         }
@@ -295,11 +342,18 @@ impl russh_sftp::server::Handler for SftpFs {
         id: u32,
         filename: String,
         pflags: OpenFlags,
-        _attrs: FileAttributes,
+        attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
         if pflags.contains(OpenFlags::WRITE) {
             let mut o = fs::OpenOptions::new();
             o.write(true).truncate(pflags.contains(OpenFlags::TRUNCATE));
+            // As OpenSSH: a new file gets the asked mode, masked by the umask.
+            #[cfg(unix)]
+            if let Some(p) = attrs.permissions {
+                std::os::unix::fs::OpenOptionsExt::mode(&mut o, p & 0o7777);
+            }
+            #[cfg(not(unix))]
+            let _ = attrs;
             if pflags.contains(OpenFlags::CREATE | OpenFlags::EXCLUDE) {
                 o.create_new(true);
             } else {
@@ -365,6 +419,12 @@ impl russh_sftp::server::Handler for SftpFs {
             times = times.set_accessed(t);
         }
         f.set_times(times).map_err(status)?;
+        #[cfg(unix)]
+        if let Some(p) = attrs.permissions {
+            use std::os::unix::fs::PermissionsExt;
+            let p = fs::Permissions::from_mode(p & 0o7777);
+            f.set_permissions(p).map_err(status)?;
+        }
         Ok(ok(id))
     }
 

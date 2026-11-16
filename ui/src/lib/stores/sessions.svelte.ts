@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, type OnData } from "../api";
 import type { PromptAnswer } from "../bindings/PromptAnswer";
 import type { SessionEvent } from "../bindings/SessionEvent";
 import type { Connection } from "../bindings/Connection";
@@ -160,7 +160,7 @@ export function connect(
   paneId: string,
   cols: number,
   rows: number,
-  onData: (bytes: Uint8Array) => void,
+  onData: OnData,
   onEvent: (e: SessionEvent) => void,
 ): void {
   const i = indexOf(paneId);
@@ -179,7 +179,8 @@ export function connect(
   };
   const { connectionId, quick } = sessions.panes[i];
   sessions.panes[i] = initialPane(paneId, connectionId, quick);
-  const onBytes = (bytes: Uint8Array) => indexOf(paneId) >= 0 && onData(bytes);
+  const onBytes: OnData = (bytes, done) =>
+    indexOf(paneId) >= 0 && onData(bytes, done);
   const id = quick
     ? api.sessionOpenQuick(quick, cols, rows, onBytes, event)
     : api.sessionOpen(connectionId, cols, rows, onBytes, event);

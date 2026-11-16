@@ -128,6 +128,8 @@ pub enum SessionEvent {
         expected: String,
         got: String,
         source: KeySource,
+        /// `expected` is a key of another type than `got`.
+        type_changed: bool,
     },
     SecretPrompt {
         host: String,

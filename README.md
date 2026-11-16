@@ -44,6 +44,13 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   side-channel ([RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071),
   no upstream fix). It is only exploitable by a hostile or compromised server
   that times your signatures during authentication. Prefer ed25519 keys.
+- **SHA-1 RSA (`ssh-rsa`) is refused**, for host keys and RSA user keys, as in
+  OpenSSH 8.8 and later. A server that only offers it (OpenSSH before 7.2)
+  cannot be reached if its host key is RSA, and RSA user keys are refused
+  there: use an ed25519 or ECDSA key, or update the server.
+- **Key files on network paths** (`\\host\share`, `//host/share`) are never
+  checked when saving or previewing an import, but they are read when you
+  connect, which on Windows contacts that host. The import preview flags them.
 - **Linux without a Secret Service** (GNOME Keyring, KWallet, ...): saved
   credentials cannot be stored, so they are asked at every connection. If you
   start a keyring after Pylentra, restart the app.
@@ -53,17 +60,41 @@ asks for your administrator password (it runs `dpkg -i` through `pkexec`,
   taskbar pin or Start menu shortcut can keep showing the old one until
   Windows refreshes its icon cache: restart, or run `ie4uinit.exe -show`.
 - **`known_hosts`:** `@revoked` and `@cert-authority` markers and wildcard host
-  patterns in `~/.ssh/known_hosts` are not honoured. Pylentra only reads that
-  file and never writes to `~/.ssh`.
-- **SFTP.** No rename, delete, new folder or permission editing yet.
+  patterns in `~/.ssh/known_hosts` and the system-wide `ssh_known_hosts`
+  (`/etc/ssh/ssh_known_hosts`, on Windows `%ProgramData%\ssh\ssh_known_hosts`)
+  are not honoured. Pylentra only reads those files and never writes to them.
+  `HostKeyAlias`, `UserKnownHostsFile` and `GlobalKnownHostsFile` in
+  `~/.ssh/config` are ignored: keys are looked up under the connection's host
+  in those two files and Pylentra's own.
+- **Host key type.** Pylentra asks the server first for the key types it
+  already knows for that host. If the server only offers a different type (for
+  example it replaced its ECDSA key with an ed25519 one), the connection is
+  blocked as a changed key: if the change is expected, forget the old key
+  (or remove it with `ssh-keygen -R`) and connect again.
+- **SFTP.** No rename, delete, new folder or permission editing yet. A
+  copied file is never more open than its source: it gets the source's read
+  and write permissions at most (0600 when they are unknown), never the
+  execute bit, and a replaced file keeps its own permissions. Folders get the
+  default permissions. On Windows, a new uploaded file gets the server's
+  default permissions, a replaced one keeps its own, and downloaded files get
+  the Windows defaults.
   Symbolic links and special files are skipped. If the connection drops during
   an upload, a `<name>.<n>.pylentra-tmp` file can remain on the server (never
   a corrupted destination). Without the server's `posix-rename` extension, a
   close or dropped connection right between removing the old file and
   renaming the new one leaves the complete new file under its temp name. Very
-  large folders (tens of thousands of entries) list slowly. Files with very
+  large folders (tens of thousands of entries) list slowly; a listing stops
+  after 30 seconds and shows what it has. Files with very
   long names (over about 240 bytes) are skipped with an error, since the
-  temp name would exceed the system's file name limit.
+  temp name would exceed the system's file name limit; names over 1 KiB are
+  not listed at all, and a folder whose path exceeds 4 KiB cannot be opened.
+  A folder transfer whose paths together exceed 64 MiB stops with a
+  safety-limit error. On Windows, server names shaped like 8.3
+  short names (`INSTAL~1.EXE`) are not listed or downloaded.
+- **Very fast output** (for example `cat` of a huge file) is slowed to the
+  speed the terminal can draw it, also while the window is minimized (the
+  system then slows the app down). Until it catches up, file transfers and port
+  forwards of that session wait too.
 - **macOS is not supported** in v1.
 
 ## Build from source

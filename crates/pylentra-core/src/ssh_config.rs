@@ -45,14 +45,36 @@ pub enum ImportNote {
     Match,
     IdentityTokens,
     MultiHopJump,
-    ChainedJump { target: String },
-    JumpNotAlias { value: String },
-    UnknownJump { alias: String },
+    ChainedJump {
+        target: String,
+    },
+    JumpNotAlias {
+        value: String,
+    },
+    UnknownJump {
+        alias: String,
+    },
     RemoteBindIgnored,
     ProxyCommand,
-    InvalidPort { value: String },
-    InvalidForward { value: String },
+    /// Too many wildcard blocks for the number of hosts: the hosts that fit were read.
+    TooComplex,
+    /// `HostName` would grow past `MAX_EXPANDED_HOST` once `%h` is expanded.
+    HostNameTooLong,
+    InvalidPort {
+        value: String,
+    },
+    InvalidForward {
+        value: String,
+    },
 }
+
+/// Most bytes (of lines and of pattern-by-alias comparisons) `parse` spends on aliases.
+const MAX_WORK: usize = 20_000_000;
+/// A pattern byte compared with an alias byte costs about this fraction of a line byte visited.
+const GLOB_WEIGHT: usize = 32;
+/// Longest host name `%h` may expand to.
+const MAX_EXPANDED_HOST: usize = 1024;
+const MAX_JUMP_NOTES: usize = 16;
 
 struct Block {
     /// Empty for a `Match` block, so it applies to no host.
@@ -210,25 +232,21 @@ const NOT_ALIAS: [char; 3] = ['@', ':', '/'];
 /// marked `exists` and not imported.
 fn resolve_jump(
     hop: &str,
-    saved: &[Connection],
-    aliases: &[(&str, Uuid)],
+    saved: &HashMap<String, Uuid>,
+    aliases: &HashMap<String, Uuid>,
     notes: &mut Vec<ImportNote>,
 ) -> Option<Uuid> {
+    // A candidate lists a few unresolved hops at most, so a huge hop list cannot flood the notes.
+    let room = notes.len() < MAX_JUMP_NOTES;
     if hop.contains(NOT_ALIAS) {
-        notes.push(ImportNote::JumpNotAlias { value: hop.into() });
+        if room {
+            notes.push(ImportNote::JumpNotAlias { value: hop.into() });
+        }
         return None;
     }
-    let id = saved
-        .iter()
-        .find(|c| c.name.eq_ignore_ascii_case(hop))
-        .map(|c| c.id)
-        .or_else(|| {
-            aliases
-                .iter()
-                .find(|(a, _)| a.eq_ignore_ascii_case(hop))
-                .map(|(_, id)| *id)
-        });
-    if id.is_none() {
+    let key = hop.to_ascii_lowercase();
+    let id = saved.get(&key).or_else(|| aliases.get(&key)).copied();
+    if id.is_none() && room {
         notes.push(ImportNote::UnknownJump { alias: hop.into() });
     }
     id
@@ -347,12 +365,64 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
     }
 
     // Concrete aliases in order of first appearance, ignoring case as OpenSSH does.
+    let is_literal = |p: &String| !p.contains(['*', '?']) && !p.starts_with('!');
     let mut aliases: Vec<(&str, Uuid)> = Vec::new();
-    for p in blocks.iter().flat_map(|b| &b.patterns) {
-        let concrete = !p.trim().is_empty() && !p.contains(['*', '?']) && !p.starts_with('!');
-        if concrete && !aliases.iter().any(|(a, _)| a.eq_ignore_ascii_case(p)) {
-            aliases.push((p, Uuid::new_v4()));
+    let mut seen: HashSet<String> = HashSet::new();
+    // Blocks of literal names only are found by lookup; the others are tested one by one.
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut general: Vec<usize> = Vec::new();
+    for (bi, b) in blocks.iter().enumerate() {
+        if b.patterns.iter().all(is_literal) {
+            for p in &b.patterns {
+                by_name.entry(p.to_ascii_lowercase()).or_default().push(bi);
+            }
+        } else {
+            general.push(bi);
         }
+        for p in &b.patterns {
+            if !p.trim().is_empty() && is_literal(p) && seen.insert(p.to_ascii_lowercase()) {
+                aliases.push((p, Uuid::new_v4()));
+            }
+        }
+    }
+
+    // Every alias replays the wildcard blocks (each pattern against its name) and the lines of
+    // its own blocks; a line costs its bytes, which also bounds a `ProxyJump` hop list.
+    let lines_cost = |bi: &usize| -> usize {
+        (blocks[*bi].lines.iter())
+            .map(|(_, args)| 1 + args.iter().map(String::len).sum::<usize>())
+            .sum()
+    };
+    let general_lines: usize = general.iter().map(lines_cost).sum();
+    let general_pats: usize = (general.iter())
+        .flat_map(|&bi| &blocks[bi].patterns)
+        .map(|p| p.len() + 1)
+        .sum();
+    let mut spent = 0usize;
+    let kept = aliases
+        .iter()
+        .take_while(|(a, _)| {
+            let own: usize = (by_name.get(&a.to_ascii_lowercase()))
+                .map_or(0, |v| v.iter().map(lines_cost).sum());
+            spent = spent.saturating_add(
+                general_lines + general_pats.saturating_mul(a.len() + 1) / GLOB_WEIGHT + own,
+            );
+            spent <= MAX_WORK
+        })
+        .count();
+    if kept < aliases.len() {
+        aliases.truncate(kept);
+        skipped.push(FileNote {
+            line: text.lines().count(),
+            note: ImportNote::TooComplex,
+        });
+    }
+    let alias_ids: HashMap<String, Uuid> = (aliases.iter())
+        .map(|(a, id)| (a.to_ascii_lowercase(), *id))
+        .collect();
+    let mut saved_ids: HashMap<String, Uuid> = HashMap::new();
+    for c in saved {
+        saved_ids.entry(c.name.to_ascii_lowercase()).or_insert(c.id);
     }
 
     // Multi-hop `ProxyJump`s that resolve, and which candidates have no jump of their own.
@@ -365,7 +435,19 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
             let mut first: HashMap<&str, &str> = HashMap::new();
             let mut forwards = Vec::new();
             let mut jump: Option<&[String]> = None;
-            for block in blocks.iter().filter(|b| block_matches(&b.patterns, alias)) {
+            let mut hits = by_name
+                .get(&alias.to_ascii_lowercase())
+                .cloned()
+                .unwrap_or_default();
+            hits.extend(
+                general
+                    .iter()
+                    .copied()
+                    .filter(|&bi| block_matches(&blocks[bi].patterns, alias)),
+            );
+            hits.sort_unstable();
+            hits.dedup();
+            for block in hits.into_iter().map(|bi| &blocks[bi]) {
                 for (key, args) in &block.lines {
                     // Forwards add up over every matching block; everything else keeps its first
                     // non-blank value (`HostName ""` would otherwise give an unimportable empty host).
@@ -429,11 +511,11 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
             free.push(no_jump);
             let jump_via = match hops[..] {
                 _ if no_jump => None,
-                [v] => resolve_jump(v, saved, &aliases, &mut notes),
+                [v] => resolve_jump(v, &saved_ids, &alias_ids, &mut notes),
                 _ => {
                     let ids: Vec<Uuid> = hops
                         .iter()
-                        .filter_map(|h| resolve_jump(h, saved, &aliases, &mut notes))
+                        .filter_map(|h| resolve_jump(h, &saved_ids, &alias_ids, &mut notes))
                         .collect();
                     if ids.len() == hops.len() {
                         chains.push((i, ids));
@@ -455,20 +537,26 @@ pub fn parse(text: &str, saved: &[Connection]) -> ScanResult {
                 notes.push(ImportNote::ProxyCommand);
             }
 
+            // `%h` is the alias, as in `HostName %h.example.com`.
+            let host = match first.get("hostname") {
+                None => alias.into(),
+                Some(h) if h.len() + h.matches("%h").count() * alias.len() > MAX_EXPANDED_HOST => {
+                    error.get_or_insert(ImportNote::HostNameTooLong);
+                    alias.into()
+                }
+                Some(h) => h.replace("%h", alias),
+            };
             let username = first.get("user").copied().unwrap_or_default().to_string();
             Candidate {
                 needs_user: username.is_empty(),
-                exists: saved.iter().any(|c| c.name.eq_ignore_ascii_case(alias)),
+                exists: saved_ids.contains_key(&alias.to_ascii_lowercase()),
                 error,
                 notes,
                 connection: Connection {
                     id,
                     name: alias.into(),
                     group_id: None,
-                    // `%h` is the alias, as in `HostName %h.example.com`.
-                    host: first
-                        .get("hostname")
-                        .map_or(alias.into(), |h| h.replace("%h", alias)),
+                    host,
                     port,
                     username,
                     auth,

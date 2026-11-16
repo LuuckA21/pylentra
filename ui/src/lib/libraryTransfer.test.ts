@@ -147,6 +147,8 @@ const row = (jump: ImportRow["jump"]): ImportRow => ({
   group: null,
   duplicate: false,
   missing_key: null,
+  network_key: null,
+  forwards: [],
   jump,
 });
 

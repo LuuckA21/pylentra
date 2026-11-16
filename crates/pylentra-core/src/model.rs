@@ -374,6 +374,49 @@ impl Group {
 }
 
 impl ForwardRule {
+    /// `L bind:port:dest:port`, `R port:dest:port` or `D bind:port`, as in ssh(1).
+    pub fn summary(&self) -> String {
+        // IPv6 literals are bracketed, as in ssh(1).
+        let b = |h: &str| {
+            if h.contains(':') {
+                format!("[{h}]")
+            } else {
+                h.to_string()
+            }
+        };
+        match self {
+            Self::Local {
+                bind_host,
+                bind_port,
+                dest_host,
+                dest_port,
+                ..
+            } => format!(
+                "L {}:{bind_port}:{}:{dest_port}",
+                b(bind_host),
+                b(dest_host)
+            ),
+            Self::Remote {
+                bind_port,
+                dest_host,
+                dest_port,
+                ..
+            } => format!("R {bind_port}:{}:{dest_port}", b(dest_host)),
+            Self::Dynamic {
+                bind_host,
+                bind_port,
+                ..
+            } => format!("D {}:{bind_port}", b(bind_host)),
+        }
+    }
+
+    pub fn set_auto_start(&mut self, on: bool) {
+        let (Self::Local { auto_start, .. }
+        | Self::Remote { auto_start, .. }
+        | Self::Dynamic { auto_start, .. }) = self;
+        *auto_start = on;
+    }
+
     /// Reports fields as `<prefix>.<field>`, e.g. `forwards[0].bind_port`.
     pub fn validate(&self, prefix: &str) -> Result<(), CoreError> {
         let check_host = |bind_host: &str| {
@@ -425,6 +468,45 @@ impl ForwardRule {
     }
 }
 
+/// Allows only what a host name or IP literal needs: ASCII letters and digits, `. - _ : %`
+/// (IPv6 literals are stored without brackets, `%` is a zone) and non-ASCII letters of IDN
+/// names. Anything else could be read as a separator or pattern by known_hosts, or as shell
+/// syntax in the copyable `ssh-keygen -R` hint. Invisible format characters (soft hyphen,
+/// zero-width, bidi controls, tags) are refused too: they could make a host look like another.
+pub fn check_host_name(host: &str) -> Result<(), CoreError> {
+    let invisible = |c: char| {
+        matches!(c,
+            '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{feff}'
+            | '\u{e0000}'..='\u{e007f}')
+    };
+    let allowed = |c: char| {
+        c.is_ascii_alphanumeric()
+            || ".-_:%".contains(c)
+            || (!c.is_ascii() && !c.is_whitespace() && !c.is_control() && !invisible(c))
+    };
+    if !host.chars().all(allowed) {
+        return Err(CoreError::invalid(
+            "host",
+            "contains a character not allowed in a host name",
+        ));
+    }
+    Ok(())
+}
+
+/// A network path (see `is_network_path`) is never touched: on Windows that
+/// alone contacts the host (SMB, NTLM). It counts as found.
+pub fn key_found_or_unchecked(path: &Path) -> bool {
+    is_network_path(path) || path.exists()
+}
+
+/// Two leading separators in any mix (`\\h\s`, `//h/s`, `\/h/s`) or `\??\` (NT, `\??\UNC\h\s`):
+/// Windows treats all of them as network or device paths.
+pub fn is_network_path(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    matches!(s.as_bytes(), [b'\\' | b'/', b'\\' | b'/' | b'?', ..])
+}
+
 impl Connection {
     /// Checks the fields this connection owns. Jump references and chain depth
     /// need the whole store, so they are checked there.
@@ -438,6 +520,7 @@ impl Connection {
                 return Err(CoreError::invalid(field, "must not be empty"));
             }
         }
+        check_host_name(&self.host)?;
         require_nonzero(self.port, "port".into())?;
         if self
             .notes
@@ -454,7 +537,7 @@ impl Connection {
         let mut warnings = Vec::new();
         if let AuthMethod::Key { path, .. } = &self.auth {
             // The key may live on a removable disk, so a missing file only warns.
-            if !expand_home(path).exists() {
+            if !key_found_or_unchecked(&expand_home(path)) {
                 warnings.push(Warning::KeyFileMissing { path: path.clone() });
             }
         }
@@ -565,6 +648,66 @@ mod tests {
                 _ => c.username = " \t".into(),
             }
             assert_eq!(invalid_field(&c), field);
+        }
+    }
+
+    #[test]
+    fn host_with_separators_or_patterns_rejected() {
+        let mut c = conn();
+        for bad in [
+            "a,victim.example",
+            "x\nvictim.example",
+            "a b",
+            "a\tb",
+            "a\u{7f}",
+            "[::1]",
+            "a]:22",
+            "*.example",
+            "h?",
+            "!h",
+            "h#",
+            "|1|x",
+            "u@h",
+            "x;id",
+            "$(id)",
+            "a`id`",
+            "a&b",
+            "a'b",
+            "a\u{a0}b",
+        ] {
+            c.host = bad.into();
+            assert_eq!(invalid_field(&c), "host", "{bad:?}");
+        }
+        // Invisible format characters could make a host look like another in prompts.
+        for bad in [
+            "a\u{ad}b",
+            "a\u{61c}b",
+            "a\u{180e}b",
+            "a\u{200b}b",
+            "a\u{200f}b",
+            "a\u{202a}b",
+            "a\u{202e}b",
+            "a\u{2060}b",
+            "a\u{2064}b",
+            "a\u{2066}b",
+            "a\u{2069}b",
+            "a\u{feff}b",
+            "a\u{e0000}b",
+            "a\u{e007f}b",
+        ] {
+            c.host = bad.into();
+            assert_eq!(invalid_field(&c), "host", "{bad:?}");
+        }
+        for ok in [
+            "example.com",
+            "10.0.0.1",
+            "::1",
+            "fe80::1%eth0",
+            "my-host_1",
+            "bücher.example",
+        ] {
+            c.host = ok.into();
+            assert!(c.validate().is_ok(), "{ok}");
         }
     }
 
@@ -863,5 +1006,43 @@ mod tests {
             (secs(120), Some(secs(300)))
         );
         assert_eq!(s(0, 0).session_timeouts(), (secs(5), None));
+    }
+
+    #[test]
+    fn forward_summary_brackets_ipv6() {
+        let r = ForwardRule::Dynamic {
+            bind_host: "::1".into(),
+            bind_port: 1080,
+            auto_start: false,
+        };
+        assert_eq!(r.summary(), "D [::1]:1080");
+    }
+
+    #[test]
+    fn key_check_skips_network_paths() {
+        let d = tempfile::TempDir::new().unwrap();
+        let key = d.path().join("id");
+        std::fs::write(&key, "k").unwrap();
+        assert!(key_found_or_unchecked(&key));
+        assert!(!key_found_or_unchecked(&d.path().join("missing")));
+        for unc in [
+            r"\\host\share\id",
+            "//host/share/id",
+            r"\/host/share\id",
+            r"/\host\share\id",
+            r"\??\UNC\host\share\id",
+        ] {
+            assert!(key_found_or_unchecked(Path::new(unc)));
+        }
+    }
+
+    #[test]
+    fn validate_does_not_warn_for_network_key_paths() {
+        let mut c = conn();
+        c.auth = AuthMethod::Key {
+            path: "//host/share/id".into(),
+            save_passphrase: false,
+        };
+        assert!(c.validate().unwrap().is_empty());
     }
 }

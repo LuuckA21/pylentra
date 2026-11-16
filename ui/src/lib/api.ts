@@ -60,24 +60,39 @@ export const snippetDelete = (id: string) =>
 const toBytes = (m: ArrayBuffer | ArrayLike<number>): Uint8Array =>
   m instanceof ArrayBuffer ? new Uint8Array(m) : Uint8Array.from(m);
 
+// `onData` calls `done` once the bytes are rendered: the session stops reading
+// the server while too many are not.
+export type OnData = (bytes: Uint8Array, done: () => void) => void;
+
 function openWithChannels(
   command: string,
   args: Record<string, unknown>,
-  onData: (bytes: Uint8Array) => void,
+  onData: OnData,
   onEvent: (e: SessionEvent) => void,
 ): Promise<string> {
   const data = new Channel<ArrayBuffer | number[]>();
-  data.onmessage = (m) => onData(toBytes(m));
   const events = new Channel<SessionEvent>();
   events.onmessage = onEvent;
-  return invoke<string>(command, { ...args, data, events });
+  const id = invoke<string>(command, { ...args, data, events });
+  // Cumulative, so a lost acknowledgement is made good by the next one.
+  let rendered = 0;
+  data.onmessage = (m) => {
+    const bytes = toBytes(m);
+    onData(bytes, () => {
+      const total = (rendered += bytes.length);
+      id.then((id) => invoke<void>("session_ack", { id, total })).catch(
+        () => {},
+      );
+    });
+  };
+  return id;
 }
 
 export const sessionOpen = (
   connectionId: string,
   cols: number,
   rows: number,
-  onData: (bytes: Uint8Array) => void,
+  onData: OnData,
   onEvent: (e: SessionEvent) => void,
 ) =>
   openWithChannels(
@@ -92,7 +107,7 @@ export const sessionOpenQuick = (
   connection: Connection,
   cols: number,
   rows: number,
-  onData: (bytes: Uint8Array) => void,
+  onData: OnData,
   onEvent: (e: SessionEvent) => void,
 ) =>
   openWithChannels(
@@ -126,14 +141,24 @@ export const forwardStop = (sessionId: string, forwardId: number) =>
 // pick and download dialogs open on the Rust side (`null`: cancelled).
 export const sftpList = (sessionId: string, dir: string) =>
   invoke<Listing>("sftp_list", { sessionId, dir });
-export const sftpDownload = (sessionId: string, items: string[]) =>
-  invoke<number | null>("sftp_download", { sessionId, items });
+// `lang`: the language the UI is shown in, for the dialog's title.
+export const sftpDownload = (
+  sessionId: string,
+  items: string[],
+  lang: string,
+) => invoke<number | null>("sftp_download", { sessionId, items, lang });
 export const sftpUploadPick = (
   sessionId: string,
   remoteDir: string,
   folder: boolean,
+  lang: string,
 ) =>
-  invoke<number | null>("sftp_upload_pick", { sessionId, remoteDir, folder });
+  invoke<number | null>("sftp_upload_pick", {
+    sessionId,
+    remoteDir,
+    folder,
+    lang,
+  });
 export const sftpUploadDrop = (
   sessionId: string,
   dropId: number,

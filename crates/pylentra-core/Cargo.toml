@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-exclude = ["tests/compat"]
+exclude = ["tests/compat", "tests/fixtures"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -15,7 +15,7 @@ ts-rs = { version = "12", features = ["uuid-impl"] }
 log = "0.4"
 secrecy = "0.10"
 keyring = { version = "4.2", features = ["v1"] }
-russh = "0.64"
+russh = "0.65"
 hmac = "0.13"
 sha1 = "0.11"
 data-encoding = "2"

@@ -90,7 +90,8 @@ export const it: Record<MessageKey, string> = {
   "form.keyPath": "Percorso della chiave",
   "form.savePassphrase": "Salva la passphrase nel portachiavi",
   "form.passphrase": "Passphrase",
-  "form.secretHint": "Lascia vuoto per non cambiare.",
+  "form.secretHint":
+    "Lascia vuoto per non cambiarla. Con un nuovo host, porta o utente viene dimenticata.",
   "form.jumpVia": "Connetti tramite",
   "form.addLocal": "Aggiungi inoltro locale",
   "form.addRemote": "Aggiungi inoltro remoto",
@@ -146,6 +147,10 @@ export const it: Record<MessageKey, string> = {
   "session.connecting": "Connessione\u2026",
   "session.authenticating": "Autenticazione\u2026",
   "session.ended": "Sessione terminata. Premi Invio per riconnetterti.",
+  "session.linkTitle": "Aprire il link?",
+  "session.linkBody":
+    "Il link porta a {url}, che si aprirà nel browser. Il testo può mostrare un altro indirizzo.",
+  "session.linkOpen": "Apri",
   "session.retry": "Riprova",
   "reconnect.attempt": "Riconnessione\u2026 tentativo {n} di {max}",
   "reconnect.cancel": "Annulla",
@@ -156,6 +161,10 @@ export const it: Record<MessageKey, string> = {
   "session.forget": "Dimentica host",
   "session.opensshHint":
     "La chiave precedente \u00e8 nel known_hosts di OpenSSH. Se il cambio \u00e8 previsto, rimuovila con:",
+  "session.typeChanged":
+    "Il server ha presentato una chiave di tipo diverso da quella nota per questo host, quindi i due fingerprint non possono coincidere. Di rado un server abbandona il vecchio tipo di chiave: verifica che il cambio sia previsto prima di dimenticare la chiave precedente.",
+  "session.systemHint":
+    "La chiave precedente \u00e8 nel file ssh_known_hosts di sistema, che Pylentra legge soltanto. Se il cambio \u00e8 previsto, chiedi all\u2019amministratore di aggiornarlo.",
   "hostkey.title": "Host key sconosciuta",
   "hostkey.body":
     "Non \u00e8 possibile verificare l\u2019autenticit\u00e0 di {host}:{port}. Confronta il fingerprint con quello del server prima di fidarti.",
@@ -175,7 +184,8 @@ export const it: Record<MessageKey, string> = {
   "sftp.showHidden": "Mostra nascosti",
   "sftp.list": "Contenuto della cartella",
   "sftp.empty": "La cartella è vuota.",
-  "sftp.truncated": "Sono mostrate solo le prime 100 000 voci.",
+  "sftp.truncated":
+    "Non sono mostrate tutte le voci: la cartella ne contiene più di 100 000 o ha richiesto troppo tempo per essere letta.",
   "sftp.folder": "Cartella",
   "sftp.link": "Collegamento",
   "sftp.uploadFiles": "Carica file",
@@ -277,7 +287,7 @@ export const it: Record<MessageKey, string> = {
   "settings.knownHostsEmpty": "Nessuna chiave host salvata.",
   "settings.knownHostsEncrypted": "Voce cifrata",
   "settings.knownHostsNote":
-    "Le voci di ~/.ssh/known_hosts sono usate in sola lettura e non si gestiscono qui.",
+    "Le voci di ~/.ssh/known_hosts e del file ssh_known_hosts di sistema sono usate in sola lettura e non si gestiscono qui.",
   "settings.checkUpdates": "Cerca aggiornamenti all'avvio",
   "settings.installedVersion": "Versione installata",
   "settings.language": "Lingua",
@@ -300,6 +310,9 @@ export const it: Record<MessageKey, string> = {
   "library.via": "tramite {name}",
   "library.viaExisting": "tramite {name} (già presente)",
   "library.jumpDropped": "resterà senza jump host ({name} non importato)",
+  "library.networkKey":
+    "chiave su un percorso di rete, letta alla connessione: {path}",
+  "library.forwards": "inoltri, non avviati automaticamente: {list}",
   "library.summary":
     "Gruppi nel file: {new} nuovi, {reused} già presenti. Snippet: {global} globali nuovi, {perConnection} legati alle connessioni.",
   "library.importN": "Importa ({n})",
@@ -312,6 +325,10 @@ export const it: Record<MessageKey, string> = {
   "error.auth.agent_unavailable": "Agente SSH non disponibile: {reason}",
   "error.auth.all_failed": "Autenticazione fallita (provati: {tried}).",
   "error.auth.key_unreadable": "Impossibile leggere la chiave {path}: {reason}",
+  "error.auth.rsa_sha1":
+    "Il server accetta chiavi RSA solo con firme SHA-1 (ssh-rsa), non più sicure. Usa una chiave ed25519 o ECDSA, oppure aggiorna il server.",
+  "error.auth.too_many_prompts":
+    "Il server ha posto {count} domande in una volta; Pylentra ne accetta al massimo 32.",
   "error.cancelled": "Annullato.",
   "error.config.invalid": "Valore non valido per {field}: {reason}",
   "error.config.jump_cycle": "La catena di jump host contiene un ciclo.",
@@ -330,9 +347,13 @@ export const it: Record<MessageKey, string> = {
   "error.forward.permission_denied": "Permesso negato per la porta {port}.",
   "error.forward.port_in_use": "La porta {port} è già in uso.",
   "error.forward.rejected": "Il server ha rifiutato l'inoltro di porta.",
+  "error.forward.timeout":
+    "Il server non ha risposto in tempo all'inoltro di porta.",
   "error.hostkey.mismatch":
     "La chiave host di {host}:{port} è cambiata. La connessione è stata rifiutata.",
   "error.hostkey.rejected": "Chiave host rifiutata.",
+  "error.hostkey.rsa_sha1":
+    "Il server offre solo una chiave host RSA con SHA-1 (ssh-rsa), non più sicura. Aggiorna il server.",
   "error.io": "Errore di I/O: {reason}",
   "error.network.dns": "Impossibile risolvere l'host {host}.",
   "error.network.refused": "Connessione rifiutata da {host}:{port}.",
@@ -379,6 +400,9 @@ export const it: Record<MessageKey, string> = {
   "import.note.RemoteBindIgnored":
     "L'indirizzo di ascolto remoto viene ignorato.",
   "import.note.ProxyCommand": "ProxyCommand non è supportato.",
+  "import.note.TooComplex":
+    "Il file è troppo complesso: sono stati letti solo i primi host.",
+  "import.note.HostNameTooLong": "HostName diventa troppo lungo espandendo %h.",
   "import.note.InvalidPort": "Porta non valida: {value}.",
   "import.note.InvalidForward": "Forward non valido: {value}.",
   "quick.label": "Connessione rapida",

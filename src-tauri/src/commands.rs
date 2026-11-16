@@ -10,7 +10,9 @@ use pylentra_core::export::{
     self, ExportDone, ExportFile, ImportCounts, ImportPick, ImportPreview,
 };
 use pylentra_core::known_hosts::KnownHostEntry;
-use pylentra_core::model::{AuthMethod, Connection, ForwardRule, Group, Settings, Warning};
+use pylentra_core::model::{
+    AuthMethod, Connection, ForwardRule, Group, Settings, Warning, key_found_or_unchecked,
+};
 use pylentra_core::secrets::SecretKind;
 use pylentra_core::snippets::Snippet;
 use pylentra_core::ssh::events::{PromptAnswer, SessionEvent};
@@ -70,8 +72,10 @@ pub fn do_connection_save(
     // Sessions read the keychain regardless of the flag, so unticking "save"
     // or switching auth type must forget the secret. Only on that change:
     // a prompt's "save" writes the keychain without setting the flag, and a
-    // later rename must not lose it. Forgetting is best effort, like
-    // delete_connection: a missing keychain must not block the save.
+    // later rename must not lose it. A new host, port or user forgets both
+    // secrets whatever the flags say, so a saved password never reaches
+    // another server. Forgetting is best effort, like delete_connection: a
+    // missing keychain must not block the save.
     let keeps = |auth: &AuthMethod| match auth {
         AuthMethod::Password { save } => (*save, false),
         AuthMethod::Key {
@@ -84,6 +88,9 @@ pub fn do_connection_save(
         (
             keeps(&c.auth),
             std::mem::discriminant(&c.auth) != std::mem::discriminant(&connection.auth),
+            !c.host.eq_ignore_ascii_case(&connection.host)
+                || c.port != connection.port
+                || c.username != connection.username,
         )
     });
     for (kind, keep, value) in [
@@ -91,28 +98,27 @@ pub fn do_connection_save(
         (SecretKind::Passphrase, keep_passphrase, passphrase),
     ] {
         let forget = match old {
-            Some(((old_pw, old_pp), auth_changed)) => {
+            Some(((old_pw, old_pp), auth_changed, moved)) => {
                 let was_kept = if kind == SecretKind::Password {
                     old_pw
                 } else {
                     old_pp
                 };
-                was_kept || auth_changed
+                moved || (!keep && (was_kept || auth_changed))
             }
             None => false,
         };
-        if !keep {
-            if !forget {
-                continue;
+        match value.filter(|_| keep) {
+            Some(value) => state.secrets.set(connection.id, kind, &value.into())?,
+            None if forget => {
+                if let Err(e) = state.secrets.delete(connection.id, kind) {
+                    log::warn!(
+                        "could not delete {kind:?} of connection {}: {e}",
+                        connection.id
+                    );
+                }
             }
-            if let Err(e) = state.secrets.delete(connection.id, kind) {
-                log::warn!(
-                    "could not delete {kind:?} of connection {}: {e}",
-                    connection.id
-                );
-            }
-        } else if let Some(value) = value {
-            state.secrets.set(connection.id, kind, &value.into())?;
+            None => {}
         }
     }
     Ok(store.upsert_connection(connection)?)
@@ -309,13 +315,6 @@ fn all_files_label(lang: &str) -> &'static str {
     }
 }
 
-/// A network path (`\\host\share`, `//host/share`) is not checked: on Windows
-/// that alone contacts the host (SMB, NTLM) as soon as the preview opens.
-fn key_found_or_unchecked(path: &Path) -> bool {
-    let s = path.to_string_lossy();
-    s.starts_with(r"\\") || s.starts_with("//") || path.exists()
-}
-
 fn picked_path(picked: FilePath) -> Result<PathBuf, CoreError> {
     picked
         .into_path()
@@ -509,7 +508,7 @@ pub async fn session_open(
     events: Channel<SessionEvent>,
 ) -> Result<SessionId, ApiError> {
     let chain = state.store().jump_chain(connection_id)?;
-    let sink = Arc::new(ChannelSink { data, events });
+    let sink = Arc::new(ChannelSink::new(data, events));
     Ok(state.sessions.open(chain, cols, rows, sink))
 }
 
@@ -528,7 +527,7 @@ pub async fn session_open_quick(
         connection,
         cols,
         rows,
-        Arc::new(ChannelSink { data, events }),
+        Arc::new(ChannelSink::new(data, events)),
     )
 }
 
@@ -594,6 +593,17 @@ pub async fn session_resize(
     Ok(state.sessions.resize(id, cols, rows).await?)
 }
 
+/// The terminal has rendered `total` bytes of the session's output so far.
+// Off the main thread: it comes with every chunk of output.
+#[tauri::command(async)]
+pub fn session_ack(
+    state: State<'_, AppState>,
+    id: SessionId,
+    total: usize,
+) -> Result<(), ApiError> {
+    Ok(state.sessions.ack(id, total)?)
+}
+
 #[tauri::command]
 pub fn session_answer(
     state: State<'_, AppState>,
@@ -628,6 +638,17 @@ async fn pick<T: Send + 'static>(
         .map_err(|e| CoreError::Io(std::io::Error::other(e.to_string())))
 }
 
+/// The native title of a transfer's pick dialog, naming the server, so a lying webview cannot
+/// pass the pick off as something else. `lang`: the language the UI is shown in.
+fn transfer_title(lang: &str, host: &str, down: bool) -> String {
+    match (lang == "it", down) {
+        (false, true) => format!("Download from {host} into…"),
+        (true, true) => format!("Scarica da {host} in…"),
+        (false, false) => format!("Upload to {host}"),
+        (true, false) => format!("Carica su {host}"),
+    }
+}
+
 // The destination folder is picked here, so no local path comes from the webview.
 #[tauri::command]
 pub async fn sftp_download(
@@ -635,8 +656,10 @@ pub async fn sftp_download(
     state: State<'_, AppState>,
     session_id: SessionId,
     items: Vec<String>,
+    lang: String,
 ) -> Result<Option<u32>, ApiError> {
-    let picked = pick(&window, |d| d.blocking_pick_folder()).await?;
+    let title = transfer_title(&lang, &state.sessions.host(session_id)?, true);
+    let picked = pick(&window, |d| d.set_title(title).blocking_pick_folder()).await?;
     let Some(picked) = picked else {
         return Ok(None);
     };
@@ -653,8 +676,11 @@ pub async fn sftp_upload_pick(
     session_id: SessionId,
     remote_dir: String,
     folder: bool,
+    lang: String,
 ) -> Result<Option<u32>, ApiError> {
+    let title = transfer_title(&lang, &state.sessions.host(session_id)?, false);
     let items = pick(&window, move |d| {
+        let d = d.set_title(title);
         if folder {
             d.blocking_pick_folder().map(|f| vec![f])
         } else {
@@ -781,7 +807,7 @@ mod tests {
 
     fn state_with(secrets: Arc<dyn SecretStore>) -> (TempDir, AppState) {
         let dir = TempDir::new().unwrap();
-        let state = AppState::load(dir.path(), None, secrets).unwrap();
+        let state = AppState::load(dir.path(), None, None, secrets).unwrap();
         (dir, state)
     }
 
@@ -852,7 +878,8 @@ mod tests {
             "futuro = \"x\"\nfuturo_nan = nan\nfuturo_arr = [nan]\n[futuro_tab]\nx = inf\n",
         )
         .unwrap();
-        let state = AppState::load(d.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state =
+            AppState::load(d.path(), None, None, Arc::new(MemorySecretStore::default())).unwrap();
         // What the UI does: get, JSON, back, with `futuro_nan` now `null`.
         let json = serde_json::to_string(&do_settings_get(&state)).unwrap();
         assert!(json.contains("\"futuro\":\"x\""), "{json}");
@@ -993,6 +1020,57 @@ mod tests {
     }
 
     #[test]
+    fn connection_save_forgets_secrets_when_the_destination_changes() {
+        let (_d, state) = state_with(Arc::new(MemorySecretStore::default()));
+        let pw = conn("a");
+        let key = Connection {
+            auth: AuthMethod::Key {
+                path: "/k".into(),
+                save_passphrase: true,
+            },
+            ..conn("k")
+        };
+        let moves: [fn(&mut Connection); 3] = [
+            |c| c.host = "elsewhere.example".into(),
+            |c| c.port = 2222,
+            |c| c.username = "root".into(),
+        ];
+        for moved in moves {
+            for c in [&pw, &key] {
+                do_connection_save(&state, c.clone(), Some("pw".into()), Some("pp".into()))
+                    .unwrap();
+                // A secret saved from a connect prompt, whatever the flags say.
+                for kind in [SecretKind::Password, SecretKind::Passphrase] {
+                    state
+                        .secrets
+                        .set(c.id, kind, &"s".to_string().into())
+                        .unwrap();
+                }
+                // Only the case of the host changes: still the same destination.
+                let same = Connection {
+                    host: c.host.to_uppercase(),
+                    ..c.clone()
+                };
+                do_connection_save(&state, same, None, None).unwrap();
+                assert!(secret(&state, c.id, SecretKind::Password).is_some());
+                let mut other = c.clone();
+                moved(&mut other);
+                do_connection_save(&state, other, None, None).unwrap();
+                assert_eq!(secret(&state, c.id, SecretKind::Password), None);
+                assert_eq!(secret(&state, c.id, SecretKind::Passphrase), None);
+            }
+        }
+        // A password typed in the same save is kept for the new destination.
+        let mut other = pw.clone();
+        other.host = "new.example".into();
+        do_connection_save(&state, other, Some("new".into()), None).unwrap();
+        assert_eq!(
+            secret(&state, pw.id, SecretKind::Password).as_deref(),
+            Some("new")
+        );
+    }
+
+    #[test]
     fn connection_save_survives_failing_secret_delete() {
         let (_d, state) = state_with(Arc::new(FailingSecretStore));
         let c = conn("a");
@@ -1018,8 +1096,13 @@ mod tests {
     fn startup_warnings_reports_corrupt_backup() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("connections.toml"), "not = [valid").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.recovered_corrupt");
@@ -1075,7 +1158,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let a = conn("a");
         let secrets = Arc::new(MemorySecretStore::default());
-        let state = AppState::load(dir.path(), None, secrets.clone()).unwrap();
+        let state = AppState::load(dir.path(), None, None, secrets.clone()).unwrap();
         do_connection_save(&state, a.clone(), None, None).unwrap();
         drop(state);
         std::fs::write(
@@ -1087,7 +1170,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let state = AppState::load(dir.path(), None, secrets).unwrap();
+        let state = AppState::load(dir.path(), None, None, secrets).unwrap();
         do_connection_delete(&state, a.id).unwrap();
         assert!(do_library_get(&state).connections.is_empty());
         assert_eq!(do_snippets_get(&state).len(), 1);
@@ -1097,8 +1180,13 @@ mod tests {
     fn startup_warnings_reports_corrupt_snippets() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "not = [valid").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.recovered_corrupt");
@@ -1111,8 +1199,13 @@ mod tests {
     fn startup_warnings_reports_newer_snippets_read_only() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.read_only");
@@ -1125,8 +1218,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         // A directory where the file should be: reading it fails, not with NotFound.
         std::fs::create_dir(dir.path().join("snippets.toml")).unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.unreadable");
@@ -1145,8 +1243,13 @@ mod tests {
     fn startup_warnings_reports_newer_version_read_only() {
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("connections.toml"), "version = 7\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let warnings = do_startup_warnings(&state);
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].code, "config.read_only");
@@ -1416,8 +1519,13 @@ mod tests {
             ),
         )
         .unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let path = dir.path().join("export.toml");
         assert!(
             do_library_export(&state, &path, "2026-10-30")
@@ -1439,8 +1547,13 @@ mod tests {
         );
         std::fs::write(&conns, "version = 9\n").unwrap();
         std::fs::write(&snips, "version = 1\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let selected = all_rows(&state, &path);
         let err = do_library_import(&state, &path, &selected).unwrap_err();
         assert_eq!(err.code, CoreError::ReadOnly.code());
@@ -1455,8 +1568,13 @@ mod tests {
         let path = exported(&files);
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let selected = all_rows(&state, &path);
         let err = do_library_import(&state, &path, &selected).unwrap_err();
         assert_eq!(err.code, CoreError::ReadOnly.code());
@@ -1508,8 +1626,13 @@ mod tests {
         let path = exported(&files);
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("snippets.toml"), "version = 9\n").unwrap();
-        let state =
-            AppState::load(dir.path(), None, Arc::new(MemorySecretStore::default())).unwrap();
+        let state = AppState::load(
+            dir.path(),
+            None,
+            None,
+            Arc::new(MemorySecretStore::default()),
+        )
+        .unwrap();
         let selected = do_library_import_pick(&state, path)
             .unwrap()
             .preview
@@ -1587,15 +1710,11 @@ mod tests {
     }
 
     #[test]
-    fn key_check_skips_network_paths() {
-        let d = TempDir::new().unwrap();
-        let key = d.path().join("id");
-        std::fs::write(&key, "k").unwrap();
-        assert!(key_found_or_unchecked(&key));
-        assert!(!key_found_or_unchecked(&d.path().join("missing")));
-        for unc in [r"\\host\share\id", "//host/share/id"] {
-            assert!(key_found_or_unchecked(Path::new(unc)));
-        }
+    fn transfer_dialogs_name_the_server() {
+        assert_eq!(transfer_title("en", "h", true), "Download from h into…");
+        assert_eq!(transfer_title("it", "h", true), "Scarica da h in…");
+        assert_eq!(transfer_title("", "h", false), "Upload to h");
+        assert_eq!(transfer_title("it", "h", false), "Carica su h");
     }
 
     #[test]

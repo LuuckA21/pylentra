@@ -2,6 +2,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
 use pylentra_core::error::CoreError;
@@ -9,7 +10,7 @@ use pylentra_core::known_hosts::{HostKeyStatus, KnownHosts, fingerprint};
 use pylentra_core::model::{AuthMethod, Connection};
 use pylentra_core::secrets::{MemorySecretStore, SecretKind, SecretStore};
 use pylentra_core::ssh::events::{CloseReason, PromptAnswer, PromptKind, SessionEvent, Stage};
-use pylentra_core::ssh::{SessionId, SessionManager, SessionOptions};
+use pylentra_core::ssh::{MAX_UNACKED, SessionId, SessionManager, SessionOptions, SessionSink};
 use russh::keys::{Algorithm, PrivateKey};
 use support::{CollectSink, TestServer, TestServerConfig};
 use tempfile::TempDir;
@@ -298,6 +299,96 @@ async fn mismatch_closes_without_prompt() {
     )));
 }
 
+fn ecdsa() -> PrivateKey {
+    let curve = russh::keys::EcdsaCurve::NistP256;
+    PrivateKey::random(&mut rand::rng(), Algorithm::Ecdsa { curve }).unwrap()
+}
+
+/// Connects to `server` with a stored password; true once Ready, false on a host-key event.
+async fn connects_silently(env: &Env, server: &TestServer) -> bool {
+    let c = conn("127.0.0.1", server.addr.port());
+    env.secrets
+        .set(c.id, SecretKind::Password, &PW.to_string().into())
+        .unwrap();
+    let sink = Arc::new(CollectSink::default());
+    env.mgr.open(vec![c], 80, 24, sink.clone());
+    let ev = sink
+        .wait_event(
+            |e| {
+                is_ready(e)
+                    || matches!(
+                        e,
+                        SessionEvent::HostKeyPrompt { .. } | SessionEvent::HostKeyMismatch { .. }
+                    )
+            },
+            T,
+        )
+        .await;
+    is_ready(&ev)
+}
+
+#[tokio::test]
+async fn known_key_type_is_negotiated_first() {
+    let (ed, ec) = (
+        PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap(),
+        ecdsa(),
+    );
+    let server = TestServer::start(TestServerConfig {
+        password: Some(PW.into()),
+        host_key: Some(ed.clone()),
+        extra_host_keys: vec![ec.clone()],
+        ..Default::default()
+    })
+    .await;
+    let port = server.addr.port();
+    // With only the ECDSA key known, russh's default order would negotiate ed25519 and prompt.
+    for known in [&ec, &ed] {
+        let env = env();
+        env.known_hosts
+            .learn("127.0.0.1", port, known.public_key())
+            .unwrap();
+        assert!(connects_silently(&env, &server).await);
+    }
+}
+
+#[tokio::test]
+async fn key_of_an_unknown_type_is_a_mismatch_when_others_are_known() {
+    let server = TestServer::start(TestServerConfig {
+        password: Some(PW.into()),
+        host_key: Some(ecdsa()),
+        ..Default::default()
+    })
+    .await;
+    let env = env();
+    let known = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+    env.known_hosts
+        .learn("127.0.0.1", server.addr.port(), known.public_key())
+        .unwrap();
+    let c = conn("127.0.0.1", server.addr.port());
+    let sink = Arc::new(CollectSink::default());
+    env.mgr.open(vec![c], 80, 24, sink.clone());
+    let ev = sink
+        .wait_event(|e| matches!(e, SessionEvent::HostKeyMismatch { .. }), T)
+        .await;
+    let SessionEvent::HostKeyMismatch {
+        expected,
+        got,
+        type_changed,
+        ..
+    } = ev
+    else {
+        unreachable!()
+    };
+    assert!(type_changed);
+    assert_eq!(expected, fingerprint(known.public_key()));
+    assert_eq!(got, fingerprint(&server.host_key));
+    assert_eq!(closed_code(&sink).await, "hostkey.mismatch");
+    assert!(!has_event(&sink, |e| matches!(
+        e,
+        SessionEvent::HostKeyPrompt { .. }
+    )));
+}
+
 #[tokio::test]
 async fn missing_password_prompts() {
     let server = pw_server().await;
@@ -364,6 +455,18 @@ async fn remote_exit_reports_code() {
         env.mgr.write(id, b"x".to_vec()).await,
         Err(CoreError::NotFound { .. })
     ));
+}
+
+#[tokio::test]
+async fn server_opened_channels_are_refused() {
+    let server = pw_server().await;
+    let env = env();
+    let (id, sink) = open_ready(&env, &server).await;
+    env.mgr.write(id, b"__open_back\n".to_vec()).await.unwrap();
+    let want = "session:shut x11:shut agent:shut direct-tcpip:shut \
+                direct-streamlocal:shut forwarded-streamlocal:shut";
+    sink.wait_data_len(want.len(), T).await;
+    assert_eq!(String::from_utf8_lossy(&sink.data.lock().unwrap()), want);
 }
 
 #[tokio::test]
@@ -464,6 +567,74 @@ async fn burst_output_arrives_complete_and_ordered() {
     }
     sink.wait_data_len(TOTAL, Duration::from_secs(60)).await;
     assert!(*sink.data.lock().unwrap() == input);
+}
+
+/// A UI that renders nothing until `render` is set: every byte stays unacknowledged.
+#[derive(Default)]
+struct SlowSink {
+    inner: CollectSink,
+    sent: AtomicUsize,
+    acked: AtomicUsize,
+    render: AtomicBool,
+}
+
+impl SessionSink for SlowSink {
+    fn data(&self, bytes: Vec<u8>) {
+        let total = self.sent.fetch_add(bytes.len(), Relaxed) + bytes.len();
+        if self.render.load(Relaxed) {
+            self.ack(total);
+        }
+        self.inner.data(bytes);
+    }
+
+    fn event(&self, ev: SessionEvent) {
+        self.inner.event(ev);
+    }
+
+    fn unacked(&self) -> usize {
+        self.sent.load(Relaxed) - self.acked.load(Relaxed)
+    }
+
+    fn ack(&self, total: usize) {
+        self.acked.fetch_max(total, Relaxed);
+    }
+}
+
+#[tokio::test]
+async fn output_pauses_while_the_ui_is_behind() {
+    const TOTAL: usize = 2 * MAX_UNACKED;
+    let server = pw_server().await;
+    let env = env();
+    let sink = Arc::new(SlowSink::default());
+    let id = env
+        .mgr
+        .open(vec![trusted_conn(&env, &server)], 80, 24, sink.clone());
+    sink.inner.wait_event(is_ready, T).await;
+    let input: Vec<u8> = (0..TOTAL).map(|i| (i % 251) as u8).collect();
+    let writes = async {
+        for chunk in input.chunks(32 * 1024) {
+            env.mgr.write(id, chunk.to_vec()).await.unwrap();
+        }
+    };
+    let reads = async {
+        sink.inner
+            .wait_data_len(MAX_UNACKED, Duration::from_secs(60))
+            .await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // One more message may pass the check; the next read waits.
+        let held = sink.inner.data.lock().unwrap().len();
+        assert!(
+            held <= MAX_UNACKED + 64 * 1024,
+            "{held} bytes passed the cap"
+        );
+        sink.render.store(true, Relaxed);
+        env.mgr.ack(id, held).unwrap();
+        sink.inner
+            .wait_data_len(TOTAL, Duration::from_secs(60))
+            .await;
+    };
+    tokio::join!(writes, reads);
+    assert!(*sink.inner.data.lock().unwrap() == input);
 }
 
 #[tokio::test]

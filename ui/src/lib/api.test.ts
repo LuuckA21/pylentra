@@ -57,10 +57,18 @@ test("sessionOpen passes raw ArrayBuffer to onData as Uint8Array", async () => {
   });
   data.onmessage(new Uint8Array([104, 105]).buffer);
   data.onmessage([1, 2, 3]);
-  expect(onData.mock.calls).toEqual([
-    [new Uint8Array([104, 105])],
-    [new Uint8Array([1, 2, 3])],
+  expect(onData.mock.calls.map(([bytes]) => bytes)).toEqual([
+    new Uint8Array([104, 105]),
+    new Uint8Array([1, 2, 3]),
   ]);
+  // Rendered bytes are acknowledged as a running total, so the session keeps reading.
+  onData.mock.calls.forEach(([, done]) => done());
+  await vi.waitFor(() =>
+    expect(invoke).toHaveBeenLastCalledWith("session_ack", {
+      id: "sid",
+      total: 5,
+    }),
+  );
   const ev = { type: "Status", stage: "Ready" };
   events.onmessage(ev);
   expect(onEvent).toHaveBeenCalledWith(ev);
@@ -79,11 +87,18 @@ test("wrappers use snake_case command names and camelCase args", async () => {
     sessionId: "s",
     forwardId: 3,
   });
-  await api.sftpUploadPick("s", "/home/u", true);
+  await api.sftpUploadPick("s", "/home/u", true, "it");
   expect(invoke).toHaveBeenCalledWith("sftp_upload_pick", {
     sessionId: "s",
     remoteDir: "/home/u",
     folder: true,
+    lang: "it",
+  });
+  await api.sftpDownload("s", ["/a"], "en");
+  expect(invoke).toHaveBeenCalledWith("sftp_download", {
+    sessionId: "s",
+    items: ["/a"],
+    lang: "en",
   });
   await api.sftpUploadDrop("s", 7, "/tmp");
   expect(invoke).toHaveBeenCalledWith("sftp_upload_drop", {
