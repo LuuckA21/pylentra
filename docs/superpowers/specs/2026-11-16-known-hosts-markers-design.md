@@ -88,7 +88,7 @@ The user picked A.
   which is ASCII case-insensitive and safe against backtracking. Move it to a
   shared place; do not write a second one.
 - **Line scanning.** Use one scanner for all three files that yields the
-  marker (`None`, `Revoked`, `CertAuthority`) plus the hosts, the algorithm
+  marker (`Plain`, `Revoked`, `CertAuthority`) plus the hosts, the algorithm
   and the key. `key_lines` becomes that scanner, and `list` and `forget`
   keep their behaviour. The Pylentra-file checks still go through russh,
   except for revocations.
