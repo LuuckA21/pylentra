@@ -8,3 +8,8 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      # Only release.yml uses it and CI never runs that: a major bump changes its
+      # inputs and defaults (1.0 renamed includeUpdaterJson), so upgrade it by hand.
+      - dependency-name: tauri-apps/tauri-action
+        update-types: ["version-update:semver-major"]
