@@ -121,6 +121,8 @@ pub enum SessionEvent {
         port: u16,
         algo: String,
         fingerprint: String,
+        /// A `@cert-authority` line covers the host; Pylentra does not check certificates.
+        cert_authority: bool,
     },
     HostKeyMismatch {
         host: String,

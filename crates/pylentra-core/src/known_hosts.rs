@@ -186,6 +186,26 @@ impl KnownHosts {
         Ok(None)
     }
 
+    /// Whether any file has a `@cert-authority` line covering `host:port`. The key is not
+    /// parsed: the line only matters as a warning, since Pylentra ignores certificates.
+    pub fn cert_authority(&self, host: &str, port: u16) -> Result<bool, CoreError> {
+        let host_port = host_port(host, port);
+        let own = (KeySource::Pylentra, &self.pylentra);
+        for (source, path) in
+            std::iter::once(own).chain(self.read_only.iter().map(|(s, p)| (s.clone(), p)))
+        {
+            let Some(text) = read_text(&source, path)? else {
+                continue;
+            };
+            if key_lines(&text).any(|(_, marker, hosts, _, _)| {
+                marker == Marker::CertAuthority && host_field_matches(&host_port, hosts)
+            }) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Algorithms of every key any file records for `host:port`, to put first in negotiation.
     pub fn algorithms(&self, host: &str, port: u16) -> Result<Vec<Algorithm>, CoreError> {
         let mut keys: Vec<PublicKey> = known_host_keys_path(host, port, &self.pylentra)
@@ -992,6 +1012,22 @@ mod tests {
             source: KeySource::OpenSsh,
             fingerprint: fingerprint(k),
         }
+    }
+
+    #[test]
+    fn cert_authority_flag() {
+        let (d, kh) = setup();
+        assert!(!kh.cert_authority("a.corp.example", 22).unwrap());
+        fs::write(
+            d.path().join("ssh_known_hosts"),
+            format!(
+                "@cert-authority *.corp.example {}\n",
+                key().to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        assert!(kh.cert_authority("a.corp.example", 22).unwrap());
+        assert!(!kh.cert_authority("other.example", 22).unwrap());
     }
 
     #[test]

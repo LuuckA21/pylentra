@@ -165,6 +165,8 @@ export const en = {
   "hostkey.title": "Unknown host key",
   "hostkey.body":
     "The authenticity of {host}:{port} cannot be verified. Compare the fingerprint with the one of the server before trusting it.",
+  "hostkey.certAuthority":
+    "This host uses SSH certificates, which Pylentra does not check: confirm the fingerprint with your administrator before trusting it.",
   "hostkey.algo": "Key type",
   "hostkey.fingerprint": "Fingerprint",
   "hostkey.accept": "Trust and connect",

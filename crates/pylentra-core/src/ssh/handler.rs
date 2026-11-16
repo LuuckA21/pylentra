@@ -69,11 +69,20 @@ impl client::Handler for ClientHandler {
                 })
             }
             HostKeyStatus::Unknown => {
+                // A failed read must not stop the prompt: the flag is only a warning.
+                let cert_authority = self
+                    .known_hosts
+                    .cert_authority(&self.host, self.port)
+                    .unwrap_or_else(|e| {
+                        log::warn!("cannot check known_hosts for @cert-authority: {e}");
+                        false
+                    });
                 let prompt = SessionEvent::HostKeyPrompt {
                     host: self.host.clone(),
                     port: self.port,
                     algo: key.algorithm().to_string(),
                     fingerprint: fingerprint(key),
+                    cert_authority,
                 };
                 self.prompting.send_replace(true);
                 let answer = self.broker.ask(self.id, &*self.sink, prompt).await;

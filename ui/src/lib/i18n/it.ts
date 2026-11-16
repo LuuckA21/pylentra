@@ -170,6 +170,8 @@ export const it: Record<MessageKey, string> = {
     "Non \u00e8 possibile verificare l\u2019autenticit\u00e0 di {host}:{port}. Confronta il fingerprint con quello del server prima di fidarti.",
   "hostkey.algo": "Tipo di chiave",
   "hostkey.fingerprint": "Fingerprint",
+  "hostkey.certAuthority":
+    "Questo host usa certificati SSH, che Pylentra non controlla: verifica l'impronta con l'amministratore prima di fidarti.",
   "hostkey.accept": "Fidati e connetti",
   "secret.password": "Password per {target}",
   "secret.passphrase": "Passphrase della chiave per {target}",

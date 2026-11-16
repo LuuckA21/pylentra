@@ -16,6 +16,7 @@ const hostKey: SessionEvent = {
   port: 22,
   algo: "ssh-ed25519",
   fingerprint: "SHA256:abc",
+  cert_authority: false,
 };
 const local = {
   type: "Local",
