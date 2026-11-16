@@ -14,6 +14,7 @@ export type PaneState = {
   phase: "connecting" | "authenticating" | "ready" | "closed";
   prompt?: Extract<SessionEvent, { type: "HostKeyPrompt" | "SecretPrompt" }>;
   mismatch?: Extract<SessionEvent, { type: "HostKeyMismatch" }>;
+  revoked?: Extract<SessionEvent, { type: "HostKeyRevoked" }>;
   closed?: CloseReason;
   /** Epoch ms of the first Ready; kept after the session closes. */
   readyAt?: number;
@@ -57,9 +58,8 @@ export function reduce(s: PaneState, e: SessionEvent): PaneState {
       return { ...s, prompt: e };
     case "HostKeyMismatch":
       return { ...s, mismatch: e };
-    // The close error carries the message; the UI card is a later task.
     case "HostKeyRevoked":
-      return s;
+      return { ...s, revoked: e };
     case "Forward":
       return {
         ...s,

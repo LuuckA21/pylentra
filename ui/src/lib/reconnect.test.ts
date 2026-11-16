@@ -12,9 +12,13 @@ test.each(["network.timeout", "network.refused", "ssh.protocol", "io"])(
   (code) => expect(shouldReconnect(err(code), true, true)).toBe(true),
 );
 
-test.each(["auth.all_failed", "hostkey.mismatch", "cancelled"])(
-  "%s does not",
-  (code) => expect(shouldReconnect(err(code), true, true)).toBe(false),
+test.each([
+  "auth.all_failed",
+  "hostkey.mismatch",
+  "hostkey.revoked",
+  "cancelled",
+])("%s does not", (code) =>
+  expect(shouldReconnect(err(code), true, true)).toBe(false),
 );
 
 test("Exited and UserClosed do not", () => {
