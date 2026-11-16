@@ -12,6 +12,7 @@ Nothing saved changes format: going back to 0.9.x loses nothing.
 
 - `@revoked` lines (host patterns included, so `@revoked *` covers every host) in Pylentra's `known_hosts`, `~/.ssh/known_hosts` and the system `ssh_known_hosts` refuse their key on every hop, even if it is also saved in Pylentra or accepted by another line; the error shows the fingerprint and the file that revokes it, and it cannot be bypassed.
 - Wildcard and negated host patterns (`*`, `?`, `!`, also as `[pattern]:port`) in `~/.ssh/known_hosts` and the system `ssh_known_hosts` are honoured, so a key that differs from a pattern line is blocked as a changed key, but only when no line records the presented key (as OpenSSH).
+- A host key is accepted when any line of any of the three files records it, as in OpenSSH: a key in `~/.ssh/known_hosts` now connects even if Pylentra saved a different key of the same type for that host, which used to be blocked as a changed key.
 - The trust prompt warns when a `@cert-authority` line covers the host: host certificates are still not checked, so confirm the fingerprint with your administrator before trusting it.
 
 ## [0.9.0] - 2026-11-15
