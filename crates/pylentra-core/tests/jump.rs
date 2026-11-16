@@ -165,8 +165,6 @@ async fn each_hop_host_key_is_checked() {
     env.mgr.close(id).await.unwrap();
 }
 
-/// The bastion takes one password try (`single_password_try`), so the stored wrong password
-/// fails at once and the client never prompts.
 #[tokio::test]
 async fn revoked_key_on_a_jump_hop_closes_without_prompt() {
     let (a, b) = (pw_server(false).await, pw_server(false).await);
@@ -213,6 +211,8 @@ async fn revoked_key_on_a_jump_hop_closes_without_prompt() {
     );
 }
 
+/// The bastion takes one password try (`single_password_try`), so the stored wrong password
+/// fails at once and the client never prompts.
 #[tokio::test]
 async fn bastion_auth_failure_reported() {
     let (env, a, b) = (env(), pw_server(true).await, pw_server(false).await);

@@ -4,9 +4,7 @@ use crate::store::atomic_write;
 use data_encoding::BASE64_MIME;
 use hmac::{Hmac, KeyInit, Mac};
 use russh::Preferred;
-use russh::keys::known_hosts::{
-    check_known_hosts_path, known_host_keys_path, learn_known_hosts_path,
-};
+use russh::keys::known_hosts::{known_host_keys_path, learn_known_hosts_path};
 use russh::keys::parse_public_key_base64;
 use russh::keys::ssh_key::{Algorithm, HashAlg, PublicKey};
 use serde::Serialize;
@@ -80,7 +78,8 @@ impl KnownHosts {
     }
 
     /// Pylentra's file first, then the read-only ones; any recorded key that differs
-    /// for the same algorithm is a mismatch, even if another file knows it. A key of a
+    /// for the same algorithm is a mismatch only if no line in any file records the
+    /// presented key (as OpenSSH). A key of a
     /// type none of the files has for this host, while they have keys of other types,
     /// is a mismatch too: connections prefer the known types (see `algorithms`), so an
     /// honest server presents one of them.
@@ -97,59 +96,39 @@ impl KnownHosts {
                 fingerprint: fingerprint(key),
             });
         }
-        let mut known = match check_known_hosts_path(host, port, key, &self.pylentra) {
-            Ok(found) => found,
-            Err(russh::keys::Error::KeyChanged { line }) => {
-                let expected_fp = known_host_keys_path(host, port, &self.pylentra)
-                    .map_err(ssh_err)?
-                    .iter()
-                    .find(|(l, _)| *l == line)
-                    .map(|(_, k)| fingerprint(k))
-                    .unwrap_or_default();
-                return Ok(HostKeyStatus::Mismatch {
-                    source: KeySource::Pylentra,
-                    expected_fp,
-                    type_changed: false,
-                });
-            }
-            Err(e) => return Err(ssh_err(e)),
-        };
-        // Only types Pylentra can negotiate count: an honest server could never present the others.
-        // Without a same-algorithm match, every key Pylentra's file has for the host is another type.
-        let mut other = match known {
-            true => None,
-            false => known_host_keys_path(host, port, &self.pylentra)
+        let mut recorded: Vec<(KeySource, PublicKey)> =
+            known_host_keys_path(host, port, &self.pylentra)
                 .map_err(ssh_err)?
-                .iter()
-                .find(|(_, k)| negotiable(&k.algorithm()))
-                .map(|(_, k)| (KeySource::Pylentra, fingerprint(k))),
-        };
+                .into_iter()
+                .map(|(_, k)| (KeySource::Pylentra, k))
+                .collect();
         for (source, path) in &self.read_only {
-            for recorded in recorded_keys(source, path, host, port)? {
-                if recorded.algorithm() != key.algorithm() {
-                    if negotiable(&recorded.algorithm()) {
-                        other.get_or_insert_with(|| (source.clone(), fingerprint(&recorded)));
-                    }
-                } else if recorded == *key {
-                    known = true;
-                } else {
-                    return Ok(HostKeyStatus::Mismatch {
-                        source: source.clone(),
-                        expected_fp: fingerprint(&recorded),
-                        type_changed: false,
-                    });
-                }
+            for k in recorded_keys(source, path, host, port)? {
+                recorded.push((source.clone(), k));
             }
         }
-        Ok(match (known, other) {
-            (true, _) => HostKeyStatus::Known,
-            (false, Some((source, expected_fp))) => HostKeyStatus::Mismatch {
-                source,
-                expected_fp,
-                type_changed: true,
-            },
-            (false, None) => HostKeyStatus::Unknown,
-        })
+        // As OpenSSH: any line recording the key makes it known, whatever else matches.
+        if recorded.iter().any(|(_, k)| k == key) {
+            return Ok(HostKeyStatus::Known);
+        }
+        let mismatch = |(source, k): &(KeySource, PublicKey), type_changed| {
+            Ok(HostKeyStatus::Mismatch {
+                source: source.clone(),
+                expected_fp: fingerprint(k),
+                type_changed,
+            })
+        };
+        if let Some(same) = recorded
+            .iter()
+            .find(|(_, k)| k.algorithm() == key.algorithm())
+        {
+            return mismatch(same, false);
+        }
+        // Only types Pylentra can negotiate count: an honest server could never present the others.
+        match recorded.iter().find(|(_, k)| negotiable(&k.algorithm())) {
+            Some(other) => mismatch(other, true),
+            None => Ok(HostKeyStatus::Unknown),
+        }
     }
 
     /// The first file with an `@revoked` line for `host:port` recording `key`; patterns
@@ -719,6 +698,70 @@ mod tests {
         assert!(is_openssh_mismatch(
             kh.check("a.example.com", 22, &other).unwrap()
         ));
+    }
+
+    #[test]
+    fn wildcard_and_exact_line_either_key_is_known() {
+        for reversed in [false, true] {
+            let (d, kh) = setup();
+            let (k1, k2, k3) = (key(), key(), key());
+            let mut lines = [
+                format!("*.corp.example {}", k1.to_openssh().unwrap()),
+                format!("a.corp.example {}", k2.to_openssh().unwrap()),
+            ];
+            if reversed {
+                lines.reverse();
+            }
+            write_ssh(&d, lines.join("\n") + "\n");
+            for k in [&k1, &k2] {
+                assert_eq!(
+                    kh.check("a.corp.example", 22, k).unwrap(),
+                    HostKeyStatus::Known
+                );
+            }
+            assert!(matches!(
+                kh.check("a.corp.example", 22, &k3).unwrap(),
+                HostKeyStatus::Mismatch {
+                    source: KeySource::OpenSsh,
+                    type_changed: false,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn key_known_in_another_file_is_known() {
+        let (d, kh) = setup();
+        let (k1, k2, k3) = (key(), key(), key());
+        kh.learn("h", 22, &k1).unwrap();
+        write_ssh(&d, format!("h {}\n", k2.to_openssh().unwrap()));
+        assert_eq!(kh.check("h", 22, &k2).unwrap(), HostKeyStatus::Known);
+        assert!(matches!(
+            kh.check("h", 22, &k3).unwrap(),
+            HostKeyStatus::Mismatch {
+                source: KeySource::Pylentra,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn two_keys_in_pylentra_file_either_is_known() {
+        let (d, kh) = setup();
+        let (k1, k2) = (key(), key());
+        fs::write(
+            d.path().join("known_hosts"),
+            format!(
+                "h {}\nh {}\n",
+                k1.to_openssh().unwrap(),
+                k2.to_openssh().unwrap()
+            ),
+        )
+        .unwrap();
+        for k in [&k1, &k2] {
+            assert_eq!(kh.check("h", 22, k).unwrap(), HostKeyStatus::Known);
+        }
     }
 
     #[test]

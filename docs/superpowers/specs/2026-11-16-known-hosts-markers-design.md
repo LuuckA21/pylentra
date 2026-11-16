@@ -61,6 +61,10 @@ The user picked A.
   key, with text like "The host key of host:port is revoked in
   `~/.ssh/known_hosts`. The connection was refused." It offers no "forget"
   hint and no bypass: to undo, the user edits the file.
+- **Known if any line has the key.** As in OpenSSH, a presented key is
+  accepted when any matching line in any file records it. A changed-key
+  block happens only when no matching line has the presented key and some
+  matching line has another key. Decided by the user after the final review.
 - **Patterns follow OpenSSH `match_hostlist`.** The host field is a comma
   list. Any matching negated `!pattern` excludes the line. Otherwise any
   matching positive pattern includes it. Matching ignores ASCII case and is
